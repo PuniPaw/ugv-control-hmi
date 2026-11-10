@@ -228,6 +228,29 @@ VALIDATION = [
 ]
 
 
+# ---------------------------------------------------------------- command.json (ICD 6.3, GW → SIM)
+
+COMMAND_FMT = ">IBii"  # cmd_id, cmd_type, lat, lon
+assert struct.calcsize(COMMAND_FMT) == 13
+
+
+def command_entry(name, note, cmd_id, cmd_type, lat=0, lon=0) -> dict:
+    return {
+        "name": name,
+        "note": note,
+        "fields": {"cmd_id": cmd_id, "cmd_type": cmd_type, "lat": lat, "lon": lon},
+        "payload_hex": struct.pack(COMMAND_FMT, cmd_id, cmd_type, lat, lon).hex(),
+    }
+
+
+COMMAND = [
+    command_entry("command_stop", "STOP, 좌표 0", 1, 0x01),
+    command_entry("command_rtb", "RTB, 좌표 0", 2, 0x02),
+    command_entry("command_waypoint", "WAYPOINT 36.1240000, 127.7660000", 3, 0x03, 361240000, 1277660000),
+    command_entry("command_waypoint_negative", "WAYPOINT 남서반구 (음수 좌표)", 0xFFFFFFFF, 0x03, -337000000, -706000000),
+]
+
+
 def write(name: str, doc: dict) -> None:
     path = OUT_DIR / name
     path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -273,4 +296,10 @@ write("validation.json", {
     "generator": "tools/vectors/gen_vectors.py",
     "note": "ICD 9장 규칙 ①~⑧. expect는 accept 또는 첫 실패 규칙의 오류 계수 이름. 규칙 ⑨(seq)는 상태가 필요해 단위 시험에서 다룬다.",
     "cases": VALIDATION,
+})
+
+write("command.json", {
+    "schema": "ugvc-command-vectors/1",
+    "generator": "tools/vectors/gen_vectors.py",
+    "vectors": COMMAND,
 })
