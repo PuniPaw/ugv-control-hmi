@@ -10,10 +10,10 @@
 #include <optional>
 
 #include "ugvc/codec/bytes.hpp"
+#include "ugvc/codec/msg_type.hpp"
 
 namespace ugvc::codec {
 
-inline constexpr std::uint8_t kMsgTelemetry = 0x01;
 inline constexpr std::size_t kTelemetryPayloadSize = 16;
 
 // 표 6-1 mode

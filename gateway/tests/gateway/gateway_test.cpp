@@ -156,7 +156,7 @@ TEST(Heartbeat, REQ_COM_007_emits_1hz) {
   for (std::uint32_t i = 0; i < 3; ++i) {
     const auto h = codec::decode_header(sent[i].data(), sent[i].size());
     ASSERT_TRUE(h.has_value());
-    EXPECT_EQ(h->msg_type, gateway::kMsgHeartbeat);
+    EXPECT_EQ(h->msg_type, codec::kMsgHeartbeat);
     EXPECT_EQ(h->payload_len, 0U);
     EXPECT_EQ(h->seq, i);
     EXPECT_EQ(sent[i].size(), codec::kFrameOverhead);

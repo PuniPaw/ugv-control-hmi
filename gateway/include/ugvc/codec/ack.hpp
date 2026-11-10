@@ -7,10 +7,10 @@
 #include <optional>
 
 #include "ugvc/codec/bytes.hpp"
+#include "ugvc/codec/msg_type.hpp"
 
 namespace ugvc::codec {
 
-inline constexpr std::uint8_t kMsgAck = 0x11;
 inline constexpr std::size_t kAckPayloadSize = 5;
 
 // 표 6-5 result

@@ -8,10 +8,10 @@
 #include <vector>
 
 #include "ugvc/codec/bytes.hpp"
+#include "ugvc/codec/msg_type.hpp"
 
 namespace ugvc::codec {
 
-inline constexpr std::uint8_t kMsgDetection = 0x02;
 inline constexpr std::size_t kDetectionHeadSize = 17;
 inline constexpr std::size_t kDetectedObjectSize = 11;
 
