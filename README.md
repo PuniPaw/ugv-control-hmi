@@ -14,7 +14,7 @@
 
 | 디렉터리 | 구성요소 | 상태 |
 |---|---|---|
-| `gateway/` | GW: 패킷 검증, 링크 상태 판정, HMI 중계, 명령 재전송 (C++17, CMake, GoogleTest) | codec(헤더·CRC·TELEMETRY), UDP 15001 수신 → 콘솔 JSON 출력 |
+| `gateway/` | GW: 패킷 검증, 링크 상태 판정, HMI 중계, 명령 재전송 (C++17, CMake, GoogleTest) | 검증 규칙 ①~⑨, 링크 상태, 유실률, stats·HEARTBEAT 1Hz, IF-03 JSON Lines 출력 |
 | `sim/` | SIM: 경로점 주행 모사, 10Hz 텔레메트리, Failsafe (Python) | 직선 주행 TELEMETRY 10Hz 송신 |
 | `detector/` | DET: 영상 재생, 객체 탐지, 결과·영상 송신 (Python) | 예정 |
 | `hmi/` | HMI: 지도, 영상+박스, 상태 패널, 경고, 명령 (Vue 3 + TS) | 예정 |
@@ -57,7 +57,7 @@ cd sim
 PYTHONPATH=../python:. python3 -m ugvc_sim.telemetry_sender
 ```
 
-GW가 받은 TELEMETRY를 IF-03 형식의 JSON 한 줄씩 stdout에 출력합니다.
+GW는 IF-03 형식 JSON을 한 줄씩 stdout에 출력합니다: 유효 TELEMETRY·DETECTION은 받는 즉시, 송신원별 `stats`·`link_status`는 1Hz와 상태 전이 시. HEARTBEAT는 1Hz로 UDP 15010에 보냅니다.
 
 ## 시험 (python)
 
@@ -79,6 +79,12 @@ cd sim && python3 -m pytest
 
 ```bash
 cd tests && python3 -m pytest
+```
+
+STP 통합 TC(10Hz 600개 × 3회, HEARTBEAT 주기)는 약 3.5분 걸려 기본 실행에서 빠집니다:
+
+```bash
+cd tests && python3 -m pytest -m slow
 ```
 
 ## 테스트 벡터 다시 만들기
