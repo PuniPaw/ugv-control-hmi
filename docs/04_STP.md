@@ -103,7 +103,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-002-08 | U | ⑥ 15001 포트에 DETECTION, 15002 포트에 TELEMETRY, 정의되지 않은 type `0x99` | type | `Validator.REQ_COM_002_rule6_type_not_allowed` |
 | TC-COM-002-09 | U | ⑦ TELEMETRY N=15, ACK N=6, DETECTION count=2인데 N=17+11 | length | `Validator.REQ_COM_002_rule7_type_length` |
 | TC-COM-002-10 | U | ⑧ TELEMETRY 범위 밖: lat 900000001, lon -1800000001, heading 36000, speed 3001, battery 101, mode 5 | range | `Validator.REQ_COM_002_rule8_telemetry_range` |
-| TC-COM-002-11 | U | ⑧ DETECTION 범위 밖: img_w 0·4097, count 33 (길이는 count에 맞춤, R3-Q3), confidence 10001, x = img_w, x + w > img_w, w 0 | range | `Validator.REQ_COM_002_rule8_detection_range` |
+| TC-COM-002-11 | U | ⑧ DETECTION 범위 밖: img_w 0·4097, count 33 (길이는 count에 맞춤), confidence 10001, x = img_w, x + w > img_w, w 0 | range | `Validator.REQ_COM_002_rule8_detection_range` |
 | TC-COM-002-12 | U | ⑧ ACK result 3 | range | `Validator.REQ_COM_002_rule8_ack_range` |
 | TC-COM-002-13 | U | 여러 규칙 동시 위반 (sync와 CRC 모두 틀림) | sync만 증가 (첫 실패 규칙) | `Validator.REQ_COM_002_first_failure_only` |
 | TC-COM-002-14 | U | 계수 누적: 같은 원인 3회, 다른 원인 1회 | 원인별로 정확히 누적 | `Validator.REQ_COM_002_counters_accumulate` |
@@ -116,7 +116,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-COM-003-01 | U | 첫 패킷 수신 전 | LOST (R3-Q1) | `LinkMonitor.REQ_COM_003_initially_lost` |
+| TC-COM-003-01 | U | 첫 패킷 수신 전 | LOST | `LinkMonitor.REQ_COM_003_initially_lost` |
 | TC-COM-003-02 | U | t = 0.499s | CONNECTED | `LinkMonitor.REQ_COM_003_connected_before_500ms` |
 | TC-COM-003-03 | U | t = 0.500s | DEGRADED | `LinkMonitor.REQ_COM_003_degraded_at_500ms` |
 | TC-COM-003-04 | U | t = 0.999s | DEGRADED | `LinkMonitor.REQ_COM_003_degraded_before_1s` |
@@ -133,7 +133,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-004-01 | U | LOST 중 유효 패킷 수신 | 즉시 CONNECTED (DEGRADED를 거치지 않음) | `LinkMonitor.REQ_COM_004_lost_to_connected` |
 | TC-COM-004-02 | U | CONNECTED → DEGRADED → LOST → CONNECTED 진행 | 이벤트 3건, 각각 송신원·이전 상태·이후 상태·시각(epoch_ms) | `LinkMonitor.REQ_COM_004_transition_events` |
 | TC-COM-004-03 | U | 같은 상태 유지 중 (패킷 계속 수신, 또는 LOST 지속) | 이벤트 없음 | `LinkMonitor.REQ_COM_004_no_event_without_change` |
-| TC-COM-004-04 | U | 시작 시 첫 판정 (R3-Q1) | 이벤트 없음 | `LinkMonitor.REQ_COM_004_no_event_at_startup` |
+| TC-COM-004-04 | U | 시작 시 첫 판정 | 이벤트 없음 | `LinkMonitor.REQ_COM_004_no_event_at_startup` |
 
 ### 3.5 REQ-COM-005 유실 수, 최근 10초 유실률 1Hz 제공
 
@@ -155,8 +155,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 |---|---|---|---|---|
 | TC-COM-006-01 | U | seq 10 다음 9 | 폐기, order +1 | `SeqTracker.REQ_COM_006_older_rejected` |
 | TC-COM-006-02 | U | seq 10 다음 10 (중복) | 폐기, order +1 | `SeqTracker.REQ_COM_006_duplicate_rejected` |
-| TC-COM-006-03 | U | RFC 1982 경계: 차이 2^31 − 1 / 2^31 | 수락 / 폐기 (R3-Q5) | `SeqTracker.REQ_COM_006_rfc1982_boundary` |
-| TC-COM-006-04 | U | seq 10, 12(유실 1), 11(늦게 도착) | 11 폐기, order +1, 유실은 1 유지 (R3-Q2) | `SeqTracker.REQ_COM_006_late_arrival_keeps_loss` |
+| TC-COM-006-03 | U | RFC 1982 경계: 차이 2^31 − 1 / 2^31 | 수락 / 폐기 | `SeqTracker.REQ_COM_006_rfc1982_boundary` |
+| TC-COM-006-04 | U | seq 10, 12(유실 1), 11(늦게 도착) | 11 폐기, order +1, 유실은 1 유지 | `SeqTracker.REQ_COM_006_late_arrival_keeps_loss` |
 | TC-COM-006-05 | U | 스트림의 첫 패킷 (seq 임의값) | 수락, 기준값으로 사용 | `SeqTracker.REQ_COM_006_first_packet_is_base` |
 
 ### 3.7 REQ-COM-007 HEARTBEAT 1Hz 송신
@@ -164,7 +164,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
 | TC-COM-007-01 | U | 가짜 시계로 3.0s 진행 | HEARTBEAT 3개: msg_type `0x20`, payload_len 0, seq 0·1·2, CRC 유효 | `Heartbeat.REQ_COM_007_emits_1hz` |
-| TC-COM-007-02 | U | 차량 링크 LOST 상태에서 진행 | HEARTBEAT 계속 송신 (R3-Q4) | `Heartbeat.REQ_COM_007_sent_while_lost` |
+| TC-COM-007-02 | U | 차량 링크 LOST 상태에서 진행 | HEARTBEAT 계속 송신 | `Heartbeat.REQ_COM_007_sent_while_lost` |
 | TC-COM-007-03 | I | 모의 SIM이 UDP 15010에서 30개 수신 | 간격이 모두 1000 ± 100ms | `test_REQ_COM_007_heartbeat_interval` |
 
 ### 3.8 REQ-QUAL-001 직렬화·검증 규칙 단위 시험 (검사)
@@ -209,8 +209,16 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 ---
 
-## 5. 미확정 사항
+## 5. 판정 규칙 보충 (SRS v0.2·ICD v0.2 반영 예정)
 
-| ID | 내용 |
-|---|---|
-| R3-Q1 ~ Q5 | STP 그릴링 3라운드에서 확정 (초기 링크 상태, 늦게 도착한 패킷의 유실 처리, count 초과의 오류 분류, HEARTBEAT 송신 조건, RFC 1982 경계) |
+| 항목 | 규칙 | 관련 TC |
+|---|---|---|
+| 초기 링크 상태 | 첫 유효 패킷 수신 전은 LOST. 시작 시 초기값은 전이가 아니므로 이벤트 없음 | TC-COM-003-01, TC-COM-004-04 |
+| 판정 경계 | 경과 시간 ≥ 0.5s DEGRADED, ≥ 1.0s LOST | TC-COM-003-02 ~ 05 |
+| seq 판정 단위 | 스트림(송신원, msg_type)별. 링크 상태는 송신원별 | TC-COM-005-07, TC-COM-003-09 |
+| 중복 seq | 역순 도착으로 보고 order 계수 | TC-COM-006-02 |
+| 늦게 도착한 패킷 | order로 폐기, 이미 센 유실은 되돌리지 않음 | TC-COM-006-04 |
+| RFC 1982 경계 | 차이가 정확히 2^31이면 "크지 않음" → 폐기 | TC-COM-006-03 |
+| DETECTION count 초과 | count와 길이가 맞으면 ⑦ 통과, ⑧ range로 폐기 | TC-COM-002-11 |
+| 유실률 | 유실 / (수신 + 유실), 1초 버킷 10개, 창이 비면 null | TC-COM-005-04 ~ 06 |
+| HEARTBEAT | 차량 링크 상태와 무관하게 GW 동작 중 항상 1Hz 송신 | TC-COM-007-02 |
