@@ -65,3 +65,18 @@ def test_link_goes_lost_after_packets_stop(gateway):
             if not states or states[-1] != m["data"]["state"]:
                 states.append(m["data"]["state"])
     assert states[-3:] == ["CONNECTED", "DEGRADED", "LOST"], states
+
+
+def test_sim_uplink_parses_gateway_heartbeats(gateway):
+    """GW(C++)가 보낸 HEARTBEAT를 SIM(Python) 수신부가 해석한다: seq 증가, 검증 통과 (IF-01b)."""
+    from ugvc_sim.uplink import Heartbeat, parse_uplink
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", gateway.sim_port))
+    sock.settimeout(3.0)
+    try:
+        msgs = [parse_uplink(sock.recvfrom(2048)[0]) for _ in range(2)]
+    finally:
+        sock.close()
+    assert all(isinstance(m, Heartbeat) for m in msgs), msgs
+    assert msgs[1].seq == msgs[0].seq + 1

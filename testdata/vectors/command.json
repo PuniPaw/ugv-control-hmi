@@ -1,0 +1,50 @@
+{
+  "schema": "ugvc-command-vectors/1",
+  "generator": "tools/vectors/gen_vectors.py",
+  "vectors": [
+    {
+      "name": "command_stop",
+      "note": "STOP, 좌표 0",
+      "fields": {
+        "cmd_id": 1,
+        "cmd_type": 1,
+        "lat": 0,
+        "lon": 0
+      },
+      "payload_hex": "00000001010000000000000000"
+    },
+    {
+      "name": "command_rtb",
+      "note": "RTB, 좌표 0",
+      "fields": {
+        "cmd_id": 2,
+        "cmd_type": 2,
+        "lat": 0,
+        "lon": 0
+      },
+      "payload_hex": "00000002020000000000000000"
+    },
+    {
+      "name": "command_waypoint",
+      "note": "WAYPOINT 36.1240000, 127.7660000",
+      "fields": {
+        "cmd_id": 3,
+        "cmd_type": 3,
+        "lat": 361240000,
+        "lon": 1277660000
+      },
+      "payload_hex": "0000000303158815c04c278b60"
+    },
+    {
+      "name": "command_waypoint_negative",
+      "note": "WAYPOINT 남서반구 (음수 좌표)",
+      "fields": {
+        "cmd_id": 4294967295,
+        "cmd_type": 3,
+        "lat": -337000000,
+        "lon": -706000000
+      },
+      "payload_hex": "ffffffff03ebe9c9c0d5eb4b80"
+    }
+  ]
+}
