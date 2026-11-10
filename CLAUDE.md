@@ -90,7 +90,9 @@
 4. REQ-COM-003: 경계는 `≥` (정확히 0.5s에 DEGRADED, 1.0s에 LOST)
 5. REQ-COM-006: 중복 seq도 역순 도착으로 보고 `order` 계수
 6. 초기 링크 상태 LOST(시작 시 이벤트 없음), 늦게 도착한 패킷은 유실 차감 없음, RFC 1982 차이 정확히 2^31은 폐기, DETECTION count 초과는 range, HEARTBEAT는 링크 상태와 무관하게 송신 (STP 5장 표가 정리본)
-7. REQ-HMI-004의 2.0s는 GW LOST 판정(1.0s) + WS 전달 + 화면 반영 합계. STP에서 측정 구간과 방법을 정할 것
+7. SIM의 COMMAND 필드 검증(cmd_id ≥ 1, cmd_type 표 6-4, WAYPOINT 좌표 범위 → 폐기 원인 range)을 요구사항으로 신설. 현재 시험 이름은 `test_ICD_6_3_*`
+8. REQ-SAFE-001: "HEARTBEAT를 한 번도 못 받은 경우도 시작 시각부터 3.0초 미수신으로 본다"를 명시 (SIM `HeartbeatWatch(start=...)`)
+9. REQ-HMI-004의 2.0s는 GW LOST 판정(1.0s) + WS 전달 + 화면 반영 합계. STP에서 측정 구간과 방법을 정할 것
 
 ### 미확정 사항
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)

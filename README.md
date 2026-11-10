@@ -50,7 +50,15 @@ ctest --test-dir build --output-on-failure
 tools/cppcheck.sh
 ```
 
-`gateway/build/compile_commands.json`을 쓰므로 cmake configure를 먼저 해야 합니다. 경고가 1건이라도 있으면 실패합니다. 예외는 `gateway/cppcheck-suppressions.txt`에 사유와 함께 적습니다 (REQ-QUAL-002).
+`gateway/build/compile_commands.json`을 쓰므로 cmake configure를 먼저 해야 합니다. 외부 의존성 헤더는 읽지 않게 걸러서 우리 파일이 모두 검사되도록 합니다. 경고가 1건이라도 있으면 실패합니다. 예외는 `gateway/cppcheck-suppressions.txt`에 사유와 함께 적습니다 (REQ-QUAL-002).
+
+## STP ↔ 테스트 이름 확인
+
+```bash
+python3 tools/check_stp_tests.py gateway/build/ugvc_tests
+```
+
+STP "테스트" 열의 이름이 실제 테스트에 없으면 실패합니다 (RTM을 grep으로 만들기 위한 전제). 통합 시험에도 포함되어 있습니다.
 
 ## 실행: SIM → GW
 

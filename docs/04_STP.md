@@ -98,7 +98,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 |---|---|---|---|---|
 | TC-COM-002-01 | U | 정상 패킷: TELEMETRY(nominal, 경계 최소·최대), ACK, DETECTION(nominal, count 0, count 32, 박스가 이미지 끝에 딱 맞음) | 없음 (수락) | `Validator.REQ_COM_002_accepts_valid` |
 | TC-COM-002-02 | U | CRC-16/CCITT-FALSE 표준 벡터 ASCII `"123456789"` | 결과 `0x29B1` | `Crc16.REQ_COM_002_standard_vector` |
-| TC-COM-002-03 | U | ① 수신 길이 19바이트 | length | `Validator.REQ_COM_002_rule1_too_short` |
+| TC-COM-002-03 | U | ① 수신 길이 0바이트, 19바이트, 1200바이트 초과(헤더·길이·CRC가 맞는 DETECTION count 200, 2237B와 1201B로 잘린 것) | length | `Validator.REQ_COM_002_rule1_too_short` |
 | TC-COM-002-04 | U | ② sync `0x55AA` | sync | `Validator.REQ_COM_002_rule2_bad_sync` |
 | TC-COM-002-05 | U | ③ version `0x02` | version | `Validator.REQ_COM_002_rule3_bad_version` |
 | TC-COM-002-06 | U | ④ payload_len이 실제보다 1 큼 / 1 작음 | length | `Validator.REQ_COM_002_rule4_len_mismatch` |
@@ -119,12 +119,12 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-COM-003-01 | U | 첫 패킷 수신 전 | LOST | `LinkMonitor.REQ_COM_003_initially_lost` |
-| TC-COM-003-02 | U | t = 0.499s | CONNECTED | `LinkMonitor.REQ_COM_003_connected_before_500ms` |
-| TC-COM-003-03 | U | t = 0.500s | DEGRADED | `LinkMonitor.REQ_COM_003_degraded_at_500ms` |
-| TC-COM-003-04 | U | t = 0.999s | DEGRADED | `LinkMonitor.REQ_COM_003_degraded_before_1s` |
-| TC-COM-003-05 | U | t = 1.000s | LOST | `LinkMonitor.REQ_COM_003_lost_at_1s` |
-| TC-COM-003-06 | U | DEGRADED 중 유효 패킷 수신 | CONNECTED, t 재시작 | `LinkMonitor.REQ_COM_003_valid_packet_resets` |
+| TC-COM-003-01 | U | 첫 패킷 수신 전 | LOST | `LinkFixture.REQ_COM_003_initially_lost` |
+| TC-COM-003-02 | U | t = 0.499s | CONNECTED | `LinkFixture.REQ_COM_003_connected_before_500ms` |
+| TC-COM-003-03 | U | t = 0.500s | DEGRADED | `LinkFixture.REQ_COM_003_degraded_at_500ms` |
+| TC-COM-003-04 | U | t = 0.999s | DEGRADED | `LinkFixture.REQ_COM_003_degraded_before_1s` |
+| TC-COM-003-05 | U | t = 1.000s | LOST | `LinkFixture.REQ_COM_003_lost_at_1s` |
+| TC-COM-003-06 | U | DEGRADED 중 유효 패킷 수신 | CONNECTED, t 재시작 | `LinkFixture.REQ_COM_003_valid_packet_resets` |
 | TC-COM-003-07 | U | t = 0.4s에 폐기 패킷(CRC 오류) 수신 후 t = 0.5s | DEGRADED (폐기 패킷은 타이머를 갱신하지 않음) | `GatewayFixture.REQ_COM_003_rejected_does_not_reset` |
 | TC-COM-003-08 | U | VEHICLE만 패킷 중단, DETECTOR는 계속 수신 | VEHICLE LOST, DETECTOR CONNECTED | `GatewayFixture.REQ_COM_003_sources_independent` |
 | TC-COM-003-09 | U | 송신원의 아무 스트림(TELEMETRY 또는 ACK) 유효 패킷 | 둘 다 같은 송신원 타이머를 갱신 | `GatewayFixture.REQ_COM_003_any_stream_refreshes` |
@@ -133,10 +133,10 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-COM-004-01 | U | LOST 중 유효 패킷 수신 | 즉시 CONNECTED (DEGRADED를 거치지 않음) | `LinkMonitor.REQ_COM_004_lost_to_connected` |
-| TC-COM-004-02 | U | CONNECTED → DEGRADED → LOST → CONNECTED 진행 | 이벤트 3건, 각각 송신원·이전 상태·이후 상태·시각(epoch_ms) | `LinkMonitor.REQ_COM_004_transition_events` |
-| TC-COM-004-03 | U | 같은 상태 유지 중 (패킷 계속 수신, 또는 LOST 지속) | 이벤트 없음 | `LinkMonitor.REQ_COM_004_no_event_without_change` |
-| TC-COM-004-04 | U | 시작 시 첫 판정 | 이벤트 없음 | `LinkMonitor.REQ_COM_004_no_event_at_startup` |
+| TC-COM-004-01 | U | LOST 중 유효 패킷 수신 | 즉시 CONNECTED (DEGRADED를 거치지 않음) | `LinkFixture.REQ_COM_004_lost_to_connected` |
+| TC-COM-004-02 | U | CONNECTED → DEGRADED → LOST → CONNECTED 진행 | 이벤트 3건, 각각 송신원·이전 상태·이후 상태·시각(epoch_ms) | `LinkFixture.REQ_COM_004_transition_events` |
+| TC-COM-004-03 | U | 같은 상태 유지 중 (패킷 계속 수신, 또는 LOST 지속) | 이벤트 없음 | `LinkFixture.REQ_COM_004_no_event_without_change` |
+| TC-COM-004-04 | U | 시작 시 첫 판정 | 이벤트 없음 | `LinkFixture.REQ_COM_004_no_event_at_startup` |
 
 ### 3.5 REQ-COM-005 유실 수, 최근 10초 유실률 1Hz 제공
 
@@ -225,6 +225,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | 중복 seq | 역순 도착으로 보고 order 계수 | TC-COM-006-02 |
 | 늦게 도착한 패킷 | order로 폐기, 이미 센 유실은 되돌리지 않음 | TC-COM-006-04 |
 | RFC 1982 경계 | 차이가 정확히 2^31이면 "크지 않음" → 폐기 | TC-COM-006-03 |
-| DETECTION count 초과 | count와 길이가 맞으면 ⑦ 통과, ⑧ range로 폐기 | TC-COM-002-11 |
+| 최대 길이 | 수신 길이 > 1200이면 ①에서 length. 헤더·길이·CRC가 서로 맞아도 마찬가지 (GW 수신 버퍼는 1201B라 초과분은 잘려서 들어온다) | TC-COM-002-03 |
+| DETECTION count 초과 | count와 길이가 맞으면 ⑦ 통과, ⑧ range로 폐기. 1200B 안에 들어가는 count 33~105가 해당 | TC-COM-002-11 |
+| 출력이 막힐 때 | stdout을 읽는 쪽이 멈춰도 판정 주기와 HEARTBEAT 1Hz는 계속된다. 출력 대기열(1000줄)을 넘는 줄은 버리고 stderr에 개수를 알린다 | `test_REQ_COM_007_heartbeat_continues_when_stdout_reader_stalls` |
 | 유실률 | 유실 / (수신 + 유실), 1초 버킷 10개, 창이 비면 null. seq·유실은 스트림별로 세고, IF-03 `stats`는 송신원 단위이므로 그 송신원의 모든 스트림을 합산해 보고한다 | TC-COM-005-04 ~ 07 |
 | HEARTBEAT | 차량 링크 상태와 무관하게 GW 동작 중 항상 1Hz 송신 | TC-COM-007-02 |
