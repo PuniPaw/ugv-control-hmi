@@ -1,0 +1,33 @@
+{
+  "schema": "ugvc-ack-vectors/1",
+  "generator": "tools/vectors/gen_vectors.py",
+  "vectors": [
+    {
+      "name": "ack_result_0",
+      "fields": {
+        "cmd_id": 1000,
+        "result": 0
+      },
+      "payload_hex": "000003e800",
+      "expect": "accept"
+    },
+    {
+      "name": "ack_result_1",
+      "fields": {
+        "cmd_id": 1001,
+        "result": 1
+      },
+      "payload_hex": "000003e901",
+      "expect": "accept"
+    },
+    {
+      "name": "ack_result_2",
+      "fields": {
+        "cmd_id": 1002,
+        "result": 2
+      },
+      "payload_hex": "000003ea02",
+      "expect": "accept"
+    }
+  ]
+}

@@ -20,6 +20,8 @@ add_library(ugvc_codec
   src/codec/crc16.cpp
   src/codec/frame.cpp
   src/codec/telemetry.cpp
+  src/codec/detection.cpp
+  src/codec/ack.cpp
 )
 target_include_directories(ugvc_codec PUBLIC include)
 target_link_libraries(ugvc_codec PRIVATE ugvc_warnings)
@@ -49,6 +51,13 @@ target_include_directories(ugvc_asio SYSTEM INTERFACE ${asio_SOURCE_DIR}/asio/in
 target_compile_definitions(ugvc_asio INTERFACE ASIO_STANDALONE ASIO_NO_DEPRECATED)
 target_link_libraries(ugvc_asio INTERFACE Threads::Threads)
 
+# ingress: 수신 검증 규칙 ①~⑨, 원인별 계수 (ICD 9장)
+add_library(ugvc_ingress
+  src/ingress/validator.cpp
+)
+target_include_directories(ugvc_ingress PUBLIC include)
+target_link_libraries(ugvc_ingress PUBLIC ugvc_codec PRIVATE ugvc_warnings)
+
 # GW 실행 파일
 add_executable(ugvc_gateway src/app/main.cpp)
 target_link_libraries(ugvc_gateway PRIVATE ugvc_codec ugvc_asio nlohmann_json::nlohmann_json ugvc_warnings)
@@ -70,10 +79,13 @@ if(UGVC_BUILD_TESTS)
     tests/codec/crc16_test.cpp
     tests/codec/frame_test.cpp
     tests/codec/telemetry_test.cpp
+    tests/codec/detection_ack_test.cpp
+    tests/ingress/validator_test.cpp
+    tests/ingress/seq_tracker_test.cpp
   )
   target_include_directories(ugvc_tests PRIVATE tests)
   target_link_libraries(ugvc_tests PRIVATE
-    ugvc_codec ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
+    ugvc_ingress ugvc_codec ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
   # 공용 테스트 벡터 위치 (STP 2.4)
   target_compile_definitions(ugvc_tests PRIVATE
     UGVC_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../testdata")
