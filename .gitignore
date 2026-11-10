@@ -1,0 +1,22 @@
+# C++ build
+build/
+cmake-build-*/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Node / HMI
+node_modules/
+dist/
+
+# Test results (JUnit XML 등, STR 생성 시 다시 만든다)
+test-results/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
