@@ -183,6 +183,11 @@ VALIDATION = [
     # ① 길이 < 20
     case("TC-COM-002-03", "empty_datagram", V, b"", "length"),
     case("TC-COM-002-03", "len_19", V, GOOD_TEL[:19], "length"),
+    # 최대 1200B 초과: 헤더·길이·CRC가 서로 맞는 DETECTION count 200(2237B)도 ①에서 length (count 초과 range보다 먼저)
+    case("TC-COM-002-03", "datagram_over_1200_detection_count_200", D,
+         raw_frame(MSG_DETECTION, det(objects=[(0, 5000, 0, 0, 1, 1)] * 200)), "length"),
+    case("TC-COM-002-03", "datagram_1201_truncated", D,
+         raw_frame(MSG_DETECTION, det(objects=[(0, 5000, 0, 0, 1, 1)] * 200))[:1201], "length"),
     # ② sync
     case("TC-COM-002-04", "sync_swapped", V, raw_frame(MSG_TELEMETRY, TEL_OK, sync=0x55AA), "sync"),
     # ③ version
@@ -225,6 +230,29 @@ VALIDATION = [
     # 여러 규칙 동시 위반 → 첫 규칙만
     case("TC-COM-002-13", "sync_and_crc_wrong", V, raw_frame(MSG_TELEMETRY, TEL_OK, sync=0x55AA, crc_xor=0x00FF), "sync"),
     case("TC-COM-002-13", "crc_and_range_wrong", V, raw_frame(MSG_TELEMETRY, tel(battery=200), crc_xor=0x00FF), "crc"),
+]
+
+
+# ---------------------------------------------------------------- command.json (ICD 6.3, GW → SIM)
+
+COMMAND_FMT = ">IBii"  # cmd_id, cmd_type, lat, lon
+assert struct.calcsize(COMMAND_FMT) == 13
+
+
+def command_entry(name, note, cmd_id, cmd_type, lat=0, lon=0) -> dict:
+    return {
+        "name": name,
+        "note": note,
+        "fields": {"cmd_id": cmd_id, "cmd_type": cmd_type, "lat": lat, "lon": lon},
+        "payload_hex": struct.pack(COMMAND_FMT, cmd_id, cmd_type, lat, lon).hex(),
+    }
+
+
+COMMAND = [
+    command_entry("command_stop", "STOP, 좌표 0", 1, 0x01),
+    command_entry("command_rtb", "RTB, 좌표 0", 2, 0x02),
+    command_entry("command_waypoint", "WAYPOINT 36.1240000, 127.7660000", 3, 0x03, 361240000, 1277660000),
+    command_entry("command_waypoint_negative", "WAYPOINT 남서반구 (음수 좌표)", 0xFFFFFFFF, 0x03, -337000000, -706000000),
 ]
 
 
@@ -273,4 +301,10 @@ write("validation.json", {
     "generator": "tools/vectors/gen_vectors.py",
     "note": "ICD 9장 규칙 ①~⑧. expect는 accept 또는 첫 실패 규칙의 오류 계수 이름. 규칙 ⑨(seq)는 상태가 필요해 단위 시험에서 다룬다.",
     "cases": VALIDATION,
+})
+
+write("command.json", {
+    "schema": "ugvc-command-vectors/1",
+    "generator": "tools/vectors/gen_vectors.py",
+    "vectors": COMMAND,
 })

@@ -3,6 +3,7 @@
 // 폐기 원인과 원인별 오류 계수 (ICD 9장, IF-03 stats.errors)
 
 #include <array>
+#include <numeric>
 #include <cstddef>
 #include <cstdint>
 
@@ -33,9 +34,7 @@ class ErrorCounters {
   std::uint64_t operator[](RejectReason r) const { return counts_[static_cast<std::size_t>(r)]; }
 
   std::uint64_t total() const {
-    std::uint64_t sum = 0;
-    for (auto c : counts_) sum += c;
-    return sum;
+    return std::accumulate(counts_.begin(), counts_.end(), std::uint64_t{0});
   }
 
  private:

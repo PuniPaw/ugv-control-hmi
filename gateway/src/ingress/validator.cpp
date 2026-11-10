@@ -74,16 +74,16 @@ constexpr std::array<InboundRule, 3> kInboundRules{{
 }};
 
 const InboundRule* find_rule(Source source, std::uint8_t msg_type) {
-  for (const auto& r : kInboundRules) {
-    if (r.msg_type == msg_type && r.source == source) return &r;
-  }
-  return nullptr;
+  const auto it = std::find_if(kInboundRules.begin(), kInboundRules.end(), [&](const InboundRule& r) {
+    return r.msg_type == msg_type && r.source == source;
+  });
+  return it == kInboundRules.end() ? nullptr : &*it;
 }
 
 }  // namespace
 
 CheckResult check_frame(Source source, const std::uint8_t* data, std::size_t len) {
-  if (len < kFrameOverhead) return RejectReason::Length;                      // ①
+  if (len < kFrameOverhead || len > kMaxFrameSize) return RejectReason::Length;  // ①
   const Header h = *decode_header(data, len);
   if (h.sync != kSync) return RejectReason::Sync;                             // ②
   if (h.version != kVersion) return RejectReason::Version;                    // ③

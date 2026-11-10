@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "support/vectors.hpp"
 
 using namespace ugvc::codec;
@@ -16,12 +18,10 @@ const nlohmann::json& telemetry_vectors() {
 }
 
 nlohmann::json find(const std::string& name) {  // 값 반환: 시험용이라 복사 비용 무시
-  for (const auto& v : telemetry_vectors().at("vectors")) {
-    if (v.at("name") == name) {
-      return v;
-    }
-  }
-  throw std::runtime_error("no telemetry vector: " + name);
+  const auto& vs = telemetry_vectors().at("vectors");
+  const auto it = std::find_if(vs.begin(), vs.end(), [&](const nlohmann::json& v) { return v.at("name") == name; });
+  if (it == vs.end()) throw std::runtime_error("no telemetry vector: " + name);
+  return *it;
 }
 
 Telemetry fields_of(const nlohmann::json& v) {
