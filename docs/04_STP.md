@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.1 (초안) |
+| 버전 | v0.2 (초안) |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, UGVC-ICD-001, ADR-002 |
 
@@ -13,6 +13,7 @@
 | 버전 | 날짜 | 변경 내용 |
 |---|---|---|
 | v0.1 | 2026-11-10 | 최초 작성. 통신(COM), 품질(QUAL-001) 시험 케이스 |
+| v0.2 | 2026-11-17 | 검증 규칙 벡터(`validation.json`) 연결, TC-COM-002-11 케이스 보강(class_id, y·h 경계), TC-QUAL-001 체크리스트에 DETECTION·ACK·헤더 시험 반영 |
 
 ---
 
@@ -91,9 +92,11 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 공통 기대 결과: 해당 패킷 폐기, 표의 오류 계수만 1 증가, 나머지 계수와 수신 계수는 변화 없음.
 
+입력은 `testdata/vectors/validation.json`의 case이며, 각 case의 `tc` 필드가 아래 TC ID다. 실패 case는 겨냥한 규칙 하나만 어기고 나머지는 맞게 만든다(예: sync만 틀린 프레임도 CRC는 다시 계산). 시험은 파일의 모든 case가 어느 TC에 속하는지도 확인한다(`Validator.AllVectorCasesAreCovered`).
+
 | TC ID | 수준 | 내용 (ICD 9장 순서) | 오류 계수 | 테스트 |
 |---|---|---|---|---|
-| TC-COM-002-01 | U | 정상 패킷 (기준선) | 없음 (수락) | `Validator.REQ_COM_002_accepts_valid` |
+| TC-COM-002-01 | U | 정상 패킷: TELEMETRY(nominal, 경계 최소·최대), ACK, DETECTION(nominal, count 0, count 32, 박스가 이미지 끝에 딱 맞음) | 없음 (수락) | `Validator.REQ_COM_002_accepts_valid` |
 | TC-COM-002-02 | U | CRC-16/CCITT-FALSE 표준 벡터 ASCII `"123456789"` | 결과 `0x29B1` | `Crc16.REQ_COM_002_standard_vector` |
 | TC-COM-002-03 | U | ① 수신 길이 19바이트 | length | `Validator.REQ_COM_002_rule1_too_short` |
 | TC-COM-002-04 | U | ② sync `0x55AA` | sync | `Validator.REQ_COM_002_rule2_bad_sync` |
@@ -103,9 +106,9 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-002-08 | U | ⑥ 15001 포트에 DETECTION, 15002 포트에 TELEMETRY, 정의되지 않은 type `0x99` | type | `Validator.REQ_COM_002_rule6_type_not_allowed` |
 | TC-COM-002-09 | U | ⑦ TELEMETRY N=15, ACK N=6, DETECTION count=2인데 N=17+11 | length | `Validator.REQ_COM_002_rule7_type_length` |
 | TC-COM-002-10 | U | ⑧ TELEMETRY 범위 밖: lat 900000001, lon -1800000001, heading 36000, speed 3001, battery 101, mode 5 | range | `Validator.REQ_COM_002_rule8_telemetry_range` |
-| TC-COM-002-11 | U | ⑧ DETECTION 범위 밖: img_w 0·4097, count 33 (길이는 count에 맞춤), confidence 10001, x = img_w, x + w > img_w, w 0 | range | `Validator.REQ_COM_002_rule8_detection_range` |
+| TC-COM-002-11 | U | ⑧ DETECTION 범위 밖: img_w 0·4097, img_h 0, count 33 (길이는 count에 맞춤), confidence 10001, x = img_w, y = img_h, x + w > img_w, y + h > img_h, w 0, h 0, 표 6-3에 없는 class_id 3 | range | `Validator.REQ_COM_002_rule8_detection_range` |
 | TC-COM-002-12 | U | ⑧ ACK result 3 | range | `Validator.REQ_COM_002_rule8_ack_range` |
-| TC-COM-002-13 | U | 여러 규칙 동시 위반 (sync와 CRC 모두 틀림) | sync만 증가 (첫 실패 규칙) | `Validator.REQ_COM_002_first_failure_only` |
+| TC-COM-002-13 | U | 여러 규칙 동시 위반 (sync와 CRC, CRC와 범위) | 첫 실패 규칙만 증가 (sync, crc) | `Validator.REQ_COM_002_first_failure_only` |
 | TC-COM-002-14 | U | 계수 누적: 같은 원인 3회, 다른 원인 1회 | 원인별로 정확히 누적 | `Validator.REQ_COM_002_counters_accumulate` |
 
 규칙 ⑨(seq 순서)는 3.6절에서 다룬다.
@@ -181,7 +184,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | 규칙 ⑨ | TC-COM-006-01 ~ 05 |
 | CRC 알고리즘 | TC-COM-002-02 |
 | TELEMETRY | TC-COM-001-01 ~ 04 |
-| DETECTION, ACK | TC-COM-002-09, 11, 12 (디코딩 정상 케이스는 v0.2에 추가) |
+| DETECTION, ACK | TC-COM-002-01, 09, 11, 12, `Codec.REQ_QUAL_001_detection_matches_vectors`, `Codec.REQ_QUAL_001_ack_matches_vectors` |
+| 헤더·big-endian | `Frame.REQ_QUAL_001_*`, `Bytes.REQ_QUAL_001_*` |
 | COMMAND, HEARTBEAT (GW 송신) | TC-COM-007-01 (COMMAND 인코딩은 CMD TC에서 추가) |
 
 ---

@@ -1,0 +1,343 @@
+{
+  "schema": "ugvc-validation-vectors/1",
+  "generator": "tools/vectors/gen_vectors.py",
+  "note": "ICD 9장 규칙 ①~⑧. expect는 accept 또는 첫 실패 규칙의 오류 계수 이름. 규칙 ⑨(seq)는 상태가 필요해 단위 시험에서 다룬다.",
+  "cases": [
+    {
+      "tc": "TC-COM-002-01",
+      "name": "telemetry_nominal",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c277531221501c24c01000307dd",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-01",
+      "name": "ack_accepted",
+      "source": "VEHICLE",
+      "hex": "aa55011100000001000001a1de38640000050000000100dcb4",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-01",
+      "name": "detection_nominal",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de38640000270000002a000001a1de3863dd028001e0020023be0064007800320096011f40012c00c800780050b3ac",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-01",
+      "name": "detection_empty",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de38640000110000002b000001a1de3863e2028001e000fb5e",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-01",
+      "name": "detection_max_count",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de38640001710000002c000001a1de3863e7028001e020ff138800000000000a000aff1388000a0000000a000aff138800140000000a000aff1388001e0000000a000aff138800280000000a000aff138800320000000a000aff1388003c0000000a000aff138800460000000a000aff138800500000000a000aff1388005a0000000a000aff138800640000000a000aff1388006e0000000a000aff138800780000000a000aff138800820000000a000aff1388008c0000000a000aff138800960000000a000aff138800a00000000a000aff138800aa0000000a000aff138800b40000000a000aff138800be0000000a000aff138800c80000000a000aff138800d20000000a000aff138800dc0000000a000aff138800e60000000a000aff138800f00000000a000aff138800fa0000000a000aff138801040000000a000aff1388010e0000000a000aff138801180000000a000aff138801220000000a000aff1388012c0000000a000aff138801360000000a000add5a",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-01",
+      "name": "detection_box_at_edge",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002d000001a1de386400028001e00102271002580190002800501e93",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-01",
+      "name": "telemetry_bounds_min",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010ca5b170094b62e00000000000000000030e3",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-01",
+      "name": "telemetry_bounds_max",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de386400001035a4e9006b49d2008c9f0bb86404000f6ece",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-001-04",
+      "name": "telemetry_reserved_bits",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c277531221501c24c01fff3eb3d",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-COM-002-03",
+      "name": "empty_datagram",
+      "source": "VEHICLE",
+      "hex": "",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-03",
+      "name": "len_19",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de386400001015",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-04",
+      "name": "sync_swapped",
+      "source": "VEHICLE",
+      "hex": "55aa010100000001000001a1de3864000010158800874c277531221501c24c010003ae65",
+      "expect": "sync"
+    },
+    {
+      "tc": "TC-COM-002-05",
+      "name": "version_2",
+      "source": "VEHICLE",
+      "hex": "aa55020100000001000001a1de3864000010158800874c277531221501c24c010003ec17",
+      "expect": "version"
+    },
+    {
+      "tc": "TC-COM-002-06",
+      "name": "payload_len_plus_1",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000011158800874c277531221501c24c010003173f",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-06",
+      "name": "payload_len_minus_1",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de386400000f158800874c277531221501c24c010003ec62",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-07",
+      "name": "payload_bit_flip",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158801874c277531221501c24c01000307dd",
+      "expect": "crc"
+    },
+    {
+      "tc": "TC-COM-002-07",
+      "name": "crc_field_flip",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c277531221501c24c01000307dc",
+      "expect": "crc"
+    },
+    {
+      "tc": "TC-COM-002-08",
+      "name": "detection_on_vehicle_port",
+      "source": "VEHICLE",
+      "hex": "aa55010200000001000001a1de38640000270000002a000001a1de3863dd028001e0020023be0064007800320096011f40012c00c800780050b3ac",
+      "expect": "type"
+    },
+    {
+      "tc": "TC-COM-002-08",
+      "name": "telemetry_on_detector_port",
+      "source": "DETECTOR",
+      "hex": "aa55010100000001000001a1de3864000010158800874c277531221501c24c01000307dd",
+      "expect": "type"
+    },
+    {
+      "tc": "TC-COM-002-08",
+      "name": "command_inbound",
+      "source": "VEHICLE",
+      "hex": "aa55011000000001000001a1de386400000d00000000000000000000000000b45a",
+      "expect": "type"
+    },
+    {
+      "tc": "TC-COM-002-08",
+      "name": "undefined_type_0x99",
+      "source": "VEHICLE",
+      "hex": "aa55019900000001000001a1de3864000000032e",
+      "expect": "type"
+    },
+    {
+      "tc": "TC-COM-002-09",
+      "name": "telemetry_n15",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de386400000f158800874c277531221501c24c010023c8",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-09",
+      "name": "ack_n6",
+      "source": "VEHICLE",
+      "hex": "aa55011100000001000001a1de38640000060000000100006673",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-09",
+      "name": "detection_count2_one_object",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e0020023be00640078003200967077",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-09",
+      "name": "detection_n16",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de38640000100000002a000001a1de3863dd028001e0ab9e",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_lat_900000001",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de386400001035a4e9014c277531221501c24c0100032be5",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_lat_-900000001",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010ca5b16ff4c277531221501c24c010003ade6",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_lon_1800000001",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800876b49d201221501c24c010003e922",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_lon_-1800000001",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de38640000101588008794b62dff221501c24c01000367c1",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_heading_36000",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c2775318ca001c24c01000394f6",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_speed_3001",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c27753122150bb94c01000370a6",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_battery_101",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c277531221501c265010003c3e4",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-10",
+      "name": "telemetry_mode_5",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c277531221501c24c050003db1d",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "img_w_0",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de38640000110000002a000001a1de386400000001e00000b8",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "img_w_4097",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de38640000110000002a000001a1de386400100101e0007256",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "img_h_0",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de38640000110000002a000001a1de3864000280000000be81",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "count_33",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400017c0000002a000001a1de386400028001e021ff138800000000000a000aff1388000a0000000a000aff138800140000000a000aff1388001e0000000a000aff138800280000000a000aff138800320000000a000aff1388003c0000000a000aff138800460000000a000aff138800500000000a000aff1388005a0000000a000aff138800640000000a000aff1388006e0000000a000aff138800780000000a000aff138800820000000a000aff1388008c0000000a000aff138800960000000a000aff138800a00000000a000aff138800aa0000000a000aff138800b40000000a000aff138800be0000000a000aff138800c80000000a000aff138800d20000000a000aff138800dc0000000a000aff138800e60000000a000aff138800f00000000a000aff138800fa0000000a000aff138801040000000a000aff1388010e0000000a000aff138801180000000a000aff138801220000000a000aff1388012c0000000a000aff138801360000000a000aff00010000000a00010001261c",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "confidence_10001",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e00100271100000000000100015a1b",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "x_eq_img_w",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e0010013880280000000010001507a",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "y_eq_img_h",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e001001388000001e0000100010a89",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "box_past_right_edge",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e0010013880258000000290001adde",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "box_past_bottom_edge",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e00100138800000190000100514dfa",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "w_0",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e00100138800000000000000014315",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "h_0",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e00100138800000000000100006404",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-11",
+      "name": "class_id_3_undefined",
+      "source": "DETECTOR",
+      "hex": "aa55010200000001000001a1de386400001c0000002a000001a1de386400028001e00103138800000000000100010cdf",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-12",
+      "name": "ack_result_3",
+      "source": "VEHICLE",
+      "hex": "aa55011100000001000001a1de38640000050000000103ecd7",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-COM-002-13",
+      "name": "sync_and_crc_wrong",
+      "source": "VEHICLE",
+      "hex": "55aa010100000001000001a1de3864000010158800874c277531221501c24c010003ae9a",
+      "expect": "sync"
+    },
+    {
+      "tc": "TC-COM-002-13",
+      "name": "crc_and_range_wrong",
+      "source": "VEHICLE",
+      "hex": "aa55010100000001000001a1de3864000010158800874c277531221501c2c801000310eb",
+      "expect": "crc"
+    }
+  ]
+}
