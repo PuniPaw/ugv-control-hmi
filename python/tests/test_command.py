@@ -24,6 +24,6 @@ def test_REQ_QUAL_001_ack_matches_vector(v):
     assert Ack.from_payload(bytes.fromhex(v["payload_hex"])) == a
 
 
-def test_wrong_length_returns_none():
+def test_REQ_QUAL_001_wrong_length_returns_none():
     assert Command.from_payload(bytes(12)) is None
     assert Ack.from_payload(bytes(6)) is None

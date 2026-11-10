@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <set>
 #include <string>
 
@@ -86,10 +87,10 @@ TEST(Validator, REQ_COM_002_accepted_frame_points_at_payload) {
 // TC-COM-002-14: 원인별 계수가 독립적으로 정확히 누적된다
 TEST(Validator, REQ_COM_002_counters_accumulate) {
   auto first_with = [](const std::string& expect) {
-    for (const auto& c : cases()) {
-      if (c.at("expect") == expect) return c;
-    }
-    throw std::runtime_error("no case expecting " + expect);
+    const auto it = std::find_if(cases().begin(), cases().end(),
+                                 [&](const nlohmann::json& c) { return c.at("expect") == expect; });
+    if (it == cases().end()) throw std::runtime_error("no case expecting " + expect);
+    return *it;
   };
   const auto crc_case = first_with("crc");
   const auto sync_case = first_with("sync");

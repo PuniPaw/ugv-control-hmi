@@ -83,7 +83,7 @@ const InboundRule* find_rule(Source source, std::uint8_t msg_type) {
 }  // namespace
 
 CheckResult check_frame(Source source, const std::uint8_t* data, std::size_t len) {
-  if (len < kFrameOverhead) return RejectReason::Length;                      // ①
+  if (len < kFrameOverhead || len > kMaxFrameSize) return RejectReason::Length;  // ①
   const Header h = *decode_header(data, len);
   if (h.sync != kSync) return RejectReason::Sync;                             // ②
   if (h.version != kVersion) return RejectReason::Version;                    // ③

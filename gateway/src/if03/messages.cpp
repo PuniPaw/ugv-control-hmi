@@ -1,5 +1,8 @@
 #include "ugvc/if03/messages.hpp"
 
+#include <algorithm>
+#include <iterator>
+
 namespace ugvc::if03 {
 namespace {
 
@@ -44,10 +47,10 @@ json flag_names(std::uint16_t f) {
 
 json telemetry(const Header& h, const Telemetry& t, std::uint64_t rx_ts) {
   return envelope("telemetry", rx_ts,
-                  {{"lat", t.lat * 1e-7},
-                   {"lon", t.lon * 1e-7},
-                   {"heading_deg", t.heading * 0.01},
-                   {"speed_mps", t.speed * 0.01},
+                  {{"lat", t.lat / 1e7},  // 곱하기(× 1e-7)는 1e-7이 이진수로 정확하지 않아 36.123456399999995 같은 값이 나온다
+                   {"lon", t.lon / 1e7},
+                   {"heading_deg", t.heading / 100.0},
+                   {"speed_mps", t.speed / 100.0},
                    {"battery_pct", t.battery},
                    {"mode", mode_name(t.mode)},
                    {"flags", flag_names(t.status_flags)},
@@ -57,14 +60,14 @@ json telemetry(const Header& h, const Telemetry& t, std::uint64_t rx_ts) {
 
 json detection(const Detection& d, std::uint64_t rx_ts) {
   json objects = json::array();
-  for (const auto& o : d.objects) {
-    objects.push_back({{"class", class_name(o.class_id)},
-                       {"conf", o.confidence * 1e-4},
-                       {"x", o.x},
-                       {"y", o.y},
-                       {"w", o.w},
-                       {"h", o.h}});
-  }
+  std::transform(d.objects.begin(), d.objects.end(), std::back_inserter(objects), [](const DetectedObject& o) {
+    return json{{"class", class_name(o.class_id)},
+                {"conf", o.confidence / 1e4},
+                {"x", o.x},
+                {"y", o.y},
+                {"w", o.w},
+                {"h", o.h}};
+  });
   return envelope("detection", rx_ts,
                   {{"frame_id", d.frame_id},
                    {"capture_ts", d.capture_ts},

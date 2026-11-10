@@ -75,3 +75,22 @@ TEST(If03, REQ_AI_001_detection_fields) {
   EXPECT_EQ(m["data"]["objects"][0]["class"], "PERSON");
   EXPECT_NEAR(m["data"]["objects"][0]["conf"].get<double>(), 0.915, 1e-9);
 }
+
+// 정수 LSB → 공학 단위가 가장 가까운 십진수로 나온다 (× 1e-7은 36.123456399999995 같은 값을 낸다)
+TEST(If03, REQ_COM_001_engineering_units_are_exact_decimals) {
+  const codec::Telemetry t{361234564, 999999999, 35, 41, 50, 1, 0};
+  const std::string s = if03::telemetry({}, t, 0).dump();
+  EXPECT_NE(s.find("\"lat\":36.1234564"), std::string::npos) << s;
+  EXPECT_NE(s.find("\"lon\":99.9999999"), std::string::npos) << s;
+  EXPECT_NE(s.find("\"heading_deg\":0.35,"), std::string::npos) << s;
+  EXPECT_NE(s.find("\"speed_mps\":0.41}"), std::string::npos) << s;  // 마지막 키 (키는 알파벳순)
+
+  codec::Detection d;
+  d.img_w = 640;
+  d.img_h = 480;
+  d.objects.push_back({0, 1234, 0, 0, 1, 1});
+  d.objects.push_back({0, 3, 0, 0, 1, 1});
+  const std::string ds = if03::detection(d, 0).dump();
+  EXPECT_NE(ds.find("\"conf\":0.1234,"), std::string::npos) << ds;
+  EXPECT_NE(ds.find("\"conf\":0.0003,"), std::string::npos) << ds;
+}
