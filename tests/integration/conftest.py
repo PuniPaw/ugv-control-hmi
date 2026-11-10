@@ -77,6 +77,8 @@ def gateway():
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     line = proc.stderr.readline()
     assert "ugvc_gateway" in line, line
+    # stderr도 계속 비운다: 쌓여서 파이프가 차면 GW의 stderr 쓰기가 블록된다
+    threading.Thread(target=lambda: [None for _ in proc.stderr], daemon=True).start()
     gw = GatewayProc(proc, *ports)
     gw.start_pump()
     yield gw

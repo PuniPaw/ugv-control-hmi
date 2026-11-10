@@ -183,6 +183,11 @@ VALIDATION = [
     # ① 길이 < 20
     case("TC-COM-002-03", "empty_datagram", V, b"", "length"),
     case("TC-COM-002-03", "len_19", V, GOOD_TEL[:19], "length"),
+    # 최대 1200B 초과: 헤더·길이·CRC가 서로 맞는 DETECTION count 200(2237B)도 ①에서 length (count 초과 range보다 먼저)
+    case("TC-COM-002-03", "datagram_over_1200_detection_count_200", D,
+         raw_frame(MSG_DETECTION, det(objects=[(0, 5000, 0, 0, 1, 1)] * 200)), "length"),
+    case("TC-COM-002-03", "datagram_1201_truncated", D,
+         raw_frame(MSG_DETECTION, det(objects=[(0, 5000, 0, 0, 1, 1)] * 200))[:1201], "length"),
     # ② sync
     case("TC-COM-002-04", "sync_swapped", V, raw_frame(MSG_TELEMETRY, TEL_OK, sync=0x55AA), "sync"),
     # ③ version
