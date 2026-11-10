@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-ICD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.1 (초안) |
+| 버전 | v0.2 (작성 중) |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, ADR-001 (영상 경로), ADR-002 (수치 표현·바이트 순서) |
 
@@ -13,6 +13,7 @@
 | 버전 | 날짜 | 변경 내용 |
 |---|---|---|
 | v0.1 | 2026-11-10 | 최초 작성 |
+| v0.2 (작성 중) | 2026-11-17 | 7.1 `stats`: `lost_count`(유실 누계) 추가, `loss_rate_10s`는 창이 비면 `null`. `link_status.last_rx_ts`는 첫 패킷 전 `null` |
 
 ---
 
@@ -194,8 +195,8 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 |---|---|---|
 | `telemetry` | 수신 즉시 | lat, lon, heading_deg, speed_mps, battery_pct, mode, flags[], seq, rx_ts |
 | `detection` | 수신 즉시 | frame_id, capture_ts, img_w, img_h, objects[{class, conf, x, y, w, h}] |
-| `link_status` | 상태 전이 시 + 1Hz | source(`VEHICLE`/`DETECTOR`), state(`CONNECTED`/`DEGRADED`/`LOST`), last_rx_ts |
-| `stats` | 1Hz | source, loss_rate_10s, rx_count, errors{sync, version, length, crc, type, range, order} |
+| `link_status` | 상태 전이 시 + 1Hz | source(`VEHICLE`/`DETECTOR`), state(`CONNECTED`/`DEGRADED`/`LOST`), last_rx_ts(첫 패킷 전 `null`) |
+| `stats` | 1Hz | source, loss_rate_10s(0~1, 창이 비면 `null`), rx_count(유효 패킷 누계), lost_count(유실 누계), errors{sync, version, length, crc, type, range, order} |
 | `cmd_result` | 결과 확정 시 | req_id, cmd_id, result(`ACCEPTED`/`REJECTED_INVALID`/`REJECTED_STATE`/`TIMEOUT`), attempts |
 
 예시:

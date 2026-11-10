@@ -58,9 +58,17 @@ add_library(ugvc_ingress
 target_include_directories(ugvc_ingress PUBLIC include)
 target_link_libraries(ugvc_ingress PUBLIC ugvc_codec PRIVATE ugvc_warnings)
 
-# GW 실행 파일
+# gateway: 수신 처리 중심(Gateway), 링크 상태, 유실률, HEARTBEAT, IF-03 JSON. 소켓 없음 → 단위 시험 대상
+add_library(ugvc_gateway_core
+  src/gateway/gateway.cpp
+  src/if03/messages.cpp
+)
+target_include_directories(ugvc_gateway_core PUBLIC include)
+target_link_libraries(ugvc_gateway_core PUBLIC ugvc_ingress nlohmann_json::nlohmann_json PRIVATE ugvc_warnings)
+
+# GW 실행 파일: 소켓·타이머만 담당
 add_executable(ugvc_gateway src/app/main.cpp)
-target_link_libraries(ugvc_gateway PRIVATE ugvc_codec ugvc_asio nlohmann_json::nlohmann_json ugvc_warnings)
+target_link_libraries(ugvc_gateway PRIVATE ugvc_gateway_core ugvc_asio ugvc_warnings)
 
 if(UGVC_BUILD_TESTS)
   FetchContent_Declare(
@@ -82,10 +90,14 @@ if(UGVC_BUILD_TESTS)
     tests/codec/detection_ack_test.cpp
     tests/ingress/validator_test.cpp
     tests/ingress/seq_tracker_test.cpp
+    tests/link/link_monitor_test.cpp
+    tests/link/loss_window_test.cpp
+    tests/gateway/gateway_test.cpp
+    tests/if03/messages_test.cpp
   )
   target_include_directories(ugvc_tests PRIVATE tests)
   target_link_libraries(ugvc_tests PRIVATE
-    ugvc_ingress ugvc_codec ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
+    ugvc_gateway_core ugvc_ingress ugvc_codec ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
   # 공용 테스트 벡터 위치 (STP 2.4)
   target_compile_definitions(ugvc_tests PRIVATE
     UGVC_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../testdata")

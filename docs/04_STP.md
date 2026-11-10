@@ -86,7 +86,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-001-02 | U | 필드 경계값 디코딩: lat ±900000000, lon ±1800000000, heading 35999, speed 3000, battery 0·100, mode 0·4 (`telemetry_bounds_*`) | 전부 수락, 값 일치 | `Codec.REQ_COM_001_decode_bounds` |
 | TC-COM-001-03 | U | 인코딩 결과가 벡터 hex와 일치 (C++, Python 각각) | 바이트 단위 일치 | `Codec.REQ_COM_001_encode_matches_vector`, `test_REQ_COM_001_encode_matches_vector` |
 | TC-COM-001-04 | U | status_flags 예약 비트(4–15)가 1인 패킷 | 수락, 예약 비트 무시 | `Validator.REQ_COM_001_reserved_bits_ignored` |
-| TC-COM-001-05 | I | 10Hz TELEMETRY 600개(60초) 송신, 3회 반복 | 매 회 rx_count = 600, 유실 0, 오류 계수 전부 0 | `test_REQ_COM_001_10hz_no_loss` |
+| TC-COM-001-05 | I | 10Hz TELEMETRY 600개(60초) 송신, 3회 반복 | 매 회 rx_count = 600, lost_count = 0, 오류 계수 전부 0 | `test_REQ_COM_001_10hz_no_loss` |
 
 ### 3.2 REQ-COM-002 검증 규칙 위반 폐기, 원인별 계수
 
@@ -125,9 +125,9 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-003-04 | U | t = 0.999s | DEGRADED | `LinkMonitor.REQ_COM_003_degraded_before_1s` |
 | TC-COM-003-05 | U | t = 1.000s | LOST | `LinkMonitor.REQ_COM_003_lost_at_1s` |
 | TC-COM-003-06 | U | DEGRADED 중 유효 패킷 수신 | CONNECTED, t 재시작 | `LinkMonitor.REQ_COM_003_valid_packet_resets` |
-| TC-COM-003-07 | U | t = 0.4s에 폐기 패킷(CRC 오류) 수신 후 t = 0.5s | DEGRADED (폐기 패킷은 타이머를 갱신하지 않음) | `LinkMonitor.REQ_COM_003_rejected_does_not_reset` |
-| TC-COM-003-08 | U | VEHICLE만 패킷 중단, DETECTOR는 계속 수신 | VEHICLE LOST, DETECTOR CONNECTED | `LinkMonitor.REQ_COM_003_sources_independent` |
-| TC-COM-003-09 | U | 송신원의 아무 스트림(TELEMETRY 또는 ACK) 유효 패킷 | 둘 다 같은 송신원 타이머를 갱신 | `LinkMonitor.REQ_COM_003_any_stream_refreshes` |
+| TC-COM-003-07 | U | t = 0.4s에 폐기 패킷(CRC 오류) 수신 후 t = 0.5s | DEGRADED (폐기 패킷은 타이머를 갱신하지 않음) | `GatewayFixture.REQ_COM_003_rejected_does_not_reset` |
+| TC-COM-003-08 | U | VEHICLE만 패킷 중단, DETECTOR는 계속 수신 | VEHICLE LOST, DETECTOR CONNECTED | `GatewayFixture.REQ_COM_003_sources_independent` |
+| TC-COM-003-09 | U | 송신원의 아무 스트림(TELEMETRY 또는 ACK) 유효 패킷 | 둘 다 같은 송신원 타이머를 갱신 | `GatewayFixture.REQ_COM_003_any_stream_refreshes` |
 
 ### 3.4 REQ-COM-004 LOST 복귀, 상태 전이 기록
 
@@ -148,9 +148,9 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-005-04 | U | 10초 안에 수신 90, 유실 10 | 유실률 0.1 | `LossRate.REQ_COM_005_formula` |
 | TC-COM-005-05 | U | 11초 전의 유실은 창에서 빠짐 | 해당 유실 제외 | `LossRate.REQ_COM_005_window_10s` |
 | TC-COM-005-06 | U | 창 안에 수신·유실 모두 없음 | `null` | `LossRate.REQ_COM_005_empty_is_null` |
-| TC-COM-005-07 | U | TELEMETRY 스트림 유실, ACK 스트림 연속 | ACK 스트림 유실 0 (스트림 독립) | `SeqTracker.REQ_COM_005_streams_independent` |
-| TC-COM-005-08 | U | 가짜 시계로 3.0s 진행 | `stats` 송신원별 3회 생성 (1Hz) | `StatsReporter.REQ_COM_005_emits_1hz` |
-| TC-COM-005-09 | U | LOST 후 첫 유효 패킷 seq가 크게 바뀜 (송신원 재시작) | 기준값으로 재설정, 유실·order 계수 변화 없음 | `SeqTracker.REQ_COM_005_rebase_after_lost` |
+| TC-COM-005-07 | U | TELEMETRY 스트림 유실, ACK 스트림 연속 | ACK 스트림 유실 0 (스트림 독립) | `GatewayFixture.REQ_COM_005_streams_independent` |
+| TC-COM-005-08 | U | 가짜 시계로 3.0s 진행 (50ms 판정 주기), 이후 5s 멈춤 | 3회 (1Hz), 멈춘 뒤 몰아서 내지 않고 1회. 300ms 간격 호출에도 10초에 10회 | `Periodic.REQ_COM_005_emits_1hz`, `Periodic.REQ_COM_007_no_drift_with_uneven_polling` |
+| TC-COM-005-09 | U | LOST 후 첫 유효 패킷 seq가 크게 바뀜 (송신원 재시작) | 기준값으로 재설정, 유실·order 계수 변화 없음 | `GatewayFixture.REQ_COM_005_rebase_after_lost`, `SeqTracker.REQ_COM_005_rebase_accepts_any_seq` |
 
 ### 3.6 REQ-COM-006 역순 도착 폐기 (검증 규칙 ⑨)
 
@@ -166,7 +166,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-COM-007-01 | U | 가짜 시계로 3.0s 진행 | HEARTBEAT 3개: msg_type `0x20`, payload_len 0, seq 0·1·2, CRC 유효 | `Heartbeat.REQ_COM_007_emits_1hz` |
+| TC-COM-007-01 | U | 가짜 시계로 2.95s 진행 (시작 즉시 1개, 이후 1s마다) | HEARTBEAT 3개: msg_type `0x20`, payload_len 0, seq 0·1·2, CRC 유효 | `Heartbeat.REQ_COM_007_emits_1hz` |
 | TC-COM-007-02 | U | 차량 링크 LOST 상태에서 진행 | HEARTBEAT 계속 송신 | `Heartbeat.REQ_COM_007_sent_while_lost` |
 | TC-COM-007-03 | I | 모의 SIM이 UDP 15010에서 30개 수신 | 간격이 모두 1000 ± 100ms | `test_REQ_COM_007_heartbeat_interval` |
 
@@ -200,7 +200,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
   2. Python 송신기가 `telemetry_nominal` 기반 TELEMETRY를 seq 0부터 100ms 간격으로 600개 보낸다.
   3. 마지막 송신 후 2초 동안 `stats` 출력을 읽는다.
   4. GW를 종료하고 1~3을 총 3회 반복한다.
-- **합격 기준**: 매 회 VEHICLE의 `rx_count` = 600, 유실 0, `errors`의 모든 값 0
+- **합격 기준**: 매 회 VEHICLE의 `rx_count` = 600, `lost_count` = 0, `errors`의 모든 값 0
+- **자동화**: `tests/integration/test_stp_com.py::test_REQ_COM_001_10hz_no_loss` (`-m slow`)
 
 ### TC-COM-007-03 HEARTBEAT 주기
 
@@ -210,6 +211,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
   2. HEARTBEAT 31개를 수신하고 각 수신 시각(`time.monotonic()`)을 기록한다.
   3. 연속한 수신 시각 차이 30개를 계산한다.
 - **합격 기준**: 30개 간격 모두 1000 ± 100ms, 모든 패킷이 검증 규칙 ①~⑤를 통과
+- **자동화**: `tests/integration/test_stp_com.py::test_REQ_COM_007_heartbeat_interval` (`-m slow`)
 
 ---
 
@@ -224,5 +226,5 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | 늦게 도착한 패킷 | order로 폐기, 이미 센 유실은 되돌리지 않음 | TC-COM-006-04 |
 | RFC 1982 경계 | 차이가 정확히 2^31이면 "크지 않음" → 폐기 | TC-COM-006-03 |
 | DETECTION count 초과 | count와 길이가 맞으면 ⑦ 통과, ⑧ range로 폐기 | TC-COM-002-11 |
-| 유실률 | 유실 / (수신 + 유실), 1초 버킷 10개, 창이 비면 null | TC-COM-005-04 ~ 06 |
+| 유실률 | 유실 / (수신 + 유실), 1초 버킷 10개, 창이 비면 null. seq·유실은 스트림별로 세고, IF-03 `stats`는 송신원 단위이므로 그 송신원의 모든 스트림을 합산해 보고한다 | TC-COM-005-04 ~ 07 |
 | HEARTBEAT | 차량 링크 상태와 무관하게 GW 동작 중 항상 1Hz 송신 | TC-COM-007-02 |
