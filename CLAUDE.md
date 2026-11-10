@@ -31,7 +31,9 @@
 - GW: C++17, CMake, standalone Asio(UDP), Boost.Beast 또는 uWebSockets(WebSocket, 미정), GoogleTest, cppcheck, libpq 또는 libpqxx
 - SIM/DET: Python 3, `struct.pack(">...")`로 직렬화
 - HMI: Vue 3 + TypeScript, Leaflet (고도화 단계에서 오프라인 타일)
-- 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/`
+- 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/` + `python/`(ugvc_proto, SIM·DET 공용 codec), `testdata/vectors/`(C++·Python 공용 벡터), `tools/`
+- 테스트 벡터는 `tools/vectors/gen_*.py`가 표준 라이브러리만으로 생성한다 (우리 codec을 import하지 않음 → 독립 기준)
+- C++ 테스트 의존성: GoogleTest v1.15.2, nlohmann/json v3.11.3 (FetchContent, git)
 
 ---
 

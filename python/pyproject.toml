@@ -1,0 +1,19 @@
+[project]
+name = "ugvc-proto"
+version = "0.1.0"
+description = "UGVC ICD 바이너리 메시지 codec (SIM·DET 공용)"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ugvc_proto"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

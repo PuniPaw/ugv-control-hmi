@@ -18,6 +18,7 @@ target_compile_options(ugvc_warnings INTERFACE
 # codec: 바이트 직렬화, CRC16, 헤더 encode/decode (ICD 3~4장)
 add_library(ugvc_codec
   src/codec/crc16.cpp
+  src/codec/frame.cpp
 )
 target_include_directories(ugvc_codec PUBLIC include)
 target_link_libraries(ugvc_codec PRIVATE ugvc_warnings)
@@ -32,13 +33,26 @@ if(UGVC_BUILD_TESTS)
   )
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)  # Windows MSVC 런타임 일치
-  FetchContent_MakeAvailable(googletest)
+  FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
+  )
+  FetchContent_MakeAvailable(googletest nlohmann_json)
 
   enable_testing()
   add_executable(ugvc_tests
+    tests/codec/bytes_test.cpp
     tests/codec/crc16_test.cpp
+    tests/codec/frame_test.cpp
   )
-  target_link_libraries(ugvc_tests PRIVATE ugvc_codec ugvc_warnings GTest::gtest_main)
+  target_include_directories(ugvc_tests PRIVATE tests)
+  target_link_libraries(ugvc_tests PRIVATE
+    ugvc_codec ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
+  # 공용 테스트 벡터 위치 (STP 2.4)
+  target_compile_definitions(ugvc_tests PRIVATE
+    UGVC_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../testdata")
 
   include(GoogleTest)
   gtest_discover_tests(ugvc_tests)
