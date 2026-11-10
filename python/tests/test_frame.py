@@ -48,3 +48,22 @@ def test_REQ_COM_002_short_input_returns_none():
     assert decode_header(bytes(17)) is None
     assert decode_header(bytes(19)) is not None
     assert read_frame_crc(bytes(19)) is None
+
+
+# 공통 검증 ①~⑦: GW와 같은 validation.json으로, 받을 type·길이를 GW와 같게 주면 ①~⑦ 판정이 같아야 한다
+def test_REQ_COM_002_check_frame_matches_gateway_rules_1_to_7():
+    import json
+    from conftest import VECTORS_DIR
+    from ugvc_proto.frame import MsgType, Reject, check_frame
+
+    vehicle_port = {MsgType.TELEMETRY: 16, MsgType.ACK: 5}  # GW 15001이 받는 type과 길이
+    cases = json.loads((VECTORS_DIR / "validation.json").read_text(encoding="utf-8"))["cases"]
+    checked = 0
+    for c in cases:
+        if c["source"] != "VEHICLE" or c["expect"] == "range":
+            continue  # ⑧ 범위는 이 함수 밖. DETECTION은 길이가 count로 정해져 고정 길이 표로 표현하지 않는다
+        r = check_frame(bytes.fromhex(c["hex"]), vehicle_port)
+        got = r.value if isinstance(r, Reject) else "accept"
+        assert got == c["expect"], c["name"]
+        checked += 1
+    assert checked >= 12

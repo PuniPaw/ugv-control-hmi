@@ -4,13 +4,10 @@ import time
 
 import pytest
 
-from ugvc_proto.frame import FRAME_OVERHEAD, crc16_ccitt_false, decode_header, encode_frame, read_frame_crc
-from ugvc_proto.telemetry import MSG_TELEMETRY
+from ugvc_proto.frame import MsgType, Reject, check_frame, encode_frame
 
 from ugvc_sim.telemetry_sender import START
 from ugvc_sim.vehicle import step, to_telemetry
-
-MSG_HEARTBEAT = 0x20
 
 
 def _send_10hz(port: int, count: int) -> None:
@@ -19,7 +16,7 @@ def _send_10hz(port: int, count: int) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         t0 = time.monotonic()
         for seq in range(count):
-            sock.sendto(encode_frame(MSG_TELEMETRY, seq, time.time_ns() // 1_000_000,
+            sock.sendto(encode_frame(MsgType.TELEMETRY, seq, time.time_ns() // 1_000_000,
                                      to_telemetry(state).to_payload()), ("127.0.0.1", port))
             state = step(state, period)
             delay = t0 + (seq + 1) * period - time.monotonic()
@@ -51,10 +48,8 @@ def test_REQ_COM_007_heartbeat_interval(gateway):
         while len(arrivals) < 31:
             data, _ = sock.recvfrom(2048)
             arrivals.append(time.monotonic())
-            h = decode_header(data)
-            assert h is not None and h.msg_type == MSG_HEARTBEAT and h.payload_len == 0
-            assert len(data) == FRAME_OVERHEAD
-            assert read_frame_crc(data) == crc16_ccitt_false(data[:-2])
+            checked = check_frame(data, {MsgType.HEARTBEAT: 0})  # 검증 ①~⑦: HEARTBEAT, payload 0B
+            assert not isinstance(checked, Reject), checked
     finally:
         sock.close()
     intervals_ms = [(b - a) * 1000 for a, b in zip(arrivals, arrivals[1:])]

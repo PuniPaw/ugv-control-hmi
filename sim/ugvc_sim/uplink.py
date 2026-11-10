@@ -14,9 +14,9 @@ import socket
 import time
 from dataclasses import asdict, dataclass
 
-from ugvc_proto.command import COMMAND_SIZE, MSG_COMMAND, MSG_HEARTBEAT, CmdType, Command
-from ugvc_proto.frame import (FRAME_OVERHEAD, HEADER_SIZE, MAX_FRAME_SIZE, SYNC, VERSION, crc16_ccitt_false,
-                              decode_header, read_frame_crc)
+from ugvc_proto.command import COMMAND_SIZE, CmdType, Command
+from ugvc_proto.frame import MsgType, Reject, check_frame
+from ugvc_proto.telemetry import LAT_LIMIT, LON_LIMIT
 
 FAILSAFE_TIMEOUT_S = 3.0  # REQ-SAFE-001
 
@@ -36,12 +36,8 @@ class ReceivedCommand:
 
 Uplink = Heartbeat | ReceivedCommand
 
-# msg_type별 payload 길이. 여기 없는 type은 SIM이 받지 않는다.
-_PAYLOAD_LEN = {MSG_HEARTBEAT: 0, MSG_COMMAND: COMMAND_SIZE}
-
-LAT_LIMIT = 900_000_000    # 1e-7 deg, ICD 6.1 (COMMAND 좌표는 TELEMETRY와 같은 범위)
-LON_LIMIT = 1_800_000_000
-
+# SIM이 받는 msg_type과 payload 길이 (IF-01b). 여기 없는 type은 ⑥ type으로 폐기.
+_UPLINK_PAYLOAD_LEN = {MsgType.HEARTBEAT: 0, MsgType.COMMAND: COMMAND_SIZE}
 
 _CMD_TYPES = {t.value for t in CmdType}
 
@@ -55,28 +51,17 @@ def _command_in_range(c: Command) -> bool:
     return True
 
 
-def parse_uplink(data: bytes) -> Uplink | str:
-    """해석한 메시지, 또는 폐기 원인(GW 오류 계수와 같은 이름: length, sync, version, crc, type, range)."""
-    if len(data) < FRAME_OVERHEAD or len(data) > MAX_FRAME_SIZE:
-        return "length"
-    h = decode_header(data)
-    if h.sync != SYNC:
-        return "sync"
-    if h.version != VERSION:
-        return "version"
-    if len(data) != FRAME_OVERHEAD + h.payload_len:
-        return "length"
-    if read_frame_crc(data) != crc16_ccitt_false(data[:-2]):
-        return "crc"
-    if h.msg_type not in _PAYLOAD_LEN:
-        return "type"
-    if h.payload_len != _PAYLOAD_LEN[h.msg_type]:
-        return "length"
-    if h.msg_type == MSG_HEARTBEAT:
+def parse_uplink(data: bytes) -> Uplink | Reject:
+    """해석한 메시지, 또는 폐기 원인 (규칙 ①~⑦은 ugvc_proto.frame.check_frame, ⑧ COMMAND 범위는 여기서)."""
+    checked = check_frame(data, _UPLINK_PAYLOAD_LEN)
+    if isinstance(checked, Reject):
+        return checked
+    h, payload = checked
+    if h.msg_type == MsgType.HEARTBEAT:
         return Heartbeat(h.seq, h.timestamp_ms)
-    command = Command.from_payload(data[HEADER_SIZE:-2])
+    command = Command.from_payload(payload)
     if not _command_in_range(command):
-        return "range"
+        return Reject.RANGE
     return ReceivedCommand(h.seq, h.timestamp_ms, command)
 
 
@@ -110,8 +95,8 @@ def listen(host: str, port: int) -> None:
             data, _ = sock.recvfrom(2048)
             now = time.monotonic()
             msg = parse_uplink(data)
-            if isinstance(msg, str):
-                print(json.dumps({"type": "reject", "reason": msg, "len": len(data)}), flush=True)
+            if isinstance(msg, Reject):
+                print(json.dumps({"type": "reject", "reason": msg.value, "len": len(data)}), flush=True)
                 continue
             if isinstance(msg, Heartbeat):
                 watch.on_heartbeat(now)

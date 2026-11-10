@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import struct
+from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum, IntEnum
 
 SYNC = 0xAA55
 VERSION = 0x01
@@ -13,6 +15,28 @@ HEADER_SIZE = 18
 CRC_SIZE = 2
 FRAME_OVERHEAD = HEADER_SIZE + CRC_SIZE  # 20
 MAX_FRAME_SIZE = 1200
+
+
+
+class MsgType(IntEnum):
+    """msg_type 값 (ICD 5장). 모든 Python 코드는 여기 정의만 쓴다 (tools/vectors/gen_vectors.py는 독립 기준이라 제외)."""
+    TELEMETRY = 0x01   # SIM → GW
+    DETECTION = 0x02   # DET → GW
+    COMMAND = 0x10     # GW → SIM
+    ACK = 0x11         # SIM → GW
+    HEARTBEAT = 0x20   # GW → SIM
+
+
+class Reject(str, Enum):
+    """폐기 원인. 값은 GW 오류 계수 이름(ICD 7.1 stats.errors)과 같다. str이라 "crc" 같은 문자열과 비교된다."""
+    SYNC = "sync"
+    VERSION = "version"
+    LENGTH = "length"
+    CRC = "crc"
+    TYPE = "type"
+    RANGE = "range"
+    ORDER = "order"
+
 
 # sync u16 | version u8 | msg_type u8 | seq u32 | timestamp u64 | payload_len u16
 _HEADER = struct.Struct(">HBBIQH")
@@ -58,3 +82,27 @@ def read_frame_crc(data: bytes) -> int | None:
     if len(data) < FRAME_OVERHEAD:
         return None
     return struct.unpack_from(">H", data, len(data) - CRC_SIZE)[0]
+
+
+def check_frame(data: bytes, payload_len_by_type: Mapping[int, int]) -> tuple[Header, bytes] | Reject:
+    """수신 검증 규칙 ①~⑦ (ICD 9장): 통과하면 (헤더, payload), 아니면 처음 실패한 원인.
+
+    payload_len_by_type: 받는 쪽이 허용하는 msg_type과 그 payload 길이. 여기 없는 type은 ⑥ type.
+    ⑧ 필드 범위와 ⑨ seq는 메시지·스트림마다 다르므로 호출하는 쪽이 판정한다.
+    """
+    if len(data) < FRAME_OVERHEAD or len(data) > MAX_FRAME_SIZE:
+        return Reject.LENGTH                                    # ①
+    h = decode_header(data)
+    if h.sync != SYNC:
+        return Reject.SYNC                                      # ②
+    if h.version != VERSION:
+        return Reject.VERSION                                   # ③
+    if len(data) != FRAME_OVERHEAD + h.payload_len:
+        return Reject.LENGTH                                    # ④
+    if read_frame_crc(data) != crc16_ccitt_false(data[:-CRC_SIZE]):
+        return Reject.CRC                                       # ⑤
+    if h.msg_type not in payload_len_by_type:
+        return Reject.TYPE                                      # ⑥
+    if h.payload_len != payload_len_by_type[h.msg_type]:
+        return Reject.LENGTH                                    # ⑦
+    return h, data[HEADER_SIZE:-CRC_SIZE]

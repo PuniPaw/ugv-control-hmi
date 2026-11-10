@@ -8,13 +8,10 @@ from pathlib import Path
 import pytest
 
 from conftest import GATEWAY_BIN, REPO, free_udp_port
-from ugvc_proto.frame import encode_frame
-from ugvc_proto.telemetry import MSG_TELEMETRY
+from ugvc_proto.frame import MsgType, encode_frame
 
 from ugvc_sim.telemetry_sender import START
 from ugvc_sim.vehicle import to_telemetry
-
-MSG_DETECTION = 0x02
 
 
 def _need_gateway():
@@ -40,7 +37,7 @@ def test_REQ_COM_007_heartbeat_continues_when_stdout_reader_stalls():
             seq = 0
             while time.monotonic() - t0 < 6.0:
                 payload = (seq).to_bytes(4, "big") + bytes(8) + (640).to_bytes(2, "big") + (480).to_bytes(2, "big") + bytes([32]) + objects
-                tx.sendto(encode_frame(MSG_DETECTION, seq, 0, payload), ("127.0.0.1", dp))
+                tx.sendto(encode_frame(MsgType.DETECTION, seq, 0, payload), ("127.0.0.1", dp))
                 seq += 1
                 try:
                     while True:
@@ -93,7 +90,7 @@ def test_REQ_COM_002_oversize_datagram_counted_as_length(gateway):
     obj = bytes.fromhex("00138800000000000100" + "01")
     payload = (7).to_bytes(4, "big") + bytes(8) + (640).to_bytes(2, "big") + (480).to_bytes(2, "big") + bytes([200]) + obj * 200
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.sendto(encode_frame(MSG_DETECTION, 0, 0, payload), ("127.0.0.1", gateway.detector_port))
+        sock.sendto(encode_frame(MsgType.DETECTION, 0, 0, payload), ("127.0.0.1", gateway.detector_port))
     stats = gateway.messages("stats", 1, timeout_s=3.0,
                              pred=lambda m: m["data"]["source"] == "DETECTOR" and m["data"]["errors"]["length"] == 1)
     assert stats and stats[0]["data"]["errors"]["range"] == 0

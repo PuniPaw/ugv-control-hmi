@@ -2,8 +2,8 @@
 import socket
 import time
 
-from ugvc_proto.frame import encode_frame
-from ugvc_proto.telemetry import MSG_TELEMETRY, Telemetry
+from ugvc_proto.frame import MsgType, encode_frame
+from ugvc_proto.telemetry import Telemetry
 
 from ugvc_sim.telemetry_sender import START
 from ugvc_sim.vehicle import step, to_telemetry
@@ -18,7 +18,7 @@ def test_sim_telemetry_decoded_identically_by_gateway(gateway):
         for seq in range(N):
             t = to_telemetry(state)
             sent.append(t)
-            sock.sendto(encode_frame(MSG_TELEMETRY, seq, time.time_ns() // 1_000_000, t.to_payload()),
+            sock.sendto(encode_frame(MsgType.TELEMETRY, seq, time.time_ns() // 1_000_000, t.to_payload()),
                         ("127.0.0.1", gateway.vehicle_port))
             state = step(state, 0.1)
             time.sleep(0.01)
@@ -39,7 +39,7 @@ def test_sim_telemetry_decoded_identically_by_gateway(gateway):
 
 
 def test_gateway_rejects_corrupted_crc_and_counts_it(gateway):
-    good = encode_frame(MSG_TELEMETRY, 0, 0, to_telemetry(START).to_payload())
+    good = encode_frame(MsgType.TELEMETRY, 0, 0, to_telemetry(START).to_payload())
     bad = good[:-1] + bytes([good[-1] ^ 0x01])
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(bad, ("127.0.0.1", gateway.vehicle_port))
@@ -54,7 +54,7 @@ def test_gateway_rejects_corrupted_crc_and_counts_it(gateway):
 def test_link_goes_lost_after_packets_stop(gateway):
     """REQ-COM-003·004를 실제 프로세스로: 패킷이 멈추면 DEGRADED → LOST 전이가 출력된다."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        sock.sendto(encode_frame(MSG_TELEMETRY, 0, 0, to_telemetry(START).to_payload()),
+        sock.sendto(encode_frame(MsgType.TELEMETRY, 0, 0, to_telemetry(START).to_payload()),
                     ("127.0.0.1", gateway.vehicle_port))
     vehicle = lambda m: m["data"]["source"] == "VEHICLE"
     # 연속 중복을 뺀 상태 열. 시작 시 1Hz 보고의 LOST(첫 패킷 전)가 앞에 올 수 있다.
