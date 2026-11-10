@@ -44,6 +44,14 @@ ctest --test-dir build --output-on-failure
 
 필요 도구: CMake 3.20+, C++17 컴파일러(GCC 9+ / Clang 10+ / MSVC 2019+), Git(Asio·nlohmann/json·GoogleTest를 FetchContent로 받음).
 
+## 정적 분석 (gateway)
+
+```bash
+tools/cppcheck.sh
+```
+
+`gateway/build/compile_commands.json`을 쓰므로 cmake configure를 먼저 해야 합니다. 경고가 1건이라도 있으면 실패합니다. 예외는 `gateway/cppcheck-suppressions.txt`에 사유와 함께 적습니다 (REQ-QUAL-002).
+
 ## 실행: SIM → GW
 
 ```bash

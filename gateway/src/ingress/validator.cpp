@@ -74,10 +74,10 @@ constexpr std::array<InboundRule, 3> kInboundRules{{
 }};
 
 const InboundRule* find_rule(Source source, std::uint8_t msg_type) {
-  for (const auto& r : kInboundRules) {
-    if (r.msg_type == msg_type && r.source == source) return &r;
-  }
-  return nullptr;
+  const auto it = std::find_if(kInboundRules.begin(), kInboundRules.end(), [&](const InboundRule& r) {
+    return r.msg_type == msg_type && r.source == source;
+  });
+  return it == kInboundRules.end() ? nullptr : &*it;
 }
 
 }  // namespace
