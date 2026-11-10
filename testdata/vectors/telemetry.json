@@ -1,0 +1,71 @@
+{
+  "schema": "ugvc-telemetry-vectors/1",
+  "generator": "tools/vectors/gen_vectors.py",
+  "payload_size": 16,
+  "vectors": [
+    {
+      "name": "telemetry_nominal",
+      "note": "ICD 7.1 예시: 36.1234567, 127.7654321, 87.25deg, 4.5m/s, 76%, MISSION, GPS_VALID|CAMERA_OK",
+      "tc": "TC-COM-001-01",
+      "fields": {
+        "lat": 361234567,
+        "lon": 1277654321,
+        "heading": 8725,
+        "speed": 450,
+        "battery": 76,
+        "mode": 1,
+        "status_flags": 3
+      },
+      "payload_hex": "158800874c277531221501c24c010003",
+      "expect": "accept"
+    },
+    {
+      "name": "telemetry_bounds_min",
+      "note": "모든 필드 범위 최솟값",
+      "tc": "TC-COM-001-02",
+      "fields": {
+        "lat": -900000000,
+        "lon": -1800000000,
+        "heading": 0,
+        "speed": 0,
+        "battery": 0,
+        "mode": 0,
+        "status_flags": 0
+      },
+      "payload_hex": "ca5b170094b62e000000000000000000",
+      "expect": "accept"
+    },
+    {
+      "name": "telemetry_bounds_max",
+      "note": "모든 필드 범위 최댓값 (정의된 플래그 4개 모두 1)",
+      "tc": "TC-COM-001-02",
+      "fields": {
+        "lat": 900000000,
+        "lon": 1800000000,
+        "heading": 35999,
+        "speed": 3000,
+        "battery": 100,
+        "mode": 4,
+        "status_flags": 15
+      },
+      "payload_hex": "35a4e9006b49d2008c9f0bb86404000f",
+      "expect": "accept"
+    },
+    {
+      "name": "telemetry_reserved_bits",
+      "note": "status_flags 예약 비트(4-15) 모두 1. 수신 측은 무시",
+      "tc": "TC-COM-001-04",
+      "fields": {
+        "lat": 361234567,
+        "lon": 1277654321,
+        "heading": 8725,
+        "speed": 450,
+        "battery": 76,
+        "mode": 1,
+        "status_flags": 65523
+      },
+      "payload_hex": "158800874c277531221501c24c01fff3",
+      "expect": "accept"
+    }
+  ]
+}

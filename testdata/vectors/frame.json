@@ -1,6 +1,6 @@
 {
   "schema": "ugvc-frame-vectors/1",
-  "generator": "tools/vectors/gen_frame_vectors.py",
+  "generator": "tools/vectors/gen_vectors.py",
   "crc_check": {
     "ascii": "123456789",
     "crc16": "29b1"
@@ -38,7 +38,7 @@
     },
     {
       "name": "telemetry_nominal",
-      "note": "ICD 7.1 예시 값: lat 36.1234567, lon 127.7654321, heading 87.25, speed 4.5, battery 76, MISSION, GPS_VALID|CAMERA_OK",
+      "note": "TELEMETRY 프레임 (payload는 telemetry.json의 telemetry_nominal)",
       "msg_type": 1,
       "seq": 1532,
       "timestamp_ms": 1794729600118,

@@ -32,8 +32,9 @@
 - SIM/DET: Python 3, `struct.pack(">...")`로 직렬화
 - HMI: Vue 3 + TypeScript, Leaflet (고도화 단계에서 오프라인 타일)
 - 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/` + `python/`(ugvc_proto, SIM·DET 공용 codec), `testdata/vectors/`(C++·Python 공용 벡터), `tools/`
-- 테스트 벡터는 `tools/vectors/gen_*.py`가 표준 라이브러리만으로 생성한다 (우리 codec을 import하지 않음 → 독립 기준)
-- C++ 테스트 의존성: GoogleTest v1.15.2, nlohmann/json v3.11.3 (FetchContent, git)
+- 테스트 벡터는 `tools/vectors/gen_vectors.py`가 표준 라이브러리만으로 생성한다 (우리 codec을 import하지 않음 → 독립 기준)
+- C++ 의존성(FetchContent, git): standalone Asio 1.30.2, nlohmann/json v3.11.3(IF-03 JSON·벡터 로드), GoogleTest v1.15.2
+- 통합 시험: `tests/integration/` (pytest가 GW를 subprocess로 실행)
 
 ---
 
@@ -108,11 +109,11 @@
 
 ## 6. 바로 다음 할 일
 
-1. 모노레포 골격 생성: `gateway/`(CMake + GoogleTest FetchContent), `sim/`, `detector/`, `hmi/`, `docs/`, `.gitignore`, 루트 README 초안
-2. `gateway/`: `codec`(big-endian read/write 헬퍼, CRC16, 헤더 encode/decode)부터 구현하고 단위 시험
+1. ✅ 모노레포 골격 생성: `gateway/`(CMake + GoogleTest FetchContent), `sim/`, `detector/`, `hmi/`, `docs/`, `.gitignore`, 루트 README 초안
+2. ✅ `gateway/`: `codec`(big-endian read/write 헬퍼, CRC16, 헤더 encode/decode)부터 구현하고 단위 시험
    - CRC 벡터 `"123456789"` → `0x29B1`, 헤더 라운드트립, 검증 규칙별 실패 케이스
-3. `sim/`: TELEMETRY 10Hz 송신 스크립트 (고정 경로점 직선 주행이면 충분)
-4. GW에서 UDP 15001 수신 → 파싱 → 콘솔 출력까지 연결 (Python 송신과 C++ 수신의 바이트 일치 확인)
+3. ✅ `sim/`: TELEMETRY 10Hz 송신 스크립트 (고정 경로점 직선 주행이면 충분)
+4. ✅ GW에서 UDP 15001 수신 → 파싱 → 콘솔 출력까지 연결 (Python 송신과 C++ 수신의 바이트 일치 확인)
 5. `docs/04_STP.md` 초안: REQ-COM-001~007, REQ-QUAL-001에 대한 TC 작성
 
 ---

@@ -19,12 +19,41 @@ target_compile_options(ugvc_warnings INTERFACE
 add_library(ugvc_codec
   src/codec/crc16.cpp
   src/codec/frame.cpp
+  src/codec/telemetry.cpp
 )
 target_include_directories(ugvc_codec PUBLIC include)
 target_link_libraries(ugvc_codec PRIVATE ugvc_warnings)
 
+include(FetchContent)
+
+# nlohmann/json: IF-03 JSON 생성, 시험 벡터 로드
+FetchContent_Declare(
+  nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG        v3.11.3
+  GIT_SHALLOW    TRUE
+)
+# standalone Asio (헤더 전용, CMake 없음 → 소스만 받아 include 경로로 사용)
+FetchContent_Declare(
+  asio
+  GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+  GIT_TAG        asio-1-30-2
+  GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json asio)
+
+find_package(Threads REQUIRED)
+add_library(ugvc_asio INTERFACE)
+# SYSTEM: 외부 헤더의 경고는 -Werror 대상에서 제외
+target_include_directories(ugvc_asio SYSTEM INTERFACE ${asio_SOURCE_DIR}/asio/include)
+target_compile_definitions(ugvc_asio INTERFACE ASIO_STANDALONE ASIO_NO_DEPRECATED)
+target_link_libraries(ugvc_asio INTERFACE Threads::Threads)
+
+# GW 실행 파일
+add_executable(ugvc_gateway src/app/main.cpp)
+target_link_libraries(ugvc_gateway PRIVATE ugvc_codec ugvc_asio nlohmann_json::nlohmann_json ugvc_warnings)
+
 if(UGVC_BUILD_TESTS)
-  include(FetchContent)
   FetchContent_Declare(
     googletest
     GIT_REPOSITORY https://github.com/google/googletest.git
@@ -33,19 +62,14 @@ if(UGVC_BUILD_TESTS)
   )
   set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
   set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)  # Windows MSVC 런타임 일치
-  FetchContent_Declare(
-    nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG        v3.11.3
-    GIT_SHALLOW    TRUE
-  )
-  FetchContent_MakeAvailable(googletest nlohmann_json)
+  FetchContent_MakeAvailable(googletest)
 
   enable_testing()
   add_executable(ugvc_tests
     tests/codec/bytes_test.cpp
     tests/codec/crc16_test.cpp
     tests/codec/frame_test.cpp
+    tests/codec/telemetry_test.cpp
   )
   target_include_directories(ugvc_tests PRIVATE tests)
   target_link_libraries(ugvc_tests PRIVATE

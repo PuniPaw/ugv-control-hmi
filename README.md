@@ -14,13 +14,14 @@
 
 | 디렉터리 | 구성요소 | 상태 |
 |---|---|---|
-| `gateway/` | GW: 패킷 검증, 링크 상태 판정, HMI 중계, 명령 재전송 (C++17, CMake, GoogleTest) | codec: 헤더·CRC 완료 |
-| `sim/` | SIM: 경로점 주행 모사, 10Hz 텔레메트리, Failsafe (Python) | 예정 |
+| `gateway/` | GW: 패킷 검증, 링크 상태 판정, HMI 중계, 명령 재전송 (C++17, CMake, GoogleTest) | codec(헤더·CRC·TELEMETRY), UDP 15001 수신 → 콘솔 JSON 출력 |
+| `sim/` | SIM: 경로점 주행 모사, 10Hz 텔레메트리, Failsafe (Python) | 직선 주행 TELEMETRY 10Hz 송신 |
 | `detector/` | DET: 영상 재생, 객체 탐지, 결과·영상 송신 (Python) | 예정 |
 | `hmi/` | HMI: 지도, 영상+박스, 상태 패널, 경고, 명령 (Vue 3 + TS) | 예정 |
-| `python/` | `ugvc_proto`: SIM·DET 공용 Python codec (ICD 메시지 직렬화) | 헤더·CRC 완료 |
-| `testdata/vectors/` | Python·C++가 함께 쓰는 바이트 테스트 벡터 | frame.json |
+| `python/` | `ugvc_proto`: SIM·DET 공용 Python codec (ICD 메시지 직렬화) | 헤더·CRC·TELEMETRY |
+| `testdata/vectors/` | Python·C++가 함께 쓰는 바이트 테스트 벡터 | frame.json, telemetry.json |
 | `tools/` | 벡터 생성기 등 보조 스크립트 | |
+| `tests/integration/` | 구성요소를 실제로 띄워 보는 통합 시험 (pytest) | SIM → GW smoke |
 | `docs/` | SRS, ICD, STP, ADR | |
 
 ## 문서
@@ -41,20 +42,49 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-필요 도구: CMake 3.20+, C++17 컴파일러(GCC 9+ / Clang 10+ / MSVC 2019+), Git(GoogleTest·nlohmann/json을 FetchContent로 받음).
+필요 도구: CMake 3.20+, C++17 컴파일러(GCC 9+ / Clang 10+ / MSVC 2019+), Git(Asio·nlohmann/json·GoogleTest를 FetchContent로 받음).
+
+## 실행: SIM → GW
+
+```bash
+./gateway/build/ugvc_gateway
+```
+
+다른 터미널에서:
+
+```bash
+cd sim
+PYTHONPATH=../python:. python3 -m ugvc_sim.telemetry_sender
+```
+
+GW가 받은 TELEMETRY를 IF-03 형식의 JSON 한 줄씩 stdout에 출력합니다.
 
 ## 시험 (python)
 
+설치 없이 저장소 안에서 바로 실행됩니다 (각 `pyproject.toml`의 `pythonpath` 설정).
+
 ```bash
-cd python
-python3 -m pip install -e ".[test]"
-python3 -m pytest
+python3 -m pip install pytest
+```
+
+```bash
+cd python && python3 -m pytest
+```
+
+```bash
+cd sim && python3 -m pytest
+```
+
+통합 시험(gateway 빌드 필요):
+
+```bash
+cd tests && python3 -m pytest
 ```
 
 ## 테스트 벡터 다시 만들기
 
 ```bash
-python3 tools/vectors/gen_frame_vectors.py
+python3 tools/vectors/gen_vectors.py
 ```
 
 벡터는 우리 codec이 아니라 Python 표준 라이브러리(`struct`, `binascii.crc_hqx`)로 만들어서, C++·Python 구현 양쪽과 독립된 기준이 됩니다.
