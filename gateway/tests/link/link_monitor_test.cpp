@@ -13,7 +13,7 @@ using ugvc::test::FakeClock;
 
 namespace {
 
-struct RecordingSink final : IEventSink {
+struct RecordingSink final : ILinkTransitionSink {
   void on_link_transition(const LinkTransition& t) override { events.push_back(t); }
   std::vector<LinkTransition> events;
 };

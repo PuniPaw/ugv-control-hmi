@@ -16,10 +16,13 @@
 #include <functional>
 #include <iostream>
 #include <string>
+#include <variant>
 
 #include "ugvc/codec/detection.hpp"
 #include "ugvc/codec/telemetry.hpp"
 #include "ugvc/core/clock.hpp"
+#include "ugvc/core/overloaded.hpp"
+#include "ugvc/core/periodic.hpp"
 #include "ugvc/gateway/gateway.hpp"
 #include "ugvc/gateway/heartbeat.hpp"
 #include "ugvc/if03/messages.hpp"
@@ -76,7 +79,7 @@ udp::endpoint resolve_v4(asio::io_context& io, const std::string& host, std::uin
   return *resolver.resolve(udp::v4(), host, std::to_string(port)).begin();
 }
 
-class LinkStatusPublisher final : public link::IEventSink {
+class LinkStatusPublisher final : public link::ILinkTransitionSink {
  public:
   explicit LinkStatusPublisher(app::LineOutput& out) : out_(out) {}
 
@@ -142,13 +145,12 @@ class GatewayApp {
     const std::uint64_t rx_ts = clock_.epoch_ms();
     const auto frame = gateway_.on_datagram(source, data, len);
     if (!frame) return;
-    const auto& h = frame->header;
-    if (h.msg_type == codec::kMsgTelemetry) {
-      out_.publish(if03::telemetry(h, *codec::decode_telemetry(frame->payload, h.payload_len), rx_ts));
-    } else if (h.msg_type == codec::kMsgDetection) {
-      out_.publish(if03::detection(*codec::decode_detection(frame->payload, h.payload_len), rx_ts));
-    }
-    // ACK는 명령 재전송(REQ-CMD-002, 12월)에서 처리한다
+    std::visit(core::overloaded{
+                   [&](const codec::Telemetry& t) { out_.publish(if03::telemetry(frame->header, t, rx_ts)); },
+                   [&](const codec::Detection& d) { out_.publish(if03::detection(d, rx_ts)); },
+                   [](const codec::Ack&) {},  // 명령 재전송(REQ-CMD-002, 12월)에서 처리한다
+               },
+               frame->message);
   }
 
   void tick() {
@@ -160,7 +162,7 @@ class GatewayApp {
     }
     if (stats_period_.due()) {
       const std::uint64_t now = clock_.epoch_ms();
-      for (Source s : {Source::Vehicle, Source::Detector}) {
+      for (const Source s : ingress::kAllSources) {
         out_.publish(if03::stats(s, gateway_.stats(s), now));
         const auto& link = gateway_.link(s);
         out_.publish(if03::link_status(s, link.state(), link.last_rx_epoch_ms(), now));

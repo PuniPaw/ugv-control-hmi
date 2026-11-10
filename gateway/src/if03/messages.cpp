@@ -13,26 +13,6 @@ json envelope(const char* type, std::uint64_t ts, json data) {
   return {{"type", type}, {"ts", ts}, {"data", std::move(data)}};
 }
 
-const char* mode_name(std::uint8_t mode) {
-  switch (static_cast<Mode>(mode)) {
-    case Mode::Standby: return "STANDBY";
-    case Mode::Mission: return "MISSION";
-    case Mode::Stopped: return "STOPPED";
-    case Mode::Rtb: return "RTB";
-    case Mode::Fault: return "FAULT";
-  }
-  return "UNKNOWN";  // 검증 ⑧을 통과한 값에는 오지 않는다
-}
-
-const char* class_name(std::uint8_t c) {
-  switch (static_cast<ClassId>(c)) {
-    case ClassId::Person: return "PERSON";
-    case ClassId::Vehicle: return "VEHICLE";
-    case ClassId::ArmoredVehicle: return "ARMORED_VEHICLE";
-    case ClassId::Unknown: return "UNKNOWN";
-  }
-  return "UNKNOWN";
-}
 
 json flag_names(std::uint16_t f) {
   json out = json::array();
@@ -52,7 +32,7 @@ json telemetry(const Header& h, const Telemetry& t, std::uint64_t rx_ts) {
                    {"heading_deg", t.heading / 100.0},
                    {"speed_mps", t.speed / 100.0},
                    {"battery_pct", t.battery},
-                   {"mode", mode_name(t.mode)},
+                   {"mode", name_of(static_cast<Mode>(t.mode))},  // 검증 ⑧을 통과한 값이라 nullptr가 아니다
                    {"flags", flag_names(t.status_flags)},
                    {"seq", h.seq},
                    {"rx_ts", rx_ts}});
@@ -61,7 +41,7 @@ json telemetry(const Header& h, const Telemetry& t, std::uint64_t rx_ts) {
 json detection(const Detection& d, std::uint64_t rx_ts) {
   json objects = json::array();
   std::transform(d.objects.begin(), d.objects.end(), std::back_inserter(objects), [](const DetectedObject& o) {
-    return json{{"class", class_name(o.class_id)},
+    return json{{"class", name_of(static_cast<ClassId>(o.class_id))},
                 {"conf", o.confidence / 1e4},
                 {"x", o.x},
                 {"y", o.y},
@@ -78,10 +58,7 @@ json detection(const Detection& d, std::uint64_t rx_ts) {
 
 json stats(ingress::Source source, const gateway::SourceStats& s, std::uint64_t ts) {
   json errors = json::object();
-  for (std::size_t i = 0; i < ingress::kRejectReasonCount; ++i) {
-    const auto r = static_cast<ingress::RejectReason>(i);
-    errors[ingress::to_string(r)] = s.errors[r];
-  }
+  for (const auto r : ingress::kAllRejectReasons) errors[ingress::to_string(r)] = s.errors[r];
   return envelope("stats", ts,
                   {{"source", ingress::to_string(source)},
                    {"loss_rate_10s", s.loss_rate_10s ? json(*s.loss_rate_10s) : json(nullptr)},

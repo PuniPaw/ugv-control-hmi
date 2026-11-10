@@ -72,16 +72,39 @@ TEST(Validator, REQ_COM_002_rule8_detection_range) { expect_cases("TC-COM-002-11
 TEST(Validator, REQ_COM_002_rule8_ack_range) { expect_cases("TC-COM-002-12"); }
 TEST(Validator, REQ_COM_002_first_failure_only) { expect_cases("TC-COM-002-13"); }
 
-// 통과한 프레임의 payload 포인터는 헤더 바로 뒤를 가리킨다
-TEST(Validator, REQ_COM_002_accepted_frame_points_at_payload) {
+// 통과한 프레임은 msg_type에 맞는 메시지로 디코딩되어 나오고, 수신 버퍼가 사라져도 값이 남는다
+TEST(Validator, REQ_COM_002_accepted_frame_carries_decoded_message) {
   for (const auto& c : cases()) {
     if (c.at("expect") != "accept") continue;
     SCOPED_TRACE(c.at("name").get<std::string>());
+    CheckResult r;
+    {
+      auto bytes = from_hex(c.at("hex"));
+      r = check_frame(source_of(c), bytes.data(), bytes.size());
+      std::fill(bytes.begin(), bytes.end(), std::uint8_t{0xEE});  // 버퍼 재사용 흉내
+    }
+    ASSERT_TRUE(std::holds_alternative<CheckedFrame>(r));
+    const auto& f = std::get<CheckedFrame>(r);
+    switch (f.header.msg_type) {
+      case ugvc::codec::kMsgTelemetry: EXPECT_TRUE(std::holds_alternative<ugvc::codec::Telemetry>(f.message)); break;
+      case ugvc::codec::kMsgDetection: EXPECT_TRUE(std::holds_alternative<ugvc::codec::Detection>(f.message)); break;
+      case ugvc::codec::kMsgAck: EXPECT_TRUE(std::holds_alternative<ugvc::codec::Ack>(f.message)); break;
+      default: ADD_FAILURE() << "unexpected msg_type " << int{f.header.msg_type};
+    }
+  }
+}
+
+// 디코딩 결과가 원본 필드와 같다 (telemetry_nominal 프레임 → ICD 7.1 예시 값)
+TEST(Validator, REQ_COM_001_accepted_telemetry_fields) {
+  for (const auto& c : cases()) {
+    if (c.at("name") != "telemetry_nominal") continue;
     const auto bytes = from_hex(c.at("hex"));
     const auto r = check_frame(source_of(c), bytes.data(), bytes.size());
-    ASSERT_TRUE(std::holds_alternative<CheckedFrame>(r));
-    EXPECT_EQ(std::get<CheckedFrame>(r).payload, bytes.data() + ugvc::codec::kHeaderSize);
+    const auto& t = std::get<ugvc::codec::Telemetry>(std::get<CheckedFrame>(r).message);
+    EXPECT_EQ(t, (ugvc::codec::Telemetry{361234567, 1277654321, 8725, 450, 76, 1, 0b11}));
+    return;
   }
+  FAIL() << "telemetry_nominal case missing";
 }
 
 // TC-COM-002-14: 원인별 계수가 독립적으로 정확히 누적된다

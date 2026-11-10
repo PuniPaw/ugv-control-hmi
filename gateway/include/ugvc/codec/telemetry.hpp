@@ -10,10 +10,10 @@
 #include <optional>
 
 #include "ugvc/codec/bytes.hpp"
+#include "ugvc/codec/msg_type.hpp"
 
 namespace ugvc::codec {
 
-inline constexpr std::uint8_t kMsgTelemetry = 0x01;
 inline constexpr std::size_t kTelemetryPayloadSize = 16;
 
 // 표 6-1 mode
@@ -24,6 +24,25 @@ enum class Mode : std::uint8_t {
   Rtb = 3,
   Fault = 4,
 };
+
+// 표 6-1 이름. 정의되지 않은 값이면 nullptr (검증 ⑧과 IF-03 변환이 함께 쓴다)
+constexpr const char* name_of(Mode m) {
+  switch (m) {
+    case Mode::Standby: return "STANDBY";
+    case Mode::Mission: return "MISSION";
+    case Mode::Stopped: return "STOPPED";
+    case Mode::Rtb: return "RTB";
+    case Mode::Fault: return "FAULT";
+  }
+  return nullptr;
+}
+
+// 표 6-1 범위 (단위는 각 필드의 LSB)
+inline constexpr std::int32_t kLatLimit = 900'000'000;    // ±90°, 1e-7 deg
+inline constexpr std::int32_t kLonLimit = 1'800'000'000;  // ±180°, 1e-7 deg
+inline constexpr std::uint16_t kHeadingMax = 35'999;      // 359.99°, 0.01 deg
+inline constexpr std::uint16_t kSpeedMax = 3'000;         // 30 m/s, 0.01 m/s
+inline constexpr std::uint8_t kBatteryMax = 100;          // %
 
 // 표 6-2 status_flags 비트
 namespace flags {

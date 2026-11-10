@@ -5,9 +5,6 @@ import struct
 from dataclasses import dataclass
 from enum import IntEnum
 
-MSG_COMMAND = 0x10
-MSG_ACK = 0x11
-MSG_HEARTBEAT = 0x20
 COMMAND_SIZE = 13
 ACK_SIZE = 5
 

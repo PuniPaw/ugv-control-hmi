@@ -8,8 +8,11 @@ import struct
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 
-MSG_TELEMETRY = 0x01
 PAYLOAD_SIZE = 16
+
+# 표 6-1 범위 (단위는 각 필드의 LSB). COMMAND WAYPOINT 좌표도 같은 범위 (ICD 6.3)
+LAT_LIMIT = 900_000_000      # ±90°, 1e-7 deg
+LON_LIMIT = 1_800_000_000    # ±180°, 1e-7 deg
 
 # lat i32 | lon i32 | heading u16 | speed u16 | battery u8 | mode u8 | status_flags u16
 _PAYLOAD = struct.Struct(">iiHHBBH")

@@ -7,11 +7,11 @@
 #include <optional>
 
 #include "ugvc/codec/frame.hpp"
+#include "ugvc/codec/msg_type.hpp"
 #include "ugvc/core/clock.hpp"
+#include "ugvc/core/periodic.hpp"
 
 namespace ugvc::gateway {
-
-inline constexpr std::uint8_t kMsgHeartbeat = 0x20;
 
 class HeartbeatSender {
  public:
@@ -21,7 +21,7 @@ class HeartbeatSender {
   // 보낼 때가 되었으면 HEARTBEAT 프레임(payload 0B), 아니면 nullopt.
   std::optional<codec::Bytes> poll() {
     if (!period_.due()) return std::nullopt;
-    return codec::encode_frame(kMsgHeartbeat, seq_++, clock_.epoch_ms(), nullptr, 0);
+    return codec::encode_frame(codec::kMsgHeartbeat, seq_++, clock_.epoch_ms(), nullptr, 0);
   }
 
  private:

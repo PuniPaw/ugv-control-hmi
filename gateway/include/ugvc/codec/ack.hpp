@@ -7,10 +7,10 @@
 #include <optional>
 
 #include "ugvc/codec/bytes.hpp"
+#include "ugvc/codec/msg_type.hpp"
 
 namespace ugvc::codec {
 
-inline constexpr std::uint8_t kMsgAck = 0x11;
 inline constexpr std::size_t kAckPayloadSize = 5;
 
 // 표 6-5 result
@@ -19,6 +19,16 @@ enum class AckResult : std::uint8_t {
   RejectedInvalid = 1,
   RejectedState = 2,
 };
+
+// 표 6-5 이름. 정의되지 않은 값이면 nullptr
+constexpr const char* name_of(AckResult r) {
+  switch (r) {
+    case AckResult::Accepted: return "ACCEPTED";
+    case AckResult::RejectedInvalid: return "REJECTED_INVALID";
+    case AckResult::RejectedState: return "REJECTED_STATE";
+  }
+  return nullptr;
+}
 
 struct Ack {
   std::uint32_t cmd_id = 0;

@@ -11,8 +11,7 @@ import socket
 import sys
 import time
 
-from ugvc_proto.frame import encode_frame
-from ugvc_proto.telemetry import MSG_TELEMETRY
+from ugvc_proto.frame import MsgType, encode_frame
 
 from ugvc_sim.vehicle import VehicleState, step, to_telemetry
 
@@ -32,7 +31,7 @@ def run(host: str, port: int, rate_hz: float, count: int | None, verbose: bool) 
     t0 = time.monotonic()
     try:
         while count is None or seq < count:
-            frame = encode_frame(MSG_TELEMETRY, seq & 0xFFFFFFFF, epoch_ms(),
+            frame = encode_frame(MsgType.TELEMETRY, seq & 0xFFFFFFFF, epoch_ms(),
                                  to_telemetry(state).to_payload())
             sock.sendto(frame, (host, port))
             if verbose:
