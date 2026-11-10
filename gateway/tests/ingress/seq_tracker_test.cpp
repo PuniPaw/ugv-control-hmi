@@ -2,7 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <initializer_list>
+#include <iterator>
+#include <numeric>
 #include <vector>
 
 using namespace ugvc::ingress;
@@ -12,14 +15,14 @@ namespace {
 // seq 열을 차례로 넣고 각 결과를 모은다
 std::vector<SeqTracker::Result> feed(SeqTracker& t, std::initializer_list<std::uint32_t> seqs) {
   std::vector<SeqTracker::Result> out;
-  for (auto s : seqs) out.push_back(t.observe(s));
+  std::transform(seqs.begin(), seqs.end(), std::back_inserter(out),
+                 [&](std::uint32_t s) { return t.observe(s); });
   return out;
 }
 
 std::uint32_t total_lost(const std::vector<SeqTracker::Result>& rs) {
-  std::uint32_t sum = 0;
-  for (const auto& r : rs) sum += r.lost;
-  return sum;
+  return std::accumulate(rs.begin(), rs.end(), std::uint32_t{0},
+                         [](std::uint32_t sum, const SeqTracker::Result& r) { return sum + r.lost; });
 }
 
 }  // namespace

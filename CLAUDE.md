@@ -104,9 +104,9 @@
 
 | 기간 | 할 일 | 상태 |
 |---|---|---|
-| 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 문서 완료, **저장소 구성 확인 필요** |
-| **11/10–11/16 (현재)** | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 시작 전 |
-| 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | |
+| 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
+| 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
+| **11/17–11/23 (현재)** | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 구현 완료, 리뷰 대기 (PR #3 → #4 → #5 → cppcheck PR, 쌓인 순서대로 병합) |
 | 11/24–11/30 | GW → HMI WebSocket 중계, HMI 뼈대(지도, 상태 패널) | |
 | 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
@@ -114,12 +114,10 @@
 
 ## 6. 바로 다음 할 일
 
-1. ✅ 모노레포 골격 생성: `gateway/`(CMake + GoogleTest FetchContent), `sim/`, `detector/`, `hmi/`, `docs/`, `.gitignore`, 루트 README 초안
-2. ✅ `gateway/`: `codec`(big-endian read/write 헬퍼, CRC16, 헤더 encode/decode)부터 구현하고 단위 시험
-   - CRC 벡터 `"123456789"` → `0x29B1`, 헤더 라운드트립, 검증 규칙별 실패 케이스
-3. ✅ `sim/`: TELEMETRY 10Hz 송신 스크립트 (고정 경로점 직선 주행이면 충분)
-4. ✅ GW에서 UDP 15001 수신 → 파싱 → 콘솔 출력까지 연결 (Python 송신과 C++ 수신의 바이트 일치 확인)
-5. `docs/04_STP.md` 초안: REQ-COM-001~007, REQ-QUAL-001에 대한 TC 작성
+1. 쌓인 PR 병합 (#3 → #4 → #5 → cppcheck)
+2. SRS·ICD v0.2 정리: 4장 "SRS v0.2에서 고칠 것" 목록과 STP 5장 판정 규칙 반영, ICD 7.1 `stats.lost_count` 확정
+3. 03_SDD.md 초안: 모듈 구조(codec → ingress → link → gateway → if03 → app), 링크 상태도, 50ms 판정 주기, 단일 스레드 io_context 구조
+4. 11/24 주: GW WebSocket 라이브러리 결정(Boost.Beast vs uWebSockets) → IF-03 중계, HMI 뼈대(지도, 상태 패널)
 
 ---
 
