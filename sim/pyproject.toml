@@ -1,0 +1,20 @@
+[project]
+name = "ugvc-sim"
+version = "0.1.0"
+description = "UGVC 차량 시뮬레이터 (SIM)"
+requires-python = ">=3.10"
+dependencies = ["ugvc-proto"]  # ../python (pip install -e ../python)
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ugvc_sim"]
+
+[tool.pytest.ini_options]
+pythonpath = [".", "../python"]  # 설치하지 않아도 저장소 안에서 시험 가능
+testpaths = ["tests"]

@@ -1,0 +1,50 @@
+{
+  "schema": "ugvc-frame-vectors/1",
+  "generator": "tools/vectors/gen_vectors.py",
+  "crc_check": {
+    "ascii": "123456789",
+    "crc16": "29b1"
+  },
+  "vectors": [
+    {
+      "name": "heartbeat_seq0",
+      "note": "HEARTBEAT, payload 없음 (최소 프레임 20B)",
+      "msg_type": 32,
+      "seq": 0,
+      "timestamp_ms": 1794729600000,
+      "payload_hex": "",
+      "hex": "aa55012000000000000001a1de3864000000d552",
+      "expect": "accept"
+    },
+    {
+      "name": "heartbeat_max_fields",
+      "note": "seq·timestamp 최대값: 상위 바이트 처리 확인",
+      "msg_type": 32,
+      "seq": 4294967295,
+      "timestamp_ms": 18446744073709551615,
+      "payload_hex": "",
+      "hex": "aa550120ffffffffffffffffffffffff0000215c",
+      "expect": "accept"
+    },
+    {
+      "name": "ack_accepted",
+      "note": "ACK cmd_id=1 result=ACCEPTED",
+      "msg_type": 17,
+      "seq": 7,
+      "timestamp_ms": 1794729600123,
+      "payload_hex": "0000000100",
+      "hex": "aa55011100000007000001a1de38647b000500000001007aac",
+      "expect": "accept"
+    },
+    {
+      "name": "telemetry_nominal",
+      "note": "TELEMETRY 프레임 (payload는 telemetry.json의 telemetry_nominal)",
+      "msg_type": 1,
+      "seq": 1532,
+      "timestamp_ms": 1794729600118,
+      "payload_hex": "158800874c277531221501c24c010003",
+      "hex": "aa550101000005fc000001a1de3864760010158800874c277531221501c24c010003fee8",
+      "expect": "accept"
+    }
+  ]
+}

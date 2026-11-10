@@ -1,0 +1,5 @@
+# 저장소 수준 통합 시험 (STP 수준 I). gateway 빌드 후 실행.
+#   cd tests && python3 -m pytest
+[tool.pytest.ini_options]
+pythonpath = ["../python", "../sim"]
+testpaths = ["integration"]
