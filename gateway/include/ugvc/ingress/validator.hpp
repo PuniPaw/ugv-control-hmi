@@ -7,16 +7,22 @@
 #include <cstdint>
 #include <variant>
 
+#include "ugvc/codec/ack.hpp"
+#include "ugvc/codec/detection.hpp"
 #include "ugvc/codec/frame.hpp"
+#include "ugvc/codec/telemetry.hpp"
 #include "ugvc/ingress/reject_reason.hpp"
 #include "ugvc/ingress/source.hpp"
 
 namespace ugvc::ingress {
 
-// 규칙 ①~⑧을 통과한 프레임. payload는 원본 버퍼를 가리킨다 (복사 없음, 버퍼보다 오래 쓰지 말 것).
+// GW가 받는 메시지. 검증 단계에서 한 번 디코딩한 값을 그대로 넘긴다 (다시 디코딩하지 않는다).
+using Message = std::variant<codec::Telemetry, codec::Detection, codec::Ack>;
+
+// 규칙 ①~⑧을 통과한 프레임. 수신 버퍼와 무관한 값이라 버퍼가 재사용돼도 안전하다.
 struct CheckedFrame {
   codec::Header header;
-  const std::uint8_t* payload = nullptr;
+  Message message;
 };
 
 // 통과하면 CheckedFrame, 아니면 처음 실패한 규칙의 원인.
