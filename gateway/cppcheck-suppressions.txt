@@ -1,5 +1,6 @@
 # cppcheck 예외 목록 (REQ-QUAL-002). 한 줄에 하나, 바로 위 주석에 사유를 적는다.
 # 형식: <id>[:<파일 패턴>[:<줄>]]
 
-# 외부 헤더(Asio, GoogleTest, nlohmann/json)를 찾지 못한다는 정보성 메시지. 우리 코드 결함이 아니다.
+# 외부 헤더(Asio, GoogleTest, nlohmann/json)는 일부러 include 경로에서 뺀다(tools/cppcheck.sh 참고).
+# 그래서 나오는 "헤더를 찾지 못함" 정보성 메시지. 우리 코드 결함이 아니다.
 missingIncludeSystem
