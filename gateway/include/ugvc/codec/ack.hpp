@@ -20,6 +20,16 @@ enum class AckResult : std::uint8_t {
   RejectedState = 2,
 };
 
+// 표 6-5 이름. 정의되지 않은 값이면 nullptr
+constexpr const char* name_of(AckResult r) {
+  switch (r) {
+    case AckResult::Accepted: return "ACCEPTED";
+    case AckResult::RejectedInvalid: return "REJECTED_INVALID";
+    case AckResult::RejectedState: return "REJECTED_STATE";
+  }
+  return nullptr;
+}
+
 struct Ack {
   std::uint32_t cmd_id = 0;
   std::uint8_t result = 0;  // AckResult. 범위 밖 값도 받은 그대로 둔다 (검증 ⑧에서 판정)

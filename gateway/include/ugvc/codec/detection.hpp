@@ -23,6 +23,22 @@ enum class ClassId : std::uint8_t {
   Unknown = 255,
 };
 
+// 표 6-3 이름. 정의되지 않은 값이면 nullptr (검증 ⑧과 IF-03 변환이 함께 쓴다)
+constexpr const char* name_of(ClassId c) {
+  switch (c) {
+    case ClassId::Person: return "PERSON";
+    case ClassId::Vehicle: return "VEHICLE";
+    case ClassId::ArmoredVehicle: return "ARMORED_VEHICLE";
+    case ClassId::Unknown: return "UNKNOWN";
+  }
+  return nullptr;
+}
+
+// 6.2 범위
+inline constexpr std::uint16_t kImageSizeMax = 4096;    // img_w, img_h: 1 ~ 4096 px
+inline constexpr std::size_t kMaxObjects = 32;          // count: 0 ~ 32
+inline constexpr std::uint16_t kConfidenceMax = 10'000; // 1.0, 0.0001
+
 struct DetectedObject {
   std::uint8_t class_id = 0;
   std::uint16_t confidence = 0;  // 0.0001
