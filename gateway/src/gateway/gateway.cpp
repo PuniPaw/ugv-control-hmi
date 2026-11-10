@@ -6,7 +6,7 @@ namespace ugvc::gateway {
 
 using ingress::Source;
 
-Gateway::Gateway(const core::IClock& clock, link::IEventSink& sink)
+Gateway::Gateway(const core::IClock& clock, link::ILinkTransitionSink& sink)
     : clock_(clock),
       sources_{{PerSource(Source::Vehicle, clock, sink), PerSource(Source::Detector, clock, sink)}} {}
 

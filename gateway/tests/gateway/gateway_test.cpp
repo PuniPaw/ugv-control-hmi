@@ -6,10 +6,8 @@
 
 #include "support/fake_clock.hpp"
 #include "ugvc/codec/ack.hpp"
-#include "ugvc/codec/crc16.hpp"
 #include "ugvc/codec/detection.hpp"
 #include "ugvc/codec/telemetry.hpp"
-#include "ugvc/gateway/heartbeat.hpp"
 #include "ugvc/ingress/validator.hpp"
 
 using namespace std::chrono_literals;
@@ -21,7 +19,7 @@ using test::FakeClock;
 
 namespace {
 
-struct NullSink final : link::IEventSink {
+struct NullSink final : link::ILinkTransitionSink {
   void on_link_transition(const link::LinkTransition&) override {}
 };
 
@@ -141,69 +139,4 @@ TEST_F(GatewayFixture, REQ_COM_005_stats_loss_rate) {
   ASSERT_TRUE(send(telemetry_frame(0)));
   ASSERT_TRUE(send(telemetry_frame(3)));
   EXPECT_DOUBLE_EQ(*gw.stats(Source::Vehicle).loss_rate_10s, 0.5);
-}
-
-// TC-COM-007-01: 1Hz HEARTBEAT, seq 0·1·2, payload 0, 검증 ①~⑤ 통과 형식
-TEST(Heartbeat, REQ_COM_007_emits_1hz) {
-  FakeClock clock;
-  gateway::HeartbeatSender hb(clock);
-  std::vector<codec::Bytes> sent;
-  for (int i = 0; i < 59; ++i) {  // 50ms 판정 주기로 2.95s
-    if (auto f = hb.poll()) sent.push_back(*f);
-    clock.advance(50ms);
-  }
-  ASSERT_EQ(sent.size(), 3U);
-  for (std::uint32_t i = 0; i < 3; ++i) {
-    const auto h = codec::decode_header(sent[i].data(), sent[i].size());
-    ASSERT_TRUE(h.has_value());
-    EXPECT_EQ(h->msg_type, codec::kMsgHeartbeat);
-    EXPECT_EQ(h->payload_len, 0U);
-    EXPECT_EQ(h->seq, i);
-    EXPECT_EQ(sent[i].size(), codec::kFrameOverhead);
-    const auto crc = codec::read_frame_crc(sent[i].data(), sent[i].size());
-    EXPECT_EQ(*crc, codec::crc16_ccitt_false(sent[i].data(), sent[i].size() - codec::kCrcSize));
-  }
-}
-
-// TC-COM-007-02: 차량 링크가 LOST여도 계속 보낸다 (HeartbeatSender는 링크 상태를 모른다)
-TEST(Heartbeat, REQ_COM_007_sent_while_lost) {
-  FakeClock clock;
-  NullSink sink;
-  gateway::Gateway gw(clock, sink);
-  gateway::HeartbeatSender hb(clock);
-  int sent = 0;
-  for (int i = 0; i < 100; ++i) {  // 5s, 차량 패킷 없음
-    gw.poll();
-    if (hb.poll()) ++sent;
-    clock.advance(50ms);
-  }
-  EXPECT_EQ(gw.link(Source::Vehicle).state(), LinkState::Lost);
-  EXPECT_EQ(sent, 5);
-}
-
-// TC-COM-005-08: stats 1Hz. 판정 주기가 늦어져도 몰아서 내지 않는다
-TEST(Periodic, REQ_COM_005_emits_1hz) {
-  FakeClock clock;
-  core::Periodic p(clock, 1s);
-  int fired = 0;
-  for (int i = 0; i < 60; ++i) {  // 3.0s
-    if (p.due()) ++fired;
-    clock.advance(50ms);
-  }
-  EXPECT_EQ(fired, 3);
-  clock.advance(5s);  // 5초 멈췄다가
-  EXPECT_TRUE(p.due());
-  EXPECT_FALSE(p.due());  // 밀린 4번을 한꺼번에 내지 않는다
-}
-
-// 호출 간격이 주기를 나누어떨어지지 않아도(300ms) 주기가 밀리지 않는다: 10초에 정확히 10회
-TEST(Periodic, REQ_COM_007_no_drift_with_uneven_polling) {
-  FakeClock clock;
-  core::Periodic p(clock, 1s);
-  int fired = 0;
-  for (int i = 0; i < 34; ++i) {  // 0 ~ 9.9s
-    if (p.due()) ++fired;
-    clock.advance(300ms);
-  }
-  EXPECT_EQ(fired, 10);
 }

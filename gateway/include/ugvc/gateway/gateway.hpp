@@ -34,7 +34,7 @@ struct SourceStats {
 
 class Gateway {
  public:
-  Gateway(const core::IClock& clock, link::IEventSink& sink);
+  Gateway(const core::IClock& clock, link::ILinkTransitionSink& sink);
 
   // 유효 패킷이면 검증된 프레임(payload는 data를 가리킴), 폐기되면 nullopt.
   std::optional<ingress::CheckedFrame> on_datagram(ingress::Source source, const std::uint8_t* data,
@@ -49,7 +49,7 @@ class Gateway {
  private:
   // 스트림(송신원, msg_type)별 seq 상태. 송신원 안에서 msg_type으로 찾는다.
   struct PerSource {
-    PerSource(ingress::Source s, const core::IClock& clock, link::IEventSink& sink)
+    PerSource(ingress::Source s, const core::IClock& clock, link::ILinkTransitionSink& sink)
         : link(s, clock, sink) {}
 
     link::LinkMonitor link;

@@ -93,6 +93,8 @@ if(UGVC_BUILD_TESTS)
     tests/link/link_monitor_test.cpp
     tests/link/loss_window_test.cpp
     tests/gateway/gateway_test.cpp
+    tests/gateway/heartbeat_test.cpp
+    tests/core/periodic_test.cpp
     tests/if03/messages_test.cpp
   )
   target_include_directories(ugvc_tests PRIVATE tests)

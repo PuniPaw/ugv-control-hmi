@@ -4,11 +4,11 @@
 //
 // 버킷은 steady 시계의 "초 번호"로 식별한다. 번호 % 10 자리에 쓰고, 자리에 남은 번호가 다르면
 // 오래된 버킷이므로 비우고 쓴다. 읽을 때는 현재 초와 이전 9초에 해당하는 버킷만 더한다.
+// 시계의 초 번호는 0 이상이다 (steady_clock 기준점 이후).
 
 #include <array>
 #include <chrono>
 #include <cstdint>
-#include <limits>
 #include <optional>
 
 #include "ugvc/core/clock.hpp"
@@ -22,7 +22,7 @@ class LossWindow {
   void record(core::SteadyTime at, std::uint64_t received, std::uint64_t lost) {
     const std::int64_t sec = second_of(at);
     Bucket& b = buckets_[slot(sec)];
-    if (b.second != sec) b = Bucket{sec, 0, 0};
+    if (b.second != sec) b = Bucket{sec, 0, 0};  // 빈 자리이거나 10초 넘게 지난 버킷
     b.received += received;
     b.lost += lost;
   }
@@ -32,7 +32,8 @@ class LossWindow {
     std::uint64_t received = 0;
     std::uint64_t lost = 0;
     for (const auto& b : buckets_) {
-      const std::int64_t age = current - b.second;
+      if (!b.second) continue;  // 한 번도 쓰지 않은 자리
+      const std::int64_t age = current - *b.second;
       if (age >= 0 && age < kSeconds) {
         received += b.received;
         lost += b.lost;
@@ -43,10 +44,8 @@ class LossWindow {
   }
 
  private:
-  static constexpr std::int64_t kEmpty = std::numeric_limits<std::int64_t>::min() / 2;  // 어떤 현재 초와도 10초 안에 들지 않는 값
-
   struct Bucket {
-    std::int64_t second = kEmpty;
+    std::optional<std::int64_t> second;  // nullopt: 한 번도 쓰지 않은 자리
     std::uint64_t received = 0;
     std::uint64_t lost = 0;
   };
@@ -55,7 +54,7 @@ class LossWindow {
     return std::chrono::duration_cast<std::chrono::seconds>(t.time_since_epoch()).count();
   }
   static std::size_t slot(std::int64_t sec) {
-    return static_cast<std::size_t>(((sec % kSeconds) + kSeconds) % kSeconds);
+    return static_cast<std::size_t>(sec % kSeconds);
   }
 
   std::array<Bucket, kSeconds> buckets_{};

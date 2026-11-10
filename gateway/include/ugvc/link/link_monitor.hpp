@@ -3,7 +3,7 @@
 // 송신원별 링크 상태 판정 (REQ-COM-003, REQ-COM-004, STP 5장)
 //
 // 상태 = 마지막 유효 패킷 후 경과 시간의 함수:  < 0.5s CONNECTED,  ≥ 0.5s DEGRADED,  ≥ 1.0s LOST.
-// 첫 유효 패킷 전은 LOST. 상태가 바뀔 때만 IEventSink로 전이를 알린다 (시작 시 초기값은 전이 아님).
+// 첫 유효 패킷 전은 LOST. 상태가 바뀔 때만 ILinkTransitionSink로 전이를 알린다 (시작 시 초기값은 전이 아님).
 
 #include <chrono>
 #include <cstdint>
@@ -36,15 +36,15 @@ struct LinkTransition {
   std::optional<std::uint64_t> last_rx_epoch_ms;  // 첫 패킷 전이면 nullopt
 };
 
-class IEventSink {
+class ILinkTransitionSink {
  public:
-  virtual ~IEventSink() = default;
+  virtual ~ILinkTransitionSink() = default;
   virtual void on_link_transition(const LinkTransition& t) = 0;
 };
 
 class LinkMonitor {
  public:
-  LinkMonitor(ingress::Source source, const core::IClock& clock, IEventSink& sink)
+  LinkMonitor(ingress::Source source, const core::IClock& clock, ILinkTransitionSink& sink)
       : source_(source), clock_(clock), sink_(sink) {}
 
   // 유효 패킷 수신: 경과 시간을 0으로 되돌린다. LOST에서도 DEGRADED를 거치지 않고 바로 CONNECTED.
@@ -76,7 +76,7 @@ class LinkMonitor {
 
   ingress::Source source_;
   const core::IClock& clock_;
-  IEventSink& sink_;
+  ILinkTransitionSink& sink_;
   LinkState state_ = LinkState::Lost;
   std::optional<core::SteadyTime> last_rx_;
   std::optional<std::uint64_t> last_rx_epoch_ms_;

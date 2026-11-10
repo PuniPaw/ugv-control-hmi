@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -11,7 +12,8 @@ enum class Source : std::uint8_t {
   Detector,  // DET, UDP 15002 (IF-02)
 };
 
-inline constexpr std::size_t kSourceCount = 2;
+inline constexpr std::array<Source, 2> kAllSources{Source::Vehicle, Source::Detector};
+inline constexpr std::size_t kSourceCount = kAllSources.size();
 
 constexpr std::size_t index_of(Source s) { return static_cast<std::size_t>(s); }
 

@@ -9,6 +9,7 @@
 #include "ugvc/codec/frame.hpp"
 #include "ugvc/codec/msg_type.hpp"
 #include "ugvc/core/clock.hpp"
+#include "ugvc/core/periodic.hpp"
 
 namespace ugvc::gateway {
 

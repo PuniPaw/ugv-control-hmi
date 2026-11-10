@@ -20,7 +20,10 @@ enum class RejectReason : std::uint8_t {
   Order,
 };
 
-inline constexpr std::size_t kRejectReasonCount = 7;
+inline constexpr std::array<RejectReason, 7> kAllRejectReasons{
+    RejectReason::Sync, RejectReason::Version, RejectReason::Length, RejectReason::Crc,
+    RejectReason::Type, RejectReason::Range,   RejectReason::Order};
+inline constexpr std::size_t kRejectReasonCount = kAllRejectReasons.size();
 
 constexpr const char* to_string(RejectReason r) {
   constexpr const char* kNames[kRejectReasonCount] = {"sync",  "version", "length", "crc",

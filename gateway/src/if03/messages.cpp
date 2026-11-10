@@ -58,10 +58,7 @@ json detection(const Detection& d, std::uint64_t rx_ts) {
 
 json stats(ingress::Source source, const gateway::SourceStats& s, std::uint64_t ts) {
   json errors = json::object();
-  for (std::size_t i = 0; i < ingress::kRejectReasonCount; ++i) {
-    const auto r = static_cast<ingress::RejectReason>(i);
-    errors[ingress::to_string(r)] = s.errors[r];
-  }
+  for (const auto r : ingress::kAllRejectReasons) errors[ingress::to_string(r)] = s.errors[r];
   return envelope("stats", ts,
                   {{"source", ingress::to_string(source)},
                    {"loss_rate_10s", s.loss_rate_10s ? json(*s.loss_rate_10s) : json(nullptr)},

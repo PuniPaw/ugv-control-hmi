@@ -22,6 +22,7 @@
 #include "ugvc/codec/telemetry.hpp"
 #include "ugvc/core/clock.hpp"
 #include "ugvc/core/overloaded.hpp"
+#include "ugvc/core/periodic.hpp"
 #include "ugvc/gateway/gateway.hpp"
 #include "ugvc/gateway/heartbeat.hpp"
 #include "ugvc/if03/messages.hpp"
@@ -78,7 +79,7 @@ udp::endpoint resolve_v4(asio::io_context& io, const std::string& host, std::uin
   return *resolver.resolve(udp::v4(), host, std::to_string(port)).begin();
 }
 
-class LinkStatusPublisher final : public link::IEventSink {
+class LinkStatusPublisher final : public link::ILinkTransitionSink {
  public:
   explicit LinkStatusPublisher(app::LineOutput& out) : out_(out) {}
 
@@ -161,7 +162,7 @@ class GatewayApp {
     }
     if (stats_period_.due()) {
       const std::uint64_t now = clock_.epoch_ms();
-      for (Source s : {Source::Vehicle, Source::Detector}) {
+      for (const Source s : ingress::kAllSources) {
         out_.publish(if03::stats(s, gateway_.stats(s), now));
         const auto& link = gateway_.link(s);
         out_.publish(if03::link_status(s, link.state(), link.last_rx_epoch_ms(), now));
