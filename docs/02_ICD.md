@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-ICD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.2 (작성 중) |
+| 버전 | v0.2 |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, ADR-001 (영상 경로), ADR-002 (수치 표현·바이트 순서) |
 
@@ -13,7 +13,7 @@
 | 버전 | 날짜 | 변경 내용 |
 |---|---|---|
 | v0.1 | 2026-11-10 | 최초 작성 |
-| v0.2 (작성 중) | 2026-11-17 | 7.1 `stats`: `lost_count`(유실 누계) 추가, `loss_rate_10s`는 창이 비면 `null`. `link_status.last_rx_ts`는 첫 패킷 전 `null`. 9장 규칙 1에 최대 길이 1200 명시. 7.1 공학 단위 값은 정수 LSB를 10의 거듭제곱으로 나눈 가장 가까운 십진수 |
+| v0.2 | 2026-11-11 | 3장·9장 seq 판정을 스트림(송신원, msg_type) 단위로 명시, RFC 1982 경계(정확히 2^31은 "크지 않음"), 중복 seq는 order, 늦게 도착한 패킷은 유실 차감 없음, LOST 후 rebase는 그 송신원의 모든 스트림. 6.4 SIM의 범위 밖 COMMAND 처리(ACK REJECTED_INVALID). 7.1 `stats`: `lost_count`(유실 누계) 추가, `loss_rate_10s`는 창이 비면 `null`. `link_status.last_rx_ts`는 첫 패킷 전 `null`. 9장 규칙 1에 최대 길이 1200 명시. 7.1 공학 단위 값은 정수 LSB를 10의 거듭제곱으로 나눈 가장 가까운 십진수 |
 
 ---
 
@@ -42,7 +42,7 @@
 | 최대 패킷 크기 | 1200 바이트 (IP 단편화 회피) |
 | 무결성 | CRC-16/CCITT-FALSE (다항식 0x1021, 초기값 0xFFFF, 반사 없음, 최종 XOR 0x0000) |
 | CRC 범위 | 헤더 시작부터 페이로드 끝까지 (CRC 필드 제외) |
-| seq | 송신원·msg_type별로 0부터 1씩 증가, `u32` 최대값 다음은 0 |
+| seq | 스트림(송신원·msg_type)별로 0부터 1씩 증가, `u32` 최대값 다음은 0 |
 | 예약 비트 | 0으로 송신, 수신 측은 무시 |
 
 ## 4. 공통 헤더 (18 바이트) + CRC (2 바이트)
@@ -170,7 +170,7 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 | 값 | 이름 | 설명 |
 |---|---|---|
 | 0 | ACCEPTED | 수락 |
-| 1 | REJECTED_INVALID | 필드 값 오류 (범위 밖 좌표 등) |
+| 1 | REJECTED_INVALID | 필드 값 오류 (범위 밖 좌표 등). SIM은 cmd_id ≥ 1이고 cmd_type·좌표가 6.3 범위를 벗어난 COMMAND를 실행하지 않고 이 값으로 ACK한다. cmd_id가 0이면 응답할 대상이 없으므로 ACK 없이 폐기한다 |
 | 2 | REJECTED_STATE | 현재 상태에서 수행 불가 (FAULT 등) |
 
 ### 6.5 HEARTBEAT (`0x20`, 0 바이트)
@@ -195,7 +195,7 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 |---|---|---|
 | `telemetry` | 수신 즉시 | lat, lon, heading_deg, speed_mps, battery_pct, mode, flags[], seq, rx_ts |
 | `detection` | 수신 즉시 | frame_id, capture_ts, img_w, img_h, objects[{class, conf, x, y, w, h}] |
-| `link_status` | 상태 전이 시 + 1Hz | source(`VEHICLE`/`DETECTOR`), state(`CONNECTED`/`DEGRADED`/`LOST`), last_rx_ts(첫 패킷 전 `null`) |
+| `link_status` | 상태 전이 시 + 1Hz | source(`VEHICLE`/`DETECTOR`), state(`CONNECTED`/`DEGRADED`/`LOST`, 첫 패킷 전은 `LOST`), last_rx_ts(첫 패킷 전 `null`) |
 | `stats` | 1Hz | source, loss_rate_10s(0~1, 창이 비면 `null`), rx_count(유효 패킷 누계), lost_count(유실 누계), errors{sync, version, length, crc, type, range, order} |
 | `cmd_result` | 결과 확정 시 | req_id, cmd_id, result(`ACCEPTED`/`REJECTED_INVALID`/`REJECTED_STATE`/`TIMEOUT`), attempts |
 
@@ -247,12 +247,13 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 | 6 | msg_type이 해당 포트에서 허용된 값 | type |
 | 7 | payload_len이 5장 정의와 일치 (DETECTION은 count로 계산) | length |
 | 8 | 필드 값이 6장 범위 안 | range |
-| 9 | seq가 직전 seq보다 큼 (u32 순환 고려) | order |
+| 9 | seq가 같은 스트림의 직전 seq보다 큼 (u32 순환 고려). 같으면(중복) 실패 | order |
 
 seq 처리:
-- 직전 seq + 1이 아니면 그 차이 − 1을 유실 패킷 수에 더한다.
-- 순환 비교는 RFC 1982 방식(차이가 2^31 미만이면 "큼")을 따른다.
-- 송신원 재시작 감지를 위해 LOST 상태에서 수신한 첫 유효 패킷은 seq 비교 없이 기준값으로 삼는다.
+- seq 비교와 유실 계산은 스트림(송신원, msg_type)마다 따로 한다. 예: VEHICLE의 TELEMETRY와 ACK는 서로 다른 스트림이다.
+- 직전 seq + 1이 아니면 그 차이 − 1을 유실 패킷 수에 더한다. 나중에 늦게 도착한 패킷은 규칙 9로 폐기하고, 이미 더한 유실 수는 줄이지 않는다.
+- 순환 비교는 RFC 1982 방식을 따른다: (새 seq − 직전 seq) mod 2^32가 1 이상 2^31 미만이면 "큼". 정확히 2^31이면 "크지 않음"으로 본다.
+- 송신원 재시작 감지를 위해, 링크 상태가 LOST인 송신원에게서 받은 첫 유효 패킷은 seq 비교 없이 기준값으로 삼는다. 이때 그 송신원의 모든 스트림이 기준값을 다시 잡는다.
 
 ## 10. 미확정 사항
 
