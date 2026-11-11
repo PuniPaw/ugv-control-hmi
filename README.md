@@ -42,7 +42,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-필요 도구: CMake 3.20+, C++17 컴파일러(GCC 9+ / Clang 10+ / MSVC 2019+), Git(Asio·nlohmann/json·GoogleTest를 FetchContent로 받음).
+필요 도구: CMake 3.20+, C++17 컴파일러(GCC 9+ / Clang 10+ / MSVC 2019+), Boost 1.83+ 헤더(Asio·Beast), Git(nlohmann/json·GoogleTest를 FetchContent로 받음).
+
+Ubuntu에서 Boost 설치:
+
+```bash
+sudo apt-get install -y libboost-dev
+```
 
 ## 정적 분석 (gateway)
 
@@ -73,14 +79,20 @@ cd sim
 PYTHONPATH=../python:. python3 -m ugvc_sim.telemetry_sender
 ```
 
-GW는 IF-03 형식 JSON을 한 줄씩 stdout에 출력합니다: 유효 TELEMETRY·DETECTION은 받는 즉시, 송신원별 `stats`·`link_status`는 1Hz와 상태 전이 시. HEARTBEAT는 1Hz로 UDP 15010에 보냅니다.
+GW는 IF-03 메시지를 WebSocket `ws://127.0.0.1:8080/ws`(HMI용)와 stdout(한 줄에 JSON 하나)에 똑같이 보냅니다: 유효 TELEMETRY·DETECTION은 받는 즉시, 송신원별 `stats`·`link_status`는 1Hz와 상태 전이 시. HMI가 접속하면 현재 `stats`·`link_status`를 먼저 보냅니다. HEARTBEAT는 1Hz로 UDP 15010에 보냅니다.
+
+다른 PC의 HMI가 접속하게 하려면 `--ws-host 0.0.0.0`, 포트를 바꾸려면 `--ws-port <port>`를 줍니다. WebSocket 확인:
+
+```bash
+python3 -m websockets ws://127.0.0.1:8080/ws
+```
 
 ## 시험 (python)
 
 설치 없이 저장소 안에서 바로 실행됩니다 (각 `pyproject.toml`의 `pythonpath` 설정).
 
 ```bash
-python3 -m pip install pytest
+python3 -m pip install pytest websockets
 ```
 
 ```bash

@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.1.2 (초안) |
+| 버전 | v0.1.3 (초안) |
 | 작성일 | 2026-11-11 |
 | 관련 문서 | UGVC-SRS-001 v0.2, UGVC-ICD-001 v0.2, UGVC-STP-001, ADR-001, ADR-002, ADR-003 |
 
@@ -15,12 +15,13 @@
 | v0.1 | 2026-11-11 | 최초 작성. GW 모듈 구조, 수신 처리 흐름, 링크 상태도, 스레드·시간 구조, 명령 재전송 설계안 |
 | v0.1.1 | 2026-11-11 | 5장 출력 구조 변경: stdout·stderr 모두 `LineSink`(출력 전용 스레드)로. O_NONBLOCK 비동기 쓰기가 `2>&1`에서 stderr를 고장 내던 문제(interrogate 검증) 반영 |
 | v0.1.2 | 2026-11-11 | 링크 전이를 콜백(`ILinkTransitionSink`)이 아니라 반환값으로: `LinkMonitor`는 `LinkChange`를 반환하고, `Gateway`가 송신원을 붙여 모으면 `app`이 `take_transitions()`로 꺼낸다. `link`가 `ingress`를 몰라도 된다. 1Hz 상태 보고는 순수 함수 `if03::snapshot` |
+| v0.1.3 | 2026-11-11 | 5장 WebSocket(IF-03) 세션 구조와 IF-03 발행 경로 (ADR-003 구현, REQ-COM-008) |
 
 ---
 
 ## 1. 범위
 
-이 문서는 통신 게이트웨이(GW, C++17)의 내부 구조를 중심으로, 각 요구사항이 어느 모듈에서 어떻게 구현되는지 설명한다. SIM·DET(Python)는 공용 codec(`python/ugvc_proto`)과의 관계만 다룬다. HMI 설계는 11/24 주에 추가한다.
+이 문서는 통신 게이트웨이(GW, C++17)의 내부 구조를 중심으로, 각 요구사항이 어느 모듈에서 어떻게 구현되는지 설명한다. SIM·DET(Python)는 공용 codec(`python/ugvc_proto`)과의 관계만 다룬다. HMI 설계는 HMI 뼈대 작업에서 새 장으로 추가한다.
 
 ## 2. 모듈 구조
 
@@ -97,13 +98,13 @@ stateDiagram-v2
 
 ## 5. 스레드·시간 구조
 
-GW의 판정은 **단일 스레드 Asio `io_context` 하나**로 동작한다. 수신·판정·HEARTBEAT가 모두 이 스레드에서 차례로 실행되므로 `Gateway`에는 잠금이 없다. 그 밖의 스레드는 stdout·stderr에 실제로 쓰는 `LineSink` 쓰기 스레드 2개뿐이며, `Gateway` 상태는 만지지 않고 문자열 대기열만 공유한다.
+GW의 판정은 **단일 스레드 Boost.Asio `io_context` 하나**로 동작한다. 수신·판정·HEARTBEAT·WebSocket 세션이 모두 이 스레드에서 차례로 실행되므로 `Gateway`에는 잠금이 없다. 그 밖의 스레드는 stdout·stderr에 실제로 쓰는 `LineSink` 쓰기 스레드 2개뿐이며, `Gateway` 상태는 만지지 않고 문자열 대기열만 공유한다.
 
 | 이벤트 원천 | 주기 | 하는 일 |
 |---|---|---|
 | UDP 15001·15002 비동기 수신 | 도착 즉시 | `Gateway::on_datagram`, 유효 TELEMETRY·DETECTION을 IF-03 JSON으로 출력 |
 | 판정 타이머 `steady_timer` | 50ms | `Gateway::poll`(링크 재판정) 후 전이 출력, `HeartbeatSender::poll`, `if03::snapshot`(stats·link_status 1Hz) |
-| (11/24 주) WebSocket 세션 | 도착 즉시 | HMI 명령 수신, IF-03 메시지 송신 (ADR-003) |
+| WebSocket 수신 대기·세션 (Boost.Beast, `app::WsServer`) | 도착 즉시 | HMI 접속 시 현재 stats·link_status 송신, HMI 메시지 수신(12월 명령 중계 전까지 기록만), IF-03 메시지 송신 (ADR-003) |
 
 시간 관련 설계:
 
@@ -116,11 +117,13 @@ GW의 판정은 **단일 스레드 Asio `io_context` 하나**로 동작한다. �
 |---|---|---|
 | stdout (JSON Lines) | `LineSink`: 전용 스레드가 블로킹 쓰기, 대기열 1000줄 | 새 줄을 버리고 stderr에 1Hz로 개수 보고 |
 | stderr (진단: 링크 전이, 오류, 버림 보고) | `LineSink`: 전용 스레드가 블로킹 쓰기, 대기열 200줄 | 새 줄을 버리고 자리가 나면 개수 보고 |
-| WebSocket (11/24 주) | 세션별 쓰기 대기열 | 그 세션의 메시지만 버리고 계수 (ADR-003) |
+| WebSocket (IF-03, HMI) | `WsServer`: 세션별 쓰기 대기열 1000개, 비동기 쓰기 (io 스레드) | 그 세션의 새 메시지만 버리고 계수, stderr에 1Hz로 보고 |
 | HEARTBEAT (UDP) | `send_to` (UDP는 막히지 않음) | 오류만 stderr에 보고 |
 
 - **읽는 쪽이 사라지면**(EPIPE) 그 뒤 줄은 모두 버린 것으로 센다. SIGPIPE는 무시해 프로세스가 죽지 않는다.
 - **O_NONBLOCK 비동기 쓰기를 쓰지 않는 이유:** `dup`한 fd도 원래 fd와 열린 파일 설명(open file description)을 공유한다. 이전 구현은 여기에 O_NONBLOCK을 걸었고, `2>&1`로 같은 설명을 쓰는 stderr까지 non-blocking이 되어 읽는 쪽이 한 번 멈추면 `std::cerr`가 영구히 고장 났다(진단이 조용히 사라짐). 종료 후에도 터미널에 O_NONBLOCK이 남았다. 전용 스레드의 블로킹 쓰기는 fd 플래그를 바꾸지 않는다.
+- **IF-03 발행은 한 곳이다.** `GatewayApp::publish`가 메시지를 한 번 직렬화해 `shared_ptr<const string>` 하나로 만들고, stdout `LineSink`와 모든 WebSocket 세션이 그 문자열을 공유한다. 그래서 HMI가 받는 메시지와 통합 시험이 읽는 stdout이 같다 (TC-COM-008-01).
+- **WebSocket 세션은 쓰기 스레드를 두지 않는다.** 소켓 쓰기는 Asio 비동기 쓰기(`async_write`)라 io 스레드를 막지 않는다. 멈춘 HMI는 TCP 버퍼가 찬 뒤 그 세션의 쓰기 완료가 오지 않을 뿐이고, 대기열 상한(1000개)이 메모리를 묶는다. 진행 중인 쓰기가 참조하는 문자열을 지우지 않도록, 세션이 닫혀도 대기열을 비우지 않고 `open_` 표시만 내린다.
 - **종료:** 소멸 시 남은 줄을 쓰도록 최대 500ms 기다린다. 읽는 쪽이 멈춰 끝나지 않으면 기다리지 않는다(종료가 출력 때문에 막히지 않게).
 
 검증:

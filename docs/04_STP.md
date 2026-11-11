@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.3 (초안) |
+| 버전 | v0.4 (초안) |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, UGVC-ICD-001, ADR-002 |
 
@@ -15,6 +15,7 @@
 | v0.1 | 2026-11-10 | 최초 작성. 통신(COM), 품질(QUAL-001) 시험 케이스 |
 | v0.2 | 2026-11-10 | 검증 규칙 벡터(`validation.json`) 연결, TC-COM-002-11 케이스 보강(class_id, y·h 경계), TC-QUAL-001 체크리스트에 DETECTION·ACK·헤더 시험 반영 |
 | v0.3 | 2026-11-11 | 추적성 정리(thermos 리뷰): TC-COM-005-08·007-02를 실제 GW 통합 시험으로 바꿈(이전 단위 시험은 범용 `Periodic`이거나 HEARTBEAT와 링크가 연결되지 않은 동어반복). 5장 출력 막힘 규칙에 stderr·EPIPE 반영. `check_stp_tests.py`가 시험 이름의 REQ ID가 SRS에 있는지도 검사 |
+| v0.4 | 2026-11-11 | TC-COM-008 (IF-03 WebSocket 중계) 추가 |
 
 ---
 
@@ -171,7 +172,20 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-007-02 | I | 실제 GW를 차량 패킷 없이 실행 (VEHICLE 링크 LOST) | HEARTBEAT 3개 수신, 간격 1000 ± 100ms, 그동안 link_status는 LOST | `test_REQ_COM_007_heartbeat_sent_while_vehicle_lost` |
 | TC-COM-007-03 | I | 모의 SIM이 UDP 15010에서 30개 수신 | 간격이 모두 1000 ± 100ms | `test_REQ_COM_007_heartbeat_interval` |
 
-### 3.8 REQ-QUAL-001 직렬화·검증 규칙 단위 시험 (검사)
+### 3.8 REQ-COM-008 IF-03 WebSocket 중계
+
+모두 실제 GW를 `--ws-port 0`으로 실행하고 Python `websockets` 클라이언트로 확인한다 (`tests/integration/test_ws_relay.py`).
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-COM-008-01 | I | `/ws`에 접속한 뒤 TELEMETRY 5개 송신 | WebSocket으로 받은 telemetry 5개가 stdout JSON Lines의 5개와 같다 | `test_REQ_COM_008_ws_relays_same_messages_as_stdout` |
+| TC-COM-008-02 | I | TELEMETRY 1개로 VEHICLE을 CONNECTED로 만든 뒤 새로 접속 | 0.3s 안에 link_status(VEHICLE CONNECTED, DETECTOR LOST)와 송신원별 stats를 받는다 | `test_REQ_COM_008_new_session_gets_current_link_status` |
+| TC-COM-008-03 | I | 클라이언트 2개 접속 후 TELEMETRY 3개 | 두 클라이언트가 같은 메시지를 같은 순서(seq 0·1·2)로 받는다 | `test_REQ_COM_008_all_sessions_receive` |
+| TC-COM-008-04 | I | `/other`로 접속 | HTTP 404, 연결 거절 | `test_REQ_COM_008_other_path_rejected` |
+| TC-COM-008-05 | I | IF-03 7.2 command 송신 | 세션이 유지되고 이후 stats를 계속 받는다 (명령 처리는 12월) | `test_REQ_COM_008_hmi_message_does_not_break_session` |
+| TC-COM-008-06 | I | 핸드셰이크만 하고 읽지 않는 클라이언트가 있는 상태에서 DETECTION 6000개(그 클라이언트의 TCP 버퍼와 대기열 1000개를 넘김) 송신, 이후 새 클라이언트 접속 | GW 계속 동작, HEARTBEAT 간격 < 1.2s, 새 클라이언트는 TELEMETRY 20개를 모두 받음, stderr에 "ws clients are behind" 보고 | `test_REQ_COM_008_stalled_session_does_not_block_heartbeat_or_others` |
+
+### 3.9 REQ-QUAL-001 직렬화·검증 규칙 단위 시험 (검사)
 
 | TC ID | 수준 | 내용 | 합격 기준 | 테스트 |
 |---|---|---|---|---|
