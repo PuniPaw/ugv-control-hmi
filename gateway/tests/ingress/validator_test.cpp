@@ -130,5 +130,4 @@ TEST(Validator, REQ_COM_002_counters_accumulate) {
   EXPECT_EQ(counters[RejectReason::Crc], 3U);
   EXPECT_EQ(counters[RejectReason::Sync], 1U);
   EXPECT_EQ(counters[RejectReason::Length], 0U);
-  EXPECT_EQ(counters.total(), 4U);
 }

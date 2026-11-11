@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -22,5 +23,9 @@ nlohmann::json detection(const codec::Detection& d, std::uint64_t rx_ts);
 nlohmann::json stats(ingress::Source source, const gateway::SourceStats& s, std::uint64_t ts);
 nlohmann::json link_status(ingress::Source source, link::LinkState state,
                            std::optional<std::uint64_t> last_rx_ts, std::uint64_t ts);
+nlohmann::json link_status(const gateway::LinkTransition& t);  // 전이 시점의 link_status
+
+// 1Hz 상태 보고: 송신원마다 stats, link_status 순서로 (ICD 7.1 "1Hz")
+std::vector<nlohmann::json> snapshot(const gateway::Gateway& gw, std::uint64_t ts);
 
 }  // namespace ugvc::if03

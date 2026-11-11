@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "support/fake_clock.hpp"
+
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -117,4 +119,21 @@ TEST(If03, REQ_COM_001_engineering_units_reparse_to_nearest_double) {
     det.objects.push_back({0, conf, 0, 0, 1, 1});
     EXPECT_EQ(reparse(if03::detection(det, 0)["data"]["objects"][0]["conf"]), nearest(conf, 4));
   }
+}
+
+// 1Hz 상태 보고: 송신원마다 stats와 link_status, 같은 ts (TC-COM-005-08의 내용, 주기는 통합 시험)
+TEST(If03, REQ_COM_005_snapshot_reports_each_source) {
+  test::FakeClock clock;
+  gateway::Gateway gw{clock};
+  const auto msgs = if03::snapshot(gw, 777);
+  ASSERT_EQ(msgs.size(), 4U);
+  const char* expected[][2] = {{"stats", "VEHICLE"}, {"link_status", "VEHICLE"},
+                               {"stats", "DETECTOR"}, {"link_status", "DETECTOR"}};
+  for (std::size_t i = 0; i < msgs.size(); ++i) {
+    EXPECT_EQ(msgs[i]["type"], expected[i][0]) << i;
+    EXPECT_EQ(msgs[i]["data"]["source"], expected[i][1]) << i;
+    EXPECT_EQ(msgs[i]["ts"], 777) << i;
+  }
+  EXPECT_EQ(msgs[1]["data"]["state"], "LOST");
+  EXPECT_TRUE(msgs[0]["data"]["loss_rate_10s"].is_null());
 }

@@ -93,20 +93,6 @@ void diag(app::LineSink& sink, const Parts&... parts) {
   sink.publish(os.str());
 }
 
-class LinkStatusPublisher final : public link::ILinkTransitionSink {
- public:
-  LinkStatusPublisher(app::LineSink& out, app::LineSink& log) : out_(out), log_(log) {}
-
-  void on_link_transition(const link::LinkTransition& t) override {
-    diag(log_, "link ", ingress::to_string(t.source), ' ', link::to_string(t.from), " -> ", link::to_string(t.to));
-    out_.publish(if03::link_status(t.source, t.to, t.last_rx_epoch_ms, t.at_epoch_ms).dump());
-  }
-
- private:
-  app::LineSink& out_;
-  app::LineSink& log_;
-};
-
 // 포트 하나에서 datagram을 비동기로 계속 받아 handler에 넘긴다.
 class UdpReceiver {
  public:
@@ -142,8 +128,7 @@ class GatewayApp {
   GatewayApp(asio::io_context& io, const Options& o)
       : out_(STDOUT_FILENO, kMaxStdoutLines),
         log_(STDERR_FILENO, kMaxStderrLines),
-        events_(out_, log_),
-        gateway_(clock_, events_),
+        gateway_(clock_),
         heartbeat_(clock_),
         stats_period_(clock_, std::chrono::seconds(1)),
         vehicle_(io, o.vehicle_port, log_, [this](auto* d, auto n) { on_datagram(Source::Vehicle, d, n); }),
@@ -158,31 +143,36 @@ class GatewayApp {
 
  private:
   void on_datagram(Source source, const std::uint8_t* data, std::size_t len) {
-    const std::uint64_t rx_ts = clock_.epoch_ms();
-    const auto frame = gateway_.on_datagram(source, data, len);
-    if (!frame) return;
+    const auto accepted = gateway_.on_datagram(source, data, len);
+    publish_transitions();  // 패킷 처리 중 전이(LOST → CONNECTED 등)가 telemetry보다 먼저 나간다
+    if (!accepted) return;
+    const auto& [frame, rx_ts] = *accepted;
     std::visit(core::overloaded{
-                   [&](const codec::Telemetry& t) { out_.publish(if03::telemetry(frame->header, t, rx_ts).dump()); },
+                   [&](const codec::Telemetry& t) { out_.publish(if03::telemetry(frame.header, t, rx_ts).dump()); },
                    [&](const codec::Detection& d) { out_.publish(if03::detection(d, rx_ts).dump()); },
                    [](const codec::Ack&) {},  // 명령 재전송(REQ-CMD-002, 12월)에서 처리한다
                },
-               frame->message);
+               frame.message);
+  }
+
+  void publish_transitions() {
+    for (const auto& t : gateway_.take_transitions()) {
+      diag(log_, "link ", ingress::to_string(t.source), ' ', link::to_string(t.change.from), " -> ",
+           link::to_string(t.change.to));
+      out_.publish(if03::link_status(t).dump());
+    }
   }
 
   void tick() {
     gateway_.poll();
+    publish_transitions();
     if (auto hb = heartbeat_.poll()) {
       asio::error_code ec;
       sim_socket_.send_to(asio::buffer(*hb), sim_endpoint_, 0, ec);
       if (ec) diag(log_, "heartbeat send error: ", ec.message());
     }
     if (stats_period_.due()) {
-      const std::uint64_t now = clock_.epoch_ms();
-      for (const Source s : ingress::kAllSources) {
-        out_.publish(if03::stats(s, gateway_.stats(s), now).dump());
-        const auto& link = gateway_.link(s);
-        out_.publish(if03::link_status(s, link.state(), link.last_rx_epoch_ms(), now).dump());
-      }
+      for (const auto& msg : if03::snapshot(gateway_, clock_.epoch_ms())) out_.publish(msg.dump());
       report_drops();
     }
     // 직전 예정 시각 + 50ms: 처리 시간만큼 판정 주기가 조금씩 밀리지 않게 한다
@@ -205,9 +195,8 @@ class GatewayApp {
   }
 
   core::SystemClock clock_;
-  app::LineSink out_;  // out_·log_는 이들을 참조하는 events_·수신기보다 먼저 선언한다 (선언 순서대로 생성)
+  app::LineSink out_;  // out_·log_는 이들을 참조하는 수신기보다 먼저 선언한다 (선언 순서대로 생성)
   app::LineSink log_;
-  LinkStatusPublisher events_;
   std::uint64_t reported_stdout_drops_ = 0;
   std::uint64_t reported_stderr_drops_ = 0;
   gateway::Gateway gateway_;

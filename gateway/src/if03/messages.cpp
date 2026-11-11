@@ -13,7 +13,6 @@ json envelope(const char* type, std::uint64_t ts, json data) {
   return {{"type", type}, {"ts", ts}, {"data", std::move(data)}};
 }
 
-
 json flag_names(std::uint16_t f) {
   json out = json::array();
   if (f & flags::kGpsValid) out.push_back("GPS_VALID");
@@ -73,6 +72,20 @@ json link_status(ingress::Source source, link::LinkState state,
                   {{"source", ingress::to_string(source)},
                    {"state", link::to_string(state)},
                    {"last_rx_ts", last_rx_ts ? json(*last_rx_ts) : json(nullptr)}});
+}
+
+json link_status(const gateway::LinkTransition& t) {
+  return link_status(t.source, t.change.to, t.change.last_rx_epoch_ms, t.change.at_epoch_ms);
+}
+
+std::vector<json> snapshot(const gateway::Gateway& gw, std::uint64_t ts) {
+  std::vector<json> out;
+  for (const ingress::Source s : ingress::kAllSources) {
+    out.push_back(stats(s, gw.stats(s), ts));
+    const auto& link = gw.link(s);
+    out.push_back(link_status(s, link.state(), link.last_rx_epoch_ms(), ts));
+  }
+  return out;
 }
 
 }  // namespace ugvc::if03
