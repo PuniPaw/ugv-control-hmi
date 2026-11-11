@@ -67,8 +67,13 @@ target_include_directories(ugvc_gateway_core PUBLIC include)
 target_link_libraries(ugvc_gateway_core PUBLIC ugvc_ingress nlohmann_json::nlohmann_json PRIVATE ugvc_warnings)
 
 # GW 실행 파일: 소켓·타이머만 담당
+# app_io: 출력 전용 스레드가 쓰는 줄 단위 출력(LineSink). io 스레드를 막지 않는다
+add_library(ugvc_app_io src/app/line_sink.cpp)
+target_include_directories(ugvc_app_io PUBLIC src/app)
+target_link_libraries(ugvc_app_io PUBLIC Threads::Threads PRIVATE ugvc_warnings)
+
 add_executable(ugvc_gateway src/app/main.cpp)
-target_link_libraries(ugvc_gateway PRIVATE ugvc_gateway_core ugvc_asio ugvc_warnings)
+target_link_libraries(ugvc_gateway PRIVATE ugvc_gateway_core ugvc_app_io ugvc_asio ugvc_warnings)
 
 if(UGVC_BUILD_TESTS)
   FetchContent_Declare(
@@ -96,10 +101,11 @@ if(UGVC_BUILD_TESTS)
     tests/gateway/heartbeat_test.cpp
     tests/core/periodic_test.cpp
     tests/if03/messages_test.cpp
+    tests/app/line_sink_test.cpp
   )
   target_include_directories(ugvc_tests PRIVATE tests)
   target_link_libraries(ugvc_tests PRIVATE
-    ugvc_gateway_core ugvc_ingress ugvc_codec ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
+    ugvc_gateway_core ugvc_ingress ugvc_codec ugvc_app_io ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
   # 공용 테스트 벡터 위치 (STP 2.4)
   target_compile_definitions(ugvc_tests PRIVATE
     UGVC_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../testdata")

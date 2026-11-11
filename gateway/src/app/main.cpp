@@ -5,8 +5,11 @@
 //
 // 출력은 IF-03 JSON(ICD 7.1)을 한 줄에 하나씩 stdout에 쓴다 (JSON Lines, STP 2.5).
 // IF-03 WebSocket이 생기면 같은 메시지를 그쪽으로 보낸다.
+// 진단(링크 전이, 오류, 버림 보고)은 stderr에 쓴다. 둘 다 LineSink를 거쳐 io 스레드를 막지 않는다.
 
 #include <asio.hpp>
+
+#include <unistd.h>
 
 #include <array>
 #include <chrono>
@@ -15,6 +18,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <variant>
 
@@ -26,7 +30,7 @@
 #include "ugvc/gateway/gateway.hpp"
 #include "ugvc/gateway/heartbeat.hpp"
 #include "ugvc/if03/messages.hpp"
-#include "line_output.hpp"
+#include "line_sink.hpp"
 
 namespace {
 
@@ -35,6 +39,8 @@ using namespace ugvc;
 using ingress::Source;
 
 constexpr auto kJudgePeriod = std::chrono::milliseconds(50);  // 링크 판정 주기 (SDD 가정값)
+constexpr std::size_t kMaxStdoutLines = 1000;  // 약 1~2초 분량. 넘치면 표시용 줄만 잃는다
+constexpr std::size_t kMaxStderrLines = 200;   // 진단은 드물다. 이만큼 밀리면 읽는 쪽이 멈춘 것
 
 struct Options {
   std::uint16_t vehicle_port = 15001;
@@ -79,18 +85,26 @@ udp::endpoint resolve_v4(asio::io_context& io, const std::string& host, std::uin
   return *resolver.resolve(udp::v4(), host, std::to_string(port)).begin();
 }
 
+// 진단 한 줄을 만든다: diag(sink, "a ", 1) → "a 1"
+template <typename... Parts>
+void diag(app::LineSink& sink, const Parts&... parts) {
+  std::ostringstream os;
+  (os << ... << parts);
+  sink.publish(os.str());
+}
+
 class LinkStatusPublisher final : public link::ILinkTransitionSink {
  public:
-  explicit LinkStatusPublisher(app::LineOutput& out) : out_(out) {}
+  LinkStatusPublisher(app::LineSink& out, app::LineSink& log) : out_(out), log_(log) {}
 
   void on_link_transition(const link::LinkTransition& t) override {
-    std::cerr << "link " << ingress::to_string(t.source) << ' ' << link::to_string(t.from) << " -> "
-              << link::to_string(t.to) << '\n';
-    out_.publish(if03::link_status(t.source, t.to, t.last_rx_epoch_ms, t.at_epoch_ms));
+    diag(log_, "link ", ingress::to_string(t.source), ' ', link::to_string(t.from), " -> ", link::to_string(t.to));
+    out_.publish(if03::link_status(t.source, t.to, t.last_rx_epoch_ms, t.at_epoch_ms).dump());
   }
 
  private:
-  app::LineOutput& out_;
+  app::LineSink& out_;
+  app::LineSink& log_;
 };
 
 // 포트 하나에서 datagram을 비동기로 계속 받아 handler에 넘긴다.
@@ -98,8 +112,8 @@ class UdpReceiver {
  public:
   using Handler = std::function<void(const std::uint8_t*, std::size_t)>;
 
-  UdpReceiver(asio::io_context& io, std::uint16_t port, Handler handler)
-      : socket_(io, udp::endpoint(udp::v4(), port)), handler_(std::move(handler)) {
+  UdpReceiver(asio::io_context& io, std::uint16_t port, app::LineSink& log, Handler handler)
+      : socket_(io, udp::endpoint(udp::v4(), port)), log_(log), handler_(std::move(handler)) {
     receive();
   }
 
@@ -110,13 +124,14 @@ class UdpReceiver {
                                [this](const asio::error_code& ec, std::size_t n) {
                                  if (ec == asio::error::operation_aborted) return;  // 종료 중
                                  if (!ec) handler_(buf_.data(), n);
-                                 else std::cerr << "recv error: " << ec.message() << '\n';
+                                 else diag(log_, "recv error: ", ec.message());
                                  receive();
                                });
   }
 
   udp::socket socket_;
   udp::endpoint sender_;
+  app::LineSink& log_;
   Handler handler_;
   // 최대보다 1 크게: 1200B를 넘는 datagram은 잘려서 1201B로 들어오고, 규칙 ①(길이 ≤ 1200)에서 length로 폐기된다
   std::array<std::uint8_t, codec::kMaxFrameSize + 1> buf_{};
@@ -125,18 +140,19 @@ class UdpReceiver {
 class GatewayApp {
  public:
   GatewayApp(asio::io_context& io, const Options& o)
-      : out_(io),
-        events_(out_),
+      : out_(STDOUT_FILENO, kMaxStdoutLines),
+        log_(STDERR_FILENO, kMaxStderrLines),
+        events_(out_, log_),
         gateway_(clock_, events_),
         heartbeat_(clock_),
         stats_period_(clock_, std::chrono::seconds(1)),
-        vehicle_(io, o.vehicle_port, [this](auto* d, auto n) { on_datagram(Source::Vehicle, d, n); }),
-        detector_(io, o.detector_port, [this](auto* d, auto n) { on_datagram(Source::Detector, d, n); }),
+        vehicle_(io, o.vehicle_port, log_, [this](auto* d, auto n) { on_datagram(Source::Vehicle, d, n); }),
+        detector_(io, o.detector_port, log_, [this](auto* d, auto n) { on_datagram(Source::Detector, d, n); }),
         sim_socket_(io, udp::endpoint(udp::v4(), 0)),
         sim_endpoint_(resolve_v4(io, o.sim_host, o.sim_port)),
         timer_(io, asio::steady_timer::clock_type::now()) {
-    std::cerr << "ugvc_gateway: vehicle UDP " << o.vehicle_port << ", detector UDP " << o.detector_port
-              << ", heartbeat -> " << o.sim_host << ':' << o.sim_port << '\n';
+    diag(log_, "ugvc_gateway: vehicle UDP ", o.vehicle_port, ", detector UDP ", o.detector_port,
+        ", heartbeat -> ", o.sim_host, ':', o.sim_port);
     tick();
   }
 
@@ -146,8 +162,8 @@ class GatewayApp {
     const auto frame = gateway_.on_datagram(source, data, len);
     if (!frame) return;
     std::visit(core::overloaded{
-                   [&](const codec::Telemetry& t) { out_.publish(if03::telemetry(frame->header, t, rx_ts)); },
-                   [&](const codec::Detection& d) { out_.publish(if03::detection(d, rx_ts)); },
+                   [&](const codec::Telemetry& t) { out_.publish(if03::telemetry(frame->header, t, rx_ts).dump()); },
+                   [&](const codec::Detection& d) { out_.publish(if03::detection(d, rx_ts).dump()); },
                    [](const codec::Ack&) {},  // 명령 재전송(REQ-CMD-002, 12월)에서 처리한다
                },
                frame->message);
@@ -158,19 +174,16 @@ class GatewayApp {
     if (auto hb = heartbeat_.poll()) {
       asio::error_code ec;
       sim_socket_.send_to(asio::buffer(*hb), sim_endpoint_, 0, ec);
-      if (ec) std::cerr << "heartbeat send error: " << ec.message() << '\n';
+      if (ec) diag(log_, "heartbeat send error: ", ec.message());
     }
     if (stats_period_.due()) {
       const std::uint64_t now = clock_.epoch_ms();
       for (const Source s : ingress::kAllSources) {
-        out_.publish(if03::stats(s, gateway_.stats(s), now));
+        out_.publish(if03::stats(s, gateway_.stats(s), now).dump());
         const auto& link = gateway_.link(s);
-        out_.publish(if03::link_status(s, link.state(), link.last_rx_epoch_ms(), now));
+        out_.publish(if03::link_status(s, link.state(), link.last_rx_epoch_ms(), now).dump());
       }
-      if (out_.dropped() != reported_drops_) {
-        std::cerr << "stdout reader is behind: dropped " << out_.dropped() - reported_drops_ << " lines\n";
-        reported_drops_ = out_.dropped();
-      }
+      report_drops();
     }
     // 직전 예정 시각 + 50ms: 처리 시간만큼 판정 주기가 조금씩 밀리지 않게 한다
     timer_.expires_at(timer_.expiry() + kJudgePeriod);
@@ -179,10 +192,24 @@ class GatewayApp {
     });
   }
 
+  // 버린 줄 수가 늘었으면 stderr에 알린다. stderr 자신이 버린 줄은 자리가 날 때 함께 알린다.
+  void report_drops() {
+    if (const auto d = out_.dropped(); d != reported_stdout_drops_) {
+      diag(log_, "stdout reader is behind: dropped ", d - reported_stdout_drops_, " lines");
+      reported_stdout_drops_ = d;
+    }
+    if (const auto d = log_.dropped(); d != reported_stderr_drops_) {
+      diag(log_, "stderr reader is behind: dropped ", d - reported_stderr_drops_, " lines");
+      reported_stderr_drops_ = d;
+    }
+  }
+
   core::SystemClock clock_;
-  app::LineOutput out_;  // events_보다 먼저 생성되어야 한다 (멤버는 선언 순서대로 생성)
+  app::LineSink out_;  // out_·log_는 이들을 참조하는 events_·수신기보다 먼저 선언한다 (선언 순서대로 생성)
+  app::LineSink log_;
   LinkStatusPublisher events_;
-  std::uint64_t reported_drops_ = 0;
+  std::uint64_t reported_stdout_drops_ = 0;
+  std::uint64_t reported_stderr_drops_ = 0;
   gateway::Gateway gateway_;
   gateway::HeartbeatSender heartbeat_;
   core::Periodic stats_period_;
@@ -198,9 +225,7 @@ class GatewayApp {
 int main(int argc, char* argv[]) {
   try {
     const Options options = parse_options(argc, argv);
-#if defined(ASIO_HAS_POSIX_STREAM_DESCRIPTOR)
-    std::signal(SIGPIPE, SIG_IGN);  // stdout을 읽던 쪽이 끝나도 프로세스가 죽지 않고 쓰기 오류로 받는다
-#endif
+    std::signal(SIGPIPE, SIG_IGN);  // 출력을 읽던 쪽이 끝나도 프로세스가 죽지 않고 쓰기 오류(EPIPE)로 받는다
     asio::io_context io;
     GatewayApp app(io, options);
 
