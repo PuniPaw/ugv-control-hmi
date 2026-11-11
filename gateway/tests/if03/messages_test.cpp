@@ -2,6 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <cstdlib>
+#include <string>
+
 using namespace ugvc;
 using nlohmann::json;
 
@@ -76,21 +80,41 @@ TEST(If03, REQ_AI_001_detection_fields) {
   EXPECT_NEAR(m["data"]["objects"][0]["conf"].get<double>(), 0.915, 1e-9);
 }
 
-// 정수 LSB → 공학 단위가 가장 가까운 십진수로 나온다 (× 1e-7은 36.123456399999995 같은 값을 낸다)
-TEST(If03, REQ_COM_001_engineering_units_are_exact_decimals) {
-  const codec::Telemetry t{361234564, 999999999, 35, 41, 50, 1, 0};
-  const std::string s = if03::telemetry({}, t, 0).dump();
-  EXPECT_NE(s.find("\"lat\":36.1234564"), std::string::npos) << s;
-  EXPECT_NE(s.find("\"lon\":99.9999999"), std::string::npos) << s;
-  EXPECT_NE(s.find("\"heading_deg\":0.35,"), std::string::npos) << s;
-  EXPECT_NE(s.find("\"speed_mps\":0.41}"), std::string::npos) << s;  // 마지막 키 (키는 알파벳순)
+namespace {
 
-  codec::Detection d;
-  d.img_w = 640;
-  d.img_h = 480;
-  d.objects.push_back({0, 1234, 0, 0, 1, 1});
-  d.objects.push_back({0, 3, 0, 0, 1, 1});
-  const std::string ds = if03::detection(d, 0).dump();
-  EXPECT_NE(ds.find("\"conf\":0.1234,"), std::string::npos) << ds;
-  EXPECT_NE(ds.find("\"conf\":0.0003,"), std::string::npos) << ds;
+// JSON 텍스트의 숫자를 double로 다시 읽는다 (HMI의 JSON.parse와 같은 IEEE 754 double)
+double reparse(const json& field) { return std::strtod(field.dump().c_str(), nullptr); }
+
+// "LSB ÷ 10^k"의 정확한 십진수에 가장 가까운 double: 십진 문자열을 strtod로 읽는다 (올바른 반올림)
+double nearest(std::int64_t lsb, int k) {
+  const bool neg = lsb < 0;
+  std::string digits = std::to_string(neg ? -lsb : lsb);
+  if (digits.size() <= static_cast<std::size_t>(k)) digits.insert(0, static_cast<std::size_t>(k) + 1 - digits.size(), '0');
+  digits.insert(digits.size() - static_cast<std::size_t>(k), ".");
+  return std::strtod(((neg ? "-" : "") + digits).c_str(), nullptr);
+}
+
+}  // namespace
+
+// ICD 7.1(v0.3): 공학 단위 값은 텍스트가 아니라 값으로 정의한다. JSON을 다시 읽으면 "LSB ÷ 10^k"에 가장 가까운 double.
+// × 1e-7로 계산하면 36.123456399999995처럼 가장 가까운 double이 아닌 값이 나온다.
+// 96.0388503 등은 nlohmann/json이 96.03885029999999로 쓰지만 같은 double이다 (interrogate에서 찾은 예).
+TEST(If03, REQ_COM_001_engineering_units_reparse_to_nearest_double) {
+  const std::int32_t lats[] = {361234564, 191393027, -900000000, 900000000, 1, -1, 0};
+  const std::int32_t lons[] = {999999999, 960388503, 950986981, -1616555982, -525154204, 1800000000, -1800000000};
+  for (std::size_t i = 0; i < std::size(lats); ++i) {
+    const codec::Telemetry t{lats[i], lons[i], 35, 41, 50, 1, 0};
+    const json d = if03::telemetry({}, t, 0)["data"];
+    EXPECT_EQ(reparse(d["lat"]), nearest(lats[i], 7)) << d["lat"].dump();
+    EXPECT_EQ(reparse(d["lon"]), nearest(lons[i], 7)) << d["lon"].dump();
+    EXPECT_EQ(reparse(d["heading_deg"]), nearest(35, 2));
+    EXPECT_EQ(reparse(d["speed_mps"]), nearest(41, 2));
+  }
+  for (const std::uint16_t conf : {std::uint16_t{1234}, std::uint16_t{3}, std::uint16_t{10000}}) {
+    codec::Detection det;
+    det.img_w = 640;
+    det.img_h = 480;
+    det.objects.push_back({0, conf, 0, 0, 1, 1});
+    EXPECT_EQ(reparse(if03::detection(det, 0)["data"]["objects"][0]["conf"]), nearest(conf, 4));
+  }
 }
