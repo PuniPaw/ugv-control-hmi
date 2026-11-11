@@ -11,6 +11,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <csignal>
@@ -18,6 +19,7 @@
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -208,10 +210,10 @@ class GatewayApp {
 
   // 새 HMI 세션에 먼저 보낼 현재 상태: 다음 1Hz 보고를 기다리지 않고 링크 상태를 그린다.
   std::vector<app::WsServer::Text> snapshot_texts() const {
+    const auto msgs = if03::snapshot(gateway_, clock_.epoch_ms());
     std::vector<app::WsServer::Text> texts;
-    for (const auto& msg : if03::snapshot(gateway_, clock_.epoch_ms())) {
-      texts.push_back(std::make_shared<const std::string>(msg.dump()));
-    }
+    std::transform(msgs.begin(), msgs.end(), std::back_inserter(texts),
+                   [](const nlohmann::json& m) { return std::make_shared<const std::string>(m.dump()); });
     return texts;
   }
 

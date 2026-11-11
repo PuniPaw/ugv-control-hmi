@@ -47,6 +47,7 @@ class GatewayProc:
     detector_port: int
     sim_port: int
     ws_port: int = 0
+    stderr_lines: list = field(default_factory=list)  # 진단 줄 (fixture가 계속 읽어 모은다)
     _q: "queue.Queue[dict]" = field(default_factory=queue.Queue)
 
     def start_pump(self) -> None:
@@ -89,9 +90,9 @@ def gateway():
     line = proc.stderr.readline()
     assert "ugvc_gateway" in line, line
     ws_port = ws_port_from_banner(line)
-    # stderr도 계속 비운다: 쌓여서 파이프가 차면 GW의 stderr 쓰기가 블록된다
-    threading.Thread(target=lambda: [None for _ in proc.stderr], daemon=True).start()
     gw = GatewayProc(proc, *ports, ws_port=ws_port)
+    # stderr도 계속 비운다: 쌓여서 파이프가 차면 GW의 stderr 쓰기가 블록된다. 시험이 볼 수 있게 모아 둔다
+    threading.Thread(target=lambda: gw.stderr_lines.extend(proc.stderr), daemon=True).start()
     gw.start_pump()
     yield gw
     proc.terminate()
