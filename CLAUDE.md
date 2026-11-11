@@ -74,10 +74,10 @@
 | 문서 | 상태 | 비고 |
 |---|---|---|
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
-| 01_SRS.md (UGVC-SRS-001) | **v0.2** | REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화 |
-| 02_ICD.md (UGVC-ICD-001) | **v0.2** | 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID |
-| 03_SDD.md (UGVC-SDD-001) | **v0.1 초안** | 모듈 구조, 수신 흐름, 링크 상태도, 단일 스레드·출력 대기열, 명령 재전송 설계안. HMI는 11/24 주 추가 |
-| 04_STP.md (UGVC-STP-001) | **v0.2** | TC-COM-001~007, TC-QUAL-001. CMD·SAFE 등은 구현 주에 추가 |
+| 01_SRS.md (UGVC-SRS-001) | **v0.2** | 요구사항 30개. REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화 |
+| 02_ICD.md (UGVC-ICD-001) | **v0.3** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의 |
+| 03_SDD.md (UGVC-SDD-001) | **v0.1.2 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, 명령 재전송 설계안. HMI는 11/24 주 추가 |
+| 04_STP.md (UGVC-STP-001) | **v0.3 초안** | TC-COM-001~007, TC-QUAL-001. TC-COM-005-08·007-02는 실제 GW 통합 시험. `tools/check_stp_tests.py`가 STP 이름과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
 | 06_RTM.md | 미작성 | 스크립트로 생성 예정 |
 | adr/ADR-001 영상 전송 경로 분리 | **승인** | |
