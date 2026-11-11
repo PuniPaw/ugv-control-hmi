@@ -8,26 +8,26 @@
 
 using namespace std::chrono_literals;
 using namespace ugvc::link;
-using ugvc::ingress::Source;
 using ugvc::test::FakeClock;
 
 namespace {
 
-struct RecordingSink final : ILinkTransitionSink {
-  void on_link_transition(const LinkTransition& t) override { events.push_back(t); }
-  std::vector<LinkTransition> events;
-};
-
-// 패킷 하나를 받은 직후 상태에서 시작하는 공통 준비
+// LinkMonitor가 반환한 전이를 events에 모으는 공통 준비
 struct LinkFixture : ::testing::Test {
   FakeClock clock;
-  RecordingSink sink;
-  LinkMonitor link{Source::Vehicle, clock, sink};
+  LinkMonitor link{clock};
+  std::vector<LinkChange> events;
+
+  void packet() { record(link.on_valid_packet()); }
+  void poll() { record(link.poll()); }
+  void record(std::optional<LinkChange> c) {
+    if (c) events.push_back(*c);
+  }
 
   LinkState after(std::chrono::milliseconds elapsed) {
-    link.on_valid_packet();
+    packet();
     clock.advance(elapsed);
-    link.poll();
+    poll();
     return link.state();
   }
 };
@@ -38,7 +38,7 @@ struct LinkFixture : ::testing::Test {
 TEST_F(LinkFixture, REQ_COM_003_initially_lost) {
   EXPECT_EQ(link.state(), LinkState::Lost);
   clock.advance(5s);
-  link.poll();
+  poll();
   EXPECT_EQ(link.state(), LinkState::Lost);
   EXPECT_FALSE(link.last_rx_epoch_ms().has_value());
 }
@@ -58,64 +58,63 @@ TEST_F(LinkFixture, REQ_COM_003_valid_packet_resets) {
 // TC-COM-004-01
 TEST_F(LinkFixture, REQ_COM_004_lost_to_connected) {
   EXPECT_EQ(after(1500ms), LinkState::Lost);
-  sink.events.clear();
-  link.on_valid_packet();
+  events.clear();
+  packet();
   EXPECT_EQ(link.state(), LinkState::Connected);
-  ASSERT_EQ(sink.events.size(), 1U);
-  EXPECT_EQ(sink.events[0].from, LinkState::Lost);
-  EXPECT_EQ(sink.events[0].to, LinkState::Connected);  // DEGRADED를 거치지 않음
+  ASSERT_EQ(events.size(), 1U);
+  EXPECT_EQ(events[0].from, LinkState::Lost);
+  EXPECT_EQ(events[0].to, LinkState::Connected);  // DEGRADED를 거치지 않음
 }
 
 // TC-COM-004-02
 TEST_F(LinkFixture, REQ_COM_004_transition_events) {
-  link.on_valid_packet();  // LOST → CONNECTED (첫 패킷)
-  sink.events.clear();
+  packet();  // LOST → CONNECTED (첫 패킷)
+  events.clear();
   const auto rx_epoch = clock.epoch_ms();
   clock.advance(500ms);
-  link.poll();  // → DEGRADED
+  poll();  // → DEGRADED
   clock.advance(500ms);
-  link.poll();  // → LOST
-  link.on_valid_packet();  // → CONNECTED
+  poll();  // → LOST
+  packet();  // → CONNECTED
 
-  ASSERT_EQ(sink.events.size(), 3U);
+  ASSERT_EQ(events.size(), 3U);
   const LinkState expected[3][2] = {{LinkState::Connected, LinkState::Degraded},
                                     {LinkState::Degraded, LinkState::Lost},
                                     {LinkState::Lost, LinkState::Connected}};
   for (std::size_t i = 0; i < 3; ++i) {
-    EXPECT_EQ(sink.events[i].source, Source::Vehicle);
-    EXPECT_EQ(sink.events[i].from, expected[i][0]);
-    EXPECT_EQ(sink.events[i].to, expected[i][1]);
+    EXPECT_EQ(events[i].from, expected[i][0]);
+    EXPECT_EQ(events[i].to, expected[i][1]);
   }
-  EXPECT_EQ(sink.events[0].at_epoch_ms, rx_epoch + 500);
-  EXPECT_EQ(sink.events[1].at_epoch_ms, rx_epoch + 1000);
-  EXPECT_EQ(sink.events[1].last_rx_epoch_ms, rx_epoch);
+  EXPECT_EQ(events[0].at_epoch_ms, rx_epoch + 500);
+  EXPECT_EQ(events[1].at_epoch_ms, rx_epoch + 1000);
+  EXPECT_EQ(events[1].last_rx_epoch_ms, rx_epoch);
 }
 
 // TC-COM-004-03
 TEST_F(LinkFixture, REQ_COM_004_no_event_without_change) {
-  link.on_valid_packet();
-  sink.events.clear();
+  packet();
+  events.clear();
   for (int i = 0; i < 10; ++i) {  // 100ms마다 패킷: 계속 CONNECTED
     clock.advance(100ms);
-    link.on_valid_packet();
-    link.poll();
+    packet();
+    poll();
   }
   clock.advance(2s);
-  link.poll();  // → DEGRADED → LOST가 아니라 바로 LOST 1건 (판정 시점에 이미 2s)
-  ASSERT_EQ(sink.events.size(), 1U);
-  EXPECT_EQ(sink.events[0].to, LinkState::Lost);
-  sink.events.clear();
+  poll();  // → DEGRADED → LOST가 아니라 바로 LOST 1건 (판정 시점에 이미 2s)
+  ASSERT_EQ(events.size(), 1U);
+  EXPECT_EQ(events[0].to, LinkState::Lost);
+  events.clear();
   for (int i = 0; i < 10; ++i) {  // LOST 지속
     clock.advance(100ms);
-    link.poll();
+    poll();
   }
-  EXPECT_TRUE(sink.events.empty());
+  EXPECT_TRUE(events.empty());
 }
 
 // TC-COM-004-04
 TEST_F(LinkFixture, REQ_COM_004_no_event_at_startup) {
-  link.poll();
+  poll();
   clock.advance(3s);
-  link.poll();
-  EXPECT_TRUE(sink.events.empty());
+  poll();
+  EXPECT_TRUE(events.empty());
 }

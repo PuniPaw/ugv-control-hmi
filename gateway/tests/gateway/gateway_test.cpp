@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <utility>
 #include <vector>
 
 #include "support/fake_clock.hpp"
@@ -19,15 +20,19 @@ using test::FakeClock;
 
 namespace {
 
-struct NullSink final : link::ILinkTransitionSink {
-  void on_link_transition(const link::LinkTransition&) override {}
-};
-
 codec::Bytes telemetry_frame(std::uint32_t seq) {
   codec::Telemetry t;
   t.battery = 50;
   const auto payload = codec::encode_telemetry(t);
   return codec::encode_frame(codec::kMsgTelemetry, seq, 0, payload.data(), payload.size());
+}
+
+codec::Bytes detection_frame(std::uint32_t seq) {
+  codec::Detection d;
+  d.img_w = 640;
+  d.img_h = 480;
+  const auto payload = codec::encode_detection(d);
+  return codec::encode_frame(codec::kMsgDetection, seq, 0, payload.data(), payload.size());
 }
 
 codec::Bytes ack_frame(std::uint32_t seq) {
@@ -37,8 +42,7 @@ codec::Bytes ack_frame(std::uint32_t seq) {
 
 struct GatewayFixture : ::testing::Test {
   FakeClock clock;
-  NullSink sink;
-  gateway::Gateway gw{clock, sink};
+  gateway::Gateway gw{clock};
 
   bool send(const codec::Bytes& frame, Source s = Source::Vehicle) {
     return gw.on_datagram(s, frame.data(), frame.size()).has_value();
@@ -62,18 +66,11 @@ TEST_F(GatewayFixture, REQ_COM_003_rejected_does_not_reset) {
 
 // TC-COM-003-08: 송신원 독립
 TEST_F(GatewayFixture, REQ_COM_003_sources_independent) {
-  codec::Detection d;
-  d.img_w = 640;
-  d.img_h = 480;
-  const auto det_payload = codec::encode_detection(d);
-  auto det = [&](std::uint32_t seq) {
-    return codec::encode_frame(codec::kMsgDetection, seq, 0, det_payload.data(), det_payload.size());
-  };
   ASSERT_TRUE(send(telemetry_frame(0)));
-  ASSERT_TRUE(send(det(0), Source::Detector));
+  ASSERT_TRUE(send(detection_frame(0), Source::Detector));
   for (std::uint32_t i = 1; i <= 15; ++i) {  // 1.5s 동안 DET만 계속 수신
     clock.advance(100ms);
-    ASSERT_TRUE(send(det(i), Source::Detector));
+    ASSERT_TRUE(send(detection_frame(i), Source::Detector));
   }
   gw.poll();
   EXPECT_EQ(gw.link(Source::Vehicle).state(), LinkState::Lost);
@@ -139,4 +136,35 @@ TEST_F(GatewayFixture, REQ_COM_005_stats_loss_rate) {
   ASSERT_TRUE(send(telemetry_frame(0)));
   ASSERT_TRUE(send(telemetry_frame(3)));
   EXPECT_DOUBLE_EQ(*gw.stats(Source::Vehicle).loss_rate_10s, 0.5);
+}
+
+// TC-COM-004-02 보충: 전이는 송신원을 달고 일어난 순서대로 한 번만 꺼내진다 (패킷 처리 중 전이 포함)
+TEST_F(GatewayFixture, REQ_COM_004_transitions_carry_source_in_order) {
+  EXPECT_TRUE(gw.take_transitions().empty());  // 시작 시 초기 상태(LOST)는 전이가 아니다
+  ASSERT_TRUE(send(detection_frame(0), Source::Detector));
+  clock.advance(1200ms);
+  ASSERT_TRUE(send(telemetry_frame(1), Source::Vehicle));
+  ASSERT_TRUE(send(detection_frame(1), Source::Detector));  // 처리 직전 재판정: LOST → 바로 CONNECTED
+
+  const auto t = gw.take_transitions();
+  ASSERT_EQ(t.size(), 4U);
+  const std::pair<Source, LinkState> expected[] = {{Source::Detector, LinkState::Connected},
+                                                   {Source::Vehicle, LinkState::Connected},
+                                                   {Source::Detector, LinkState::Lost},
+                                                   {Source::Detector, LinkState::Connected}};
+  for (std::size_t i = 0; i < t.size(); ++i) {
+    EXPECT_EQ(t[i].source, expected[i].first) << i;
+    EXPECT_EQ(t[i].change.to, expected[i].second) << i;
+  }
+  EXPECT_TRUE(gw.take_transitions().empty());  // 꺼내면 비워진다
+}
+
+// 유효 패킷의 수신 시각은 링크 상태의 마지막 수신 시각과 같은 값이다 (IF-03 rx_ts와 last_rx_ts가 어긋나지 않게)
+TEST_F(GatewayFixture, REQ_COM_001_accepted_rx_time_matches_link) {
+  clock.advance(1234ms);
+  const auto frame = telemetry_frame(0);
+  const auto accepted = gw.on_datagram(Source::Vehicle, frame.data(), frame.size());
+  ASSERT_TRUE(accepted.has_value());
+  EXPECT_EQ(accepted->rx_epoch_ms, clock.epoch_ms());
+  EXPECT_EQ(gw.link(Source::Vehicle).last_rx_epoch_ms(), accepted->rx_epoch_ms);
 }

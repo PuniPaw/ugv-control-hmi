@@ -13,6 +13,7 @@
 | 버전 | 날짜 | 변경 내용 |
 |---|---|---|
 | v0.1 | 2026-11-11 | 최초 작성. GW 모듈 구조, 수신 처리 흐름, 링크 상태도, 스레드·시간 구조, 명령 재전송 설계안 |
+| v0.1.2 | 2026-11-11 | 링크 전이를 콜백(`ILinkTransitionSink`)이 아니라 반환값으로: `LinkMonitor`는 `LinkChange`를 반환하고, `Gateway`가 송신원을 붙여 모으면 `app`이 `take_transitions()`로 꺼낸다. `link`가 `ingress`를 몰라도 된다. 1Hz 상태 보고는 순수 함수 `if03::snapshot` |
 | v0.1.1 | 2026-11-11 | 5장 출력 구조 변경: stdout·stderr 모두 `LineSink`(출력 전용 스레드)로. O_NONBLOCK 비동기 쓰기가 `2>&1`에서 stderr를 고장 내던 문제(interrogate 검증) 반영 |
 
 ---
@@ -48,8 +49,8 @@ flowchart LR
 | `codec` | big-endian 필드 직렬화, CRC-16, 헤더·메시지 encode/decode, 열거값 이름(`name_of`)과 범위 상수 | `encode_frame`, `decode_telemetry`, `Telemetry`, `Detection`, `Ack`, `kMsg*` | REQ-QUAL-001, ADR-002 |
 | `ingress` | 검증 규칙 ①~⑧(상태 없음), ⑨ seq 순서·유실(스트림별 상태), 폐기 원인 계수 | `check_frame`, `CheckedFrame{header, Message}`, `SeqTracker`, `ErrorCounters` | REQ-COM-001·002·005·006 |
 | `core` | 시계 주입, 주기 작업 예정 시각 | `IClock`, `SystemClock`, `Periodic` | (시험 용이성) |
-| `link` | 송신원별 링크 상태 기계, 10초 유실률 창 | `LinkMonitor`, `ILinkTransitionSink`, `LossWindow` | REQ-COM-003·004·005 |
-| `gateway` | 수신 처리 순서를 묶는 중심 객체, HEARTBEAT 생성 | `Gateway::on_datagram`, `Gateway::poll`, `HeartbeatSender` | REQ-COM-001~007 |
+| `link` | 링크 상태 기계(송신원 하나), 10초 유실률 창 | `LinkMonitor`, `LinkChange`, `LossWindow` | REQ-COM-003·004·005 |
+| `gateway` | 수신 처리 순서를 묶는 중심 객체, 송신원별 링크 전이 수집, HEARTBEAT 생성 | `Gateway::on_datagram`, `Gateway::poll`, `Gateway::take_transitions`, `HeartbeatSender` | REQ-COM-001~007 |
 | `if03` | 정수 LSB → 공학 단위, IF-03 JSON 메시지 생성 | `if03::telemetry`, `stats`, `link_status` | ICD 7.1 |
 | `app` | UDP 수신·송신, 50ms 판정 타이머, stdout·stderr 출력(전용 스레드), 명령행 옵션 | `GatewayApp`, `UdpReceiver`, `LineSink` | REQ-COM-007, REQ-SAFE-001 |
 
@@ -89,7 +90,8 @@ stateDiagram-v2
     CONNECTED --> LOST: 경과 ≥ 1.0s (판정이 늦은 경우)
 ```
 
-- 상태는 "마지막 유효 패킷 이후 경과 시간"의 함수다. `LinkMonitor`는 매 판정마다 경과 시간으로 상태를 다시 계산하고, 직전 상태와 다를 때만 `ILinkTransitionSink`에 전이를 알린다.
+- 상태는 "마지막 유효 패킷 이후 경과 시간"의 함수다. `LinkMonitor`는 매 판정마다 경과 시간으로 상태를 다시 계산하고, 직전 상태와 다를 때만 전이(`LinkChange`)를 **반환**한다 (`[[nodiscard]]`라 버리면 컴파일 경고).
+- `Gateway`는 반환된 전이에 송신원을 붙여 `LinkTransition`으로 모은다. `app`은 `on_datagram`·`poll` 직후 `take_transitions()`로 꺼내 stderr 진단과 IF-03 `link_status`로 낸다. 콜백 인터페이스를 쓰지 않으므로 `link`는 송신원(`ingress`)을 모르고, 시험은 반환값만 보면 된다.
 - 경과 시간은 `IClock::now()`(steady clock)로 잰다. 시스템 시각이 NTP 보정으로 바뀌어도 판정이 흔들리지 않는다. 기록용 시각만 `epoch_ms()`를 쓴다.
 - 판정 지연은 최대 판정 주기(50ms)다. STP 2.2가 이를 허용 오차로 둔다.
 
@@ -100,7 +102,7 @@ GW의 판정은 **단일 스레드 Asio `io_context` 하나**로 동작한다. �
 | 이벤트 원천 | 주기 | 하는 일 |
 |---|---|---|
 | UDP 15001·15002 비동기 수신 | 도착 즉시 | `Gateway::on_datagram`, 유효 TELEMETRY·DETECTION을 IF-03 JSON으로 출력 |
-| 판정 타이머 `steady_timer` | 50ms | `Gateway::poll`(링크 재판정), `HeartbeatSender::poll`, stats·link_status 1Hz |
+| 판정 타이머 `steady_timer` | 50ms | `Gateway::poll`(링크 재판정) 후 전이 출력, `HeartbeatSender::poll`, `if03::snapshot`(stats·link_status 1Hz) |
 | (11/24 주) WebSocket 세션 | 도착 즉시 | HMI 명령 수신, IF-03 메시지 송신 (ADR-003) |
 
 시간 관련 설계:
@@ -150,7 +152,7 @@ sequenceDiagram
 
 - `CommandTracker`(가칭)를 `gateway` 모듈에 둔다. `IClock`을 받아 재전송 시각을 판정하고, 50ms 판정 타이머의 `poll()`에서 재전송·TIMEOUT을 낸다. 가짜 시계로 1.0s 경계와 3회 상한을 시험한다.
 - ACK는 이미 검증 단계에서 `Message`의 `Ack`로 디코딩되어 나온다. `app`은 이를 `CommandTracker`에 넘기기만 한다. `Gateway::on_datagram`에 명령 로직을 섞지 않는다.
-- 명령 이벤트(송신, 재전송, 결과)는 `ILinkTransitionSink`와 다른 별도 인터페이스로 기록한다 (REQ-CMD-005, PostgreSQL 로그와 연결).
+- 명령 이벤트(송신, 재전송, 결과)도 링크 전이처럼 반환값으로 모아 `app`이 꺼낸다. 이벤트 종류가 둘 이상이 되면 `std::variant<LinkTransition, CommandEvent>`로 묶어 `std::visit`이 처리 누락을 컴파일 오류로 알리게 한다 (REQ-CMD-005, PostgreSQL 로그와 연결).
 - SIM은 받은 cmd_id와 결과를 기억해 중복 cmd_id를 재실행하지 않는다(REQ-CMD-003). 범위를 벗어난 명령은 실행하지 않고 `REJECTED_INVALID`로 ACK한다(REQ-CMD-006).
 
 ## 7. 시험 용이성을 위한 설계
