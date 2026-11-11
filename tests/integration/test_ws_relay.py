@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -250,15 +251,17 @@ def test_REQ_COM_008_session_limit_concurrent(gateway):
             await ws.close()
         return len(opened), [r.response.status_code for r in refused]
 
-    for _ in range(5):  # 경쟁 조건이라 여러 번
+    for i in range(5):  # 경쟁 조건이라 여러 번
         opened, refused = asyncio.run(run())
         assert opened <= 8, f"{opened} sessions open, cap is 8"
+        if i == 0:
+            assert opened == 8, f"only {opened} sessions opened, cap is 8"  # 상한이 낮게 회귀해도 잡는다
         assert opened + len(refused) == 16 and set(refused) <= {503}, (opened, refused)
         time.sleep(0.2)  # 닫힌 세션이 GW에서 정리될 때까지
 
 
 def test_REQ_COM_008_stalled_hmi_closed_within_lag_limit(gateway):
-    """운용 조건(기본 소켓 버퍼, TELEMETRY 10Hz)에서 읽지 않는 HMI는 지연 상한(2s) 안에 끊긴다.
+    """운용 조건(기본 소켓 버퍼, TELEMETRY 10Hz)에서 읽지 않고 아무것도 보내지 않는 HMI는 약 4s에 끊긴다.
     TCP 버퍼가 수 MB를 받아 둘 수 있어 대기열 상한만으로는 수십 분 걸린다 (PR #16 2차 리뷰).
     듣기만 하는 정상 HMI는 WebSocket 구현이 ping에 pong으로 답하므로 끊기지 않는다."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -376,7 +379,8 @@ def test_REQ_COM_008_hmi_answering_ping_late_is_closed(gateway):
 
 
 def test_REQ_COM_008_lag_limit_timing(gateway):
-    """아무것도 보내지 않는 HMI(pong 없음)는 무응답 2.0~4.0s 사이에 끊긴다 (판정 여유 0.5s).
+    """아무것도 보내지 않는 HMI(pong 없음)는 약 4.0s에 끊긴다: 접속 시점이 Beast 판정 틱과 맞물려
+    2s 틱에 ping, 다음 2s 틱에 종료. 실측 4.00~4.02s (판정 여유 0.5s). 기한이 1.0s로 회귀하면 약 2s가 된다.
     데이터는 읽어 버리면서 EOF 시각을 잰다 (읽지 않고 peek하면 접속 직후 받은 데이터 때문에 EOF가 안 보인다)."""
     hmi = _RawHmi(gateway.ws_port)
     t0 = time.monotonic()
@@ -388,7 +392,7 @@ def test_REQ_COM_008_lag_limit_timing(gateway):
         time.sleep(0.02)
     hmi.close()
     assert closed_at is not None, "not closed within 6s"
-    assert 2.0 <= closed_at <= 4.5, closed_at
+    assert 3.5 <= closed_at <= 4.5, closed_at
     time.sleep(0.3)
     assert any("ws close: lag limit" in l for l in gateway.stderr_lines), gateway.stderr_lines[-3:]
 
@@ -405,14 +409,15 @@ def test_REQ_COM_008_accept_error_backs_off():
     proc = subprocess.Popen(
         [str(GATEWAY_BIN), "--vehicle-port", str(vp), "--detector-port", str(dp), "--sim-port", str(sp), *GW_TEST_ARGS],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (40, 40)))
+        # GW 기본 fd는 약 12개. 20으로 두면 핸드셰이크 전 연결 상한(16)에 닿기 전에 accept가 EMFILE로 실패한다
+        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_NOFILE, (20, 20)))
     hb = _HeartbeatRecorder(sp)
     clients = []
     try:
         port = ws_port_from_banner(proc.stderr.readline())
         errors = []
         threading.Thread(target=lambda: errors.extend(l for l in proc.stderr if "ws accept error" in l), daemon=True).start()
-        for _ in range(60):  # fd 40개를 넘겨 accept가 EMFILE로 실패하게 한다
+        for _ in range(60):  # fd 20개를 넘겨 accept가 EMFILE로 실패하게 한다
             c = socket.socket()
             c.connect(("127.0.0.1", port))
             clients.append(c)
@@ -432,3 +437,47 @@ def test_REQ_COM_008_accept_error_backs_off():
     assert cpu < 0.3, f"GW CPU {cpu:.0%} while accept keeps failing"
     assert errors, "accept error not logged"
     assert gaps and max(gaps) < 1.2, gaps
+
+
+def test_REQ_COM_008_pre_handshake_flood_bounded(gateway):
+    """업그레이드 요청 헤더를 다 보내지 않은(또는 큰 본문을 붙인) 연결이 몰려도 GW 메모리가 늘지 않고,
+    그런 연결이 끝나면 정상 HMI가 접속된다. 요청은 헤더 4KB까지만 받고 본문은 받지 않으며,
+    헤더를 받는 중인 연결은 16개까지다."""
+    def rss_mb():
+        status = open(f"/proc/{gateway.proc.pid}/status").read()
+        return int(re.search(r"VmRSS:\s+(\d+)", status).group(1)) / 1024
+
+    before = rss_mb()
+    flood = []
+    chunk = b"x" * 65536
+    for _ in range(200):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect(("127.0.0.1", gateway.ws_port))
+        s.setblocking(False)
+        try:
+            s.sendall(b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                      b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+                      b"Content-Length: 1000000\r\n\r\n")
+        except (BlockingIOError, OSError):
+            pass
+        flood.append(s)
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < 3.0:
+        for s in flood:
+            try:
+                s.send(chunk)
+            except (BlockingIOError, OSError):
+                pass
+        time.sleep(0.1)
+    grown = rss_mb() - before
+    for s in flood:
+        s.close()
+    assert gateway.proc.poll() is None, "GW exited"
+    assert grown < 20, f"GW RSS grew {grown:.0f} MB under pre-handshake flood"
+
+    async def run():
+        async with websockets.connect(_ws_url(gateway)) as ws:
+            return await _collect(ws, "link_status", 1, 2.0)
+
+    time.sleep(0.2)
+    assert len(asyncio.run(run())) == 1

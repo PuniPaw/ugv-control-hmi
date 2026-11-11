@@ -61,7 +61,7 @@ target_include_directories(ugvc_gateway_core PUBLIC include)
 target_link_libraries(ugvc_gateway_core PUBLIC ugvc_ingress nlohmann_json::nlohmann_json PRIVATE ugvc_warnings)
 
 # GW 실행 파일: 소켓·타이머만 담당
-# app_io: 출력 전용 스레드가 쓰는 줄 단위 출력(LineSink). io 스레드를 막지 않는다
+# app_io: io 스레드를 막지 않는 출력 — 줄 단위 stdout·stderr(LineSink, 전용 쓰기 스레드)와 IF-03 WebSocket 서버(WsServer)
 add_library(ugvc_app_io src/app/line_sink.cpp src/app/ws_server.cpp)
 target_include_directories(ugvc_app_io PUBLIC src/app)
 target_link_libraries(ugvc_app_io PUBLIC ugvc_asio Threads::Threads PRIVATE ugvc_warnings)

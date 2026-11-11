@@ -22,6 +22,7 @@ namespace {
 constexpr auto kHandshakeTimeout = std::chrono::seconds(5);
 constexpr std::size_t kMaxIncomingMessage = 64 * 1024;  // IF-03 7.2 명령은 수백 바이트
 constexpr auto kAcceptRetryDelay = std::chrono::milliseconds(100);
+constexpr std::uint32_t kMaxRequestHeader = 4 * 1024;  // 업그레이드 요청 헤더는 수백 바이트
 
 // 요청 대상에서 경로만: "/ws?client=hmi" → "/ws"
 std::string_view path_of(std::string_view target) { return target.substr(0, target.find('?')); }
@@ -32,10 +33,17 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
  public:
   Session(WsServer& server, tcp::socket socket) : server_(server), ws_(std::move(socket)) {}
 
+  // 업그레이드 요청 헤더만 받는다: 본문은 받지 않고(empty_body, 본문이 있으면 파싱 오류) 헤더는 4KB까지.
+  // 핸드셰이크 전 연결이 큰 본문으로 메모리를 쌓지 못하게 한다.
   void start() {
+    ++server_.connecting_;
+    parser_.header_limit(kMaxRequestHeader);
     beast::get_lowest_layer(ws_).expires_after(kHandshakeTimeout);
-    http::async_read(ws_.next_layer(), buffer_, request_,
-                     [self = shared_from_this()](beast::error_code ec, std::size_t) { self->on_request(ec); });
+    http::async_read(ws_.next_layer(), buffer_, parser_,
+                     [self = shared_from_this()](beast::error_code ec, std::size_t) {
+                       --self->server_.connecting_;
+                       self->on_request(ec);
+                     });
   }
 
   // 대기열에 넣기만 한다 (호출한 쪽을 막지 않는다). 상한을 넘으면 끊는다: 메모리 상한용이다.
@@ -45,7 +53,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
   void send(const Text& text) {
     if (!open_) return;
     if (queue_.size() >= server_.limits_.max_queued_per_session) {
-      close("queue full (" + std::to_string(queue_.size()) + " messages)");
+      detach("queue full (" + std::to_string(queue_.size()) + " messages)");
       beast::error_code ignored;
       beast::get_lowest_layer(ws_).socket().close(ignored);
       return;
@@ -56,8 +64,9 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
 
  private:
   void on_request(beast::error_code ec) {
-    if (ec) return;  // 핸드셰이크 전에 끊김·시간 초과: 기록할 것이 없다
-    if (!websocket::is_upgrade(request_) || path_of(request_.target()) != server_.path_) {
+    if (ec) return;  // 핸드셰이크 전에 끊김·시간 초과·헤더 초과·본문 있음: 응답 없이 닫는다
+    const auto& request = parser_.get();
+    if (!websocket::is_upgrade(request) || path_of(request.target()) != server_.path_) {
       reject(http::status::not_found, "IF-03 WebSocket is at " + server_.path_);
       return;
     }
@@ -71,7 +80,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
     // Beast는 idle_timeout/2마다 타이머를 돌린다: 직전 틱 이후 HMI에게서 받은 것이 없으면 ping을 보내고,
     // 다음 틱까지도 없으면 끊는다. 그래서 idle_timeout = 2 × max_lag로 두면 "ping 후 max_lag 안에
     // 응답(pong 등)이 없으면 끊는다"가 되고, 아무것도 보내지 않는 HMI는 무응답 max_lag~2×max_lag 사이에
-    // 끊긴다 (PR #16 3차 리뷰: idle_timeout = max_lag로 두면 ping 후 max_lag/2 기한이 된다).
+    // 끊긴다 (idle_timeout = max_lag로 두면 기한이 ping 후 max_lag/2가 된다).
     // 읽지 않는 HMI는 쌓인 데이터 뒤의 ping을 읽지 못해 pong도 못 보내므로 TCP 버퍼 크기와 무관하게
     // 끊긴다. 듣기만 하는 정상 HMI는 WebSocket 구현이 pong을 자동으로 보낸다.
     websocket::stream_base::timeout opt{};
@@ -80,14 +89,14 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
     opt.keep_alive_pings = true;
     ws_.set_option(opt);
     ws_.read_message_max(kMaxIncomingMessage);
-    ws_.async_accept(request_, [self = shared_from_this()](beast::error_code accept_ec) {
+    ws_.async_accept(request, [self = shared_from_this()](beast::error_code accept_ec) {
       self->on_accept(accept_ec);
     });
   }
 
   void reject(http::status status, const std::string& reason) {
     server_.cb_.log("ws reject " + std::to_string(static_cast<unsigned>(status)) + ": " + reason);
-    auto res = std::make_shared<http::response<http::string_body>>(status, request_.version());
+    auto res = std::make_shared<http::response<http::string_body>>(status, parser_.get().version());
     res->set(http::field::content_type, "text/plain");
     res->body() = reason + "\n";
     res->prepare_payload();
@@ -113,7 +122,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
     buffer_.clear();
     ws_.async_read(buffer_, [self = shared_from_this()](beast::error_code ec, std::size_t) {
       if (ec) {
-        self->close(self->read_error_reason(ec));
+        self->detach(self->read_error_reason(ec));
         return;
       }
       self->server_.cb_.on_message(beast::buffers_to_string(self->buffer_.data()));
@@ -124,7 +133,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
   void write_next() {
     ws_.async_write(asio::buffer(*queue_.front()), [self = shared_from_this()](beast::error_code ec, std::size_t) {
       if (ec) {
-        self->close("write error: " + ec.message());
+        self->detach("write error: " + ec.message());
         return;
       }
       self->queue_.pop_front();
@@ -140,9 +149,10 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
     return "read error: " + ec.message();
   }
 
-  // 먼저 실패한 쪽(읽기·쓰기·대기열 초과)이 부른다. 두 번 불려도 처음 사유만 기록한다.
-  // 대기열은 비우지 않는다: 진행 중인 async_write가 맨 앞 문자열을 아직 쓰고 있을 수 있다.
-  void close(const std::string& reason) {
+  // 세션을 서버 목록에서 떼고 사유를 기록한다. 소켓은 닫지 않는다: 읽기·쓰기 오류로 불렸다면 이미
+  // 끝난 연결이고, 대기열 초과는 부른 쪽이 소켓을 닫는다. 먼저 실패한 쪽이 부르며, 두 번 불려도
+  // 처음 사유만 기록한다. 대기열은 비우지 않는다: 진행 중인 async_write가 맨 앞 문자열을 쓰고 있을 수 있다.
+  void detach(const std::string& reason) {
     open_ = false;
     if (server_.sessions_.erase(shared_from_this()) == 0) return;
     server_.cb_.log("ws close: " + reason + " (" + std::to_string(server_.sessions_.size()) + " clients)");
@@ -151,7 +161,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
   WsServer& server_;
   websocket::stream<beast::tcp_stream> ws_;
   beast::flat_buffer buffer_;
-  http::request<http::string_body> request_;
+  http::request_parser<http::empty_body> parser_;
   std::deque<Text> queue_;  // 맨 앞이 지금 쓰는 중인 메시지
   bool open_ = false;       // 핸드셰이크 후 true, 읽기·쓰기 실패 후 false
 };
@@ -188,7 +198,13 @@ void WsServer::accept() {
       });
       return;
     }
-    std::make_shared<Session>(*this, std::move(socket))->start();
+    if (connecting_ >= limits_.max_connecting) {
+      // 업그레이드 요청을 아직 다 보내지 않은 연결이 상한이다: 받자마자 닫는다 (fd·메모리 보호)
+      beast::error_code ignored;
+      socket.close(ignored);
+    } else {
+      std::make_shared<Session>(*this, std::move(socket))->start();
+    }
     accept();
   });
 }

@@ -50,6 +50,7 @@ constexpr std::size_t kMaxStderrLines = 200;   // 진단은 드물다. 이만큼
 constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 넘치면 그 HMI를 끊는다 (메모리 상한)
 constexpr std::size_t kMaxWsSessions = 8;      // 관제 HMI는 한두 개. 넘치는 접속은 503
 constexpr auto kMaxHmiLag = std::chrono::seconds(2);  // ping 후 이 안에 응답이 없으면 끊는다 (REQ-COM-008)
+constexpr std::size_t kMaxWsConnecting = 16;  // 요청 헤더를 아직 다 보내지 않은 연결. 넘치면 바로 닫는다
 constexpr const char* kWsPath = "/ws";         // ICD 2장 IF-03
 
 struct Options {
@@ -152,7 +153,7 @@ class GatewayApp {
         detector_(io, o.detector_port, log_, [this](auto* d, auto n) { on_datagram(Source::Detector, d, n); }),
         sim_socket_(io, udp::endpoint(udp::v4(), 0)),
         sim_endpoint_(resolve_v4<udp>(io, o.sim_host, o.sim_port)),
-        ws_(io, resolve_v4<asio::ip::tcp>(io, o.ws_host, o.ws_port), kWsPath, {kMaxWsQueued, kMaxWsSessions, kMaxHmiLag},
+        ws_(io, resolve_v4<asio::ip::tcp>(io, o.ws_host, o.ws_port), kWsPath, {kMaxWsQueued, kMaxWsSessions, kMaxHmiLag, kMaxWsConnecting},
             {[this] { return snapshot_texts(); },
              [this](const std::string& m) { on_hmi_message(m); },
              [this](const std::string& line) { log_.publish(line); }}),
