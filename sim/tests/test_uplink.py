@@ -3,9 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from ugvc_proto.command import Command, CmdType
+from ugvc_proto.command import Ack, AckResult, Command, CmdType
 from ugvc_proto.frame import MsgType, encode_frame
 
+from ugvc_sim import uplink
 from ugvc_sim.uplink import Heartbeat, HeartbeatWatch, ReceivedCommand, parse_uplink
 
 VECTORS = Path(__file__).resolve().parents[2] / "testdata" / "vectors"
@@ -74,3 +75,25 @@ def test_REQ_CMD_006_waypoint_bounds_accepted():
 
 def test_REQ_COM_007_rejects_datagram_over_1200():
     assert parse_uplink(encode_frame(MsgType.HEARTBEAT, 0, 0) + bytes(1181)) == "length"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AttributeError,
+    reason="REQ-CMD-006 ACK 응답은 12월 명령 작업에서 구현. 구현하면 이 xfail 표시를 지운다",
+)
+@pytest.mark.parametrize("name, command, expected", [
+    ("cmd_type_undefined", Command(2, 0x99), Ack(2, AckResult.REJECTED_INVALID)),
+    ("waypoint_lat_over", Command(3, CmdType.WAYPOINT, 900_000_001, 0), Ack(3, AckResult.REJECTED_INVALID)),
+    ("waypoint_lon_under", Command(4, CmdType.WAYPOINT, 0, -1_800_000_001), Ack(4, AckResult.REJECTED_INVALID)),
+    ("cmd_id_0_no_ack", Command(0, CmdType.STOP), None),
+])
+def test_REQ_CMD_006_acks_rejected_invalid(name, command, expected):
+    """범위 밖 명령은 실행하지 않고 REJECTED_INVALID로 ACK한다. cmd_id 0은 응답할 대상이 없어 ACK가 없다.
+
+    아직 구현 전이라 `uplink.ack_for_command`가 없어 AttributeError로 실패한다(xfail).
+    함수가 생긴 뒤 결과가 틀리면 AttributeError가 아니므로 일반 실패로 드러나고,
+    맞으면 strict=True 때문에 XPASS 실패로 드러나 xfail 표시를 지우라고 알린다.
+    """
+    frame = encode_frame(MsgType.COMMAND, 0, 0, command.to_payload())
+    assert uplink.ack_for_command(frame) == expected
