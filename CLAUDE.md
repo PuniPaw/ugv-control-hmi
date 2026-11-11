@@ -129,3 +129,7 @@
 ### Domain docs
 
 Single-context: 루트 `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
+
+### PR 리뷰
+
+PR 독립 리뷰는 새 세션에서 `/review-pr <PR 번호>`로 실행한다 (`.claude/skills/review-pr/`). 위험도 등급별 리뷰 조합과 PR 코멘트 양식이 들어 있다.
