@@ -6,6 +6,10 @@
 
 RTM(06)을 grep으로 만들 때 이름이 어긋나면 그 TC가 "시험 없음"으로 보이므로, 어긋나면 실패한다.
 
+반대 방향도 검사한다: 코드의 시험 이름에 붙은 REQ ID가 SRS(docs/01_SRS.md)에 없으면 실패한다.
+RTM은 이름의 REQ ID로 요구사항을 잇기 때문에, 없는 ID(오타)는 추적표에서 조용히 사라진다.
+(ID가 있지만 시험 내용과 맞지 않는 경우는 기계로 못 잡는다. 리뷰에서 본다.)
+
 사용: tools/check_stp_tests.py <ugvc_tests 실행 파일>
 """
 import os
@@ -16,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 STP = Path(os.environ.get("UGVC_STP", ROOT / "docs" / "04_STP.md"))
+SRS = ROOT / "docs" / "01_SRS.md"
 
 
 def stp_names() -> tuple[set[str], set[str]]:
@@ -45,13 +50,28 @@ def pytest_names() -> set[str]:
     return names
 
 
+def srs_ids() -> set[str]:
+    return set(re.findall(r"^\| (REQ-[A-Z]+-\d{3}) \|", SRS.read_text(encoding="utf-8"), re.M))
+
+
+def req_id(test_name: str) -> str | None:
+    m = re.search(r"REQ_([A-Z]+)_(\d{3})", test_name)
+    return f"REQ-{m.group(1)}-{m.group(2)}" if m else None
+
+
 def main() -> int:
     cpp, py = stp_names()
-    missing = sorted((cpp - gtest_names(sys.argv[1])) | (py - pytest_names()))
+    code = gtest_names(sys.argv[1]) | pytest_names()
+    missing = sorted((cpp | py) - code)
     for name in missing:
         print(f"STP에 있지만 코드에 없는 테스트: {name}")
-    print(f"STP 테스트 이름 {len(cpp) + len(py)}개 확인, 불일치 {len(missing)}개")
-    return 1 if missing else 0
+    known = srs_ids()
+    unknown = sorted(n for n in code if (rid := req_id(n)) and rid not in known)
+    for name in unknown:
+        print(f"SRS에 없는 REQ ID를 단 테스트: {name}")
+    print(f"STP 테스트 이름 {len(cpp) + len(py)}개 확인, 불일치 {len(missing)}개. "
+          f"코드의 REQ 시험 {sum(1 for n in code if req_id(n))}개 중 SRS에 없는 ID {len(unknown)}개")
+    return 1 if missing or unknown else 0
 
 
 if __name__ == "__main__":

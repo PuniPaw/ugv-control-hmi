@@ -102,6 +102,8 @@ TEST_F(LinkFixture, REQ_COM_004_no_event_without_change) {
   }
   clock.advance(2s);
   link.poll();  // → DEGRADED → LOST가 아니라 바로 LOST 1건 (판정 시점에 이미 2s)
+  ASSERT_EQ(sink.events.size(), 1U);
+  EXPECT_EQ(sink.events[0].to, LinkState::Lost);
   sink.events.clear();
   for (int i = 0; i < 10; ++i) {  // LOST 지속
     clock.advance(100ms);

@@ -8,8 +8,9 @@ using namespace std::chrono_literals;
 using namespace ugvc;
 using test::FakeClock;
 
-// TC-COM-005-08: stats 1Hz. 판정 주기가 늦어져도 몰아서 내지 않는다
-TEST(Periodic, REQ_COM_005_emits_1hz) {
+// 범용 주기 판정. stats·link_status·HEARTBEAT 1Hz가 이것을 쓴다 (실제 출력 주기는 통합 시험 TC-COM-005-08·007-03)
+// 판정 주기가 늦어져도 몰아서 내지 않는다
+TEST(Periodic, fires_once_per_period_without_catch_up) {
   FakeClock clock;
   core::Periodic p(clock, 1s);
   int fired = 0;
@@ -24,7 +25,7 @@ TEST(Periodic, REQ_COM_005_emits_1hz) {
 }
 
 // 호출 간격이 주기를 나누어떨어지지 않아도(300ms) 주기가 밀리지 않는다: 10초에 정확히 10회
-TEST(Periodic, REQ_COM_007_no_drift_with_uneven_polling) {
+TEST(Periodic, no_drift_with_uneven_polling) {
   FakeClock clock;
   core::Periodic p(clock, 1s);
   int fired = 0;
