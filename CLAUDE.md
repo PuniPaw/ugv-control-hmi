@@ -74,10 +74,10 @@
 | 문서 | 상태 | 비고 |
 |---|---|---|
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
-| 01_SRS.md (UGVC-SRS-001) | **v0.2** | REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화 |
-| 02_ICD.md (UGVC-ICD-001) | **v0.2** | 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID |
-| 03_SDD.md (UGVC-SDD-001) | **v0.1 초안** | 모듈 구조, 수신 흐름, 링크 상태도, 단일 스레드·출력 대기열, 명령 재전송 설계안. HMI는 11/24 주 추가 |
-| 04_STP.md (UGVC-STP-001) | **v0.2** | TC-COM-001~007, TC-QUAL-001. CMD·SAFE 등은 구현 주에 추가 |
+| 01_SRS.md (UGVC-SRS-001) | **v0.2** | 요구사항 30개. REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화 |
+| 02_ICD.md (UGVC-ICD-001) | **v0.3** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의 |
+| 03_SDD.md (UGVC-SDD-001) | **v0.1.2 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, 명령 재전송 설계안. HMI는 11/24 주 추가 |
+| 04_STP.md (UGVC-STP-001) | **v0.3 초안** | TC-COM-001~007, TC-QUAL-001. TC-COM-005-08·007-02는 실제 GW 통합 시험. `tools/check_stp_tests.py`가 STP 이름과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
 | 06_RTM.md | 미작성 | 스크립트로 생성 예정 |
 | adr/ADR-001 영상 전송 경로 분리 | **승인** | |
@@ -102,7 +102,7 @@
 |---|---|---|
 | 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
-| 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 11/11 기준 일정보다 앞섬 |
+| 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 이어서 SRS·ICD v0.2, SDD 초안, ADR-003(PR #10), thermos·interrogate 검증과 출력 경로 수정·추적성 정리·구조 개편(PR #11~#13). 11/11 기준 일정보다 앞섬 |
 | **11/24–11/30 (다음)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | 당겨서 시작 가능 |
 | 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
