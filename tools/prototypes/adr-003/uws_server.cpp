@@ -11,7 +11,7 @@ int main() {
   int n = 0;
   uWS::App app;
   app.ws<PerSocket>("/*", {
-      .open = [](auto* ws) { ws->subscribe("ifo3"); },
+      .open = [](auto* ws) { ws->subscribe("if03"); },
       .message = [](auto*, std::string_view msg, uWS::OpCode) { std::cout << "rx: " << msg << std::endl; },
   });
   app.listen(18081, [](auto* s) { if (!s) std::cerr << "listen failed\n"; });
@@ -22,7 +22,7 @@ int main() {
   static int* g_n = &n;
   us_timer_set(t, [](us_timer_t*) {
     std::string m = "{\"type\":\"telemetry\",\"seq\":" + std::to_string((*g_n)++) + "}";
-    g_app->publish("ifo3", m, uWS::OpCode::TEXT);
+    g_app->publish("if03", m, uWS::OpCode::TEXT);
   }, 100, 100);
   app.run();
 }

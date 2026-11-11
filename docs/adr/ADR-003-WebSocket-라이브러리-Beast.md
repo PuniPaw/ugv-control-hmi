@@ -4,7 +4,7 @@
 |---|---|
 | 상태 | 승인 |
 | 날짜 | 2026-11-11 |
-| 관련 | UGVC-ICD-001 IF-03(7장), UGVC-SDD-001 4장, REQ-COM-005, REQ-HMI-002, REQ-SAFE-001 |
+| 관련 | UGVC-ICD-001 IF-03(7장), UGVC-SDD-001 5장, REQ-COM-005, REQ-HMI-002, REQ-SAFE-001 |
 
 ## 배경
 
@@ -35,7 +35,7 @@ A를 고를 때 GW를 Boost.Asio로 바꾸는 비용도 GW 사본에서 실제�
 
 - WebSocket 세션도 기존 `io_context` 한 스레드에서 돈다. `Gateway`에 잠금을 넣지 않는다.
 - 세션마다 쓰기 대기열에 상한을 둔다. 넘치면 그 클라이언트의 메시지만 버리고 계수한다 (`LineOutput`과 같은 정책). 느린 HMI 하나가 판정 주기와 HEARTBEAT를 멈추지 못하게 한다.
-- Boost는 시스템 패키지(`libboost-dev`, 1.74 이상)를 `find_package(Boost)`로 찾는다. 헤더 전용 부분만 쓴다(Asio, Beast). FetchContent로 Boost 전체를 받는 방식은 빌드 시간이 커서 쓰지 않는다.
+- Boost는 시스템 패키지(`libboost-dev`)를 `find_package(Boost)`로 찾는다. 시제품과 전환 시험은 Ubuntu 24.04의 1.83에서만 확인했으므로 최소 버전은 1.83으로 둔다. 더 낮은 버전이 필요해지면 그 버전에서 빌드·시험을 확인한 뒤 낮춘다. 헤더 전용 부분만 쓴다(Asio, Beast). FetchContent로 Boost 전체를 받는 방식은 빌드 시간이 커서 쓰지 않는다.
 - standalone Asio FetchContent는 이 전환 PR에서 삭제한다 (두 Asio를 함께 두지 않는다).
 
 ## 결과

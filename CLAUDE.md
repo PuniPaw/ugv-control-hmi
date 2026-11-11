@@ -29,7 +29,7 @@
 
 ### 기술 스택 (확정)
 - GW: C++17, CMake, Boost.Asio(UDP·타이머) + Boost.Beast(WebSocket, ADR-003), GoogleTest, cppcheck, libpq 또는 libpqxx
-  - 현재 코드는 standalone Asio. IF-03 중계 PR에서 Boost.Asio로 전환하고 standalone Asio FetchContent를 삭제한다 (`libboost-dev` 1.74+ 필요)
+  - 현재 코드는 standalone Asio. IF-03 중계 PR에서 Boost.Asio로 전환하고 standalone Asio FetchContent를 삭제한다 (`libboost-dev` 1.83 필요, ADR-003)
 - SIM/DET: Python 3, `struct.pack(">...")`로 직렬화
 - HMI: Vue 3 + TypeScript, Leaflet (고도화 단계에서 오프라인 타일)
 - 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/` + `python/`(ugvc_proto, SIM·DET 공용 codec), `testdata/vectors/`(C++·Python 공용 벡터), `tools/`
@@ -87,7 +87,7 @@
 
 ### 문서에 아직 반영할 것
 1. REQ-HMI-004의 2.0s는 GW LOST 판정(1.0s) + WS 전달 + 화면 반영 합계. HMI 경고 구현 주에 STP에서 측정 구간과 방법을 정할 것
-2. REQ-CMD-006의 ACK REJECTED_INVALID 응답은 12월 명령 작업에서 구현 (현재 SIM은 실행하지 않고 폐기만 함)
+2. REQ-CMD-006의 ACK REJECTED_INVALID 응답은 12월 명령 작업에서 구현 (현재 SIM은 실행하지 않고 폐기만 함). `sim/tests/test_uplink.py`의 `test_REQ_CMD_006_acks_rejected_invalid`가 `xfail(strict=True)`로 걸려 있으니, 구현하면 xfail 표시를 지운다
 
 ### 미확정 사항
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)
@@ -112,7 +112,7 @@
 
 1. IF-03 WebSocket 중계 (ADR-003): GW Asio를 Boost.Asio로 전환 → Beast 세션(쓰기 대기열 상한) → `LineOutput`과 함께 같은 메시지 발행. 클라우드 환경 setup script에 `libboost-dev` 추가
 2. HMI 뼈대: Vue 3 + TS + Leaflet, IF-03 수신, 지도(위치·궤적), 상태 패널(링크·유실률·배터리)
-3. SDD 5장에 WebSocket 세션 구조, 8장 HMI 구조 추가
+3. SDD 5장에 WebSocket 세션 구조 추가, HMI 구조는 새 장으로 추가 (지금 8장은 미정 사항)
 
 ---
 
