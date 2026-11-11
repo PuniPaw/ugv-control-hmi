@@ -13,6 +13,7 @@
 | 버전 | 날짜 | 변경 내용 |
 |---|---|---|
 | v0.1 | 2026-11-11 | 최초 작성. GW 모듈 구조, 수신 처리 흐름, 링크 상태도, 스레드·시간 구조, 명령 재전송 설계안 |
+| v0.1.1 | 2026-11-11 | 5장 출력 구조 변경: stdout·stderr 모두 `LineSink`(출력 전용 스레드)로. O_NONBLOCK 비동기 쓰기가 `2>&1`에서 stderr를 고장 내던 문제(interrogate 검증) 반영 |
 
 ---
 
@@ -50,7 +51,7 @@ flowchart LR
 | `link` | 송신원별 링크 상태 기계, 10초 유실률 창 | `LinkMonitor`, `ILinkTransitionSink`, `LossWindow` | REQ-COM-003·004·005 |
 | `gateway` | 수신 처리 순서를 묶는 중심 객체, HEARTBEAT 생성 | `Gateway::on_datagram`, `Gateway::poll`, `HeartbeatSender` | REQ-COM-001~007 |
 | `if03` | 정수 LSB → 공학 단위, IF-03 JSON 메시지 생성 | `if03::telemetry`, `stats`, `link_status` | ICD 7.1 |
-| `app` | UDP 수신·송신, 50ms 판정 타이머, stdout 출력 대기열, 명령행 옵션 | `GatewayApp`, `UdpReceiver`, `LineOutput` | REQ-COM-007, REQ-SAFE-001 |
+| `app` | UDP 수신·송신, 50ms 판정 타이머, stdout·stderr 출력(전용 스레드), 명령행 옵션 | `GatewayApp`, `UdpReceiver`, `LineSink` | REQ-COM-007, REQ-SAFE-001 |
 
 ## 3. 수신 처리 흐름
 
@@ -94,7 +95,7 @@ stateDiagram-v2
 
 ## 5. 스레드·시간 구조
 
-GW는 **단일 스레드 Asio `io_context` 하나**로 동작한다. 모든 처리가 한 스레드에서 차례로 실행되므로 `Gateway`에는 잠금이 없다.
+GW의 판정은 **단일 스레드 Asio `io_context` 하나**로 동작한다. 수신·판정·HEARTBEAT가 모두 이 스레드에서 차례로 실행되므로 `Gateway`에는 잠금이 없다. 그 밖의 스레드는 stdout·stderr에 실제로 쓰는 `LineSink` 쓰기 스레드 2개뿐이며, `Gateway` 상태는 만지지 않고 문자열 대기열만 공유한다.
 
 | 이벤트 원천 | 주기 | 하는 일 |
 |---|---|---|
@@ -107,15 +108,25 @@ GW는 **단일 스레드 Asio `io_context` 하나**로 동작한다. 모든 처�
 - **판정 타이머는 예정 시각 기준으로 다시 건다** (`expires_at(expiry() + 50ms)`). `expires_after(50ms)`로 걸면 처리 시간만큼 조금씩 밀려 HEARTBEAT 간격이 약 1003ms가 됐다. 지금은 실측 999.8~1000.1ms다.
 - **1Hz 작업은 `Periodic`이 정한다.** 다음 예정 시각을 "예정 시각 + 1s"로 잡아 주기가 밀리지 않고, 호출이 늦어져도 밀린 횟수만큼 몰아서 내지 않는다.
 
-**출력은 막히지 않아야 한다.** 단일 스레드에서는 어떤 블로킹 쓰기든 판정 주기와 HEARTBEAT를 함께 멈춘다. HEARTBEAT가 3.0초 끊기면 SIM이 Failsafe에 들어간다(REQ-SAFE-001). 그래서 모든 출력에 상한 있는 비동기 대기열을 둔다.
+**출력은 막히지 않아야 한다.** io 스레드에서는 어떤 블로킹 쓰기든 판정 주기와 HEARTBEAT를 함께 멈춘다. HEARTBEAT가 3.0초 끊기면 SIM이 Failsafe에 들어간다(REQ-SAFE-001). 그래서 io 스레드는 출력을 상한 있는 대기열에 넣기만 하고, 실제 쓰기는 다른 스레드가 한다.
 
 | 출력 | 방식 | 넘칠 때 |
 |---|---|---|
-| stdout (JSON Lines) | `LineOutput`: 파이프·터미널이면 비동기 쓰기, 대기열 1000줄 | 새 줄을 버리고 stderr에 개수 보고 |
+| stdout (JSON Lines) | `LineSink`: 전용 스레드가 블로킹 쓰기, 대기열 1000줄 | 새 줄을 버리고 stderr에 1Hz로 개수 보고 |
+| stderr (진단: 링크 전이, 오류, 버림 보고) | `LineSink`: 전용 스레드가 블로킹 쓰기, 대기열 200줄 | 새 줄을 버리고 자리가 나면 개수 보고 |
 | WebSocket (11/24 주) | 세션별 쓰기 대기열 | 그 세션의 메시지만 버리고 계수 (ADR-003) |
 | HEARTBEAT (UDP) | `send_to` (UDP는 막히지 않음) | 오류만 stderr에 보고 |
 
-검증: stdout을 아무도 읽지 않는 상태에서 40초 동안 HEARTBEAT 40개, 최대 간격 1.02s (`test_REQ_COM_007_heartbeat_continues_when_stdout_reader_stalls`).
+- **읽는 쪽이 사라지면**(EPIPE) 그 뒤 줄은 모두 버린 것으로 센다. SIGPIPE는 무시해 프로세스가 죽지 않는다.
+- **O_NONBLOCK 비동기 쓰기를 쓰지 않는 이유:** `dup`한 fd도 원래 fd와 열린 파일 설명(open file description)을 공유한다. 이전 구현은 여기에 O_NONBLOCK을 걸었고, `2>&1`로 같은 설명을 쓰는 stderr까지 non-blocking이 되어 읽는 쪽이 한 번 멈추면 `std::cerr`가 영구히 고장 났다(진단이 조용히 사라짐). 종료 후에도 터미널에 O_NONBLOCK이 남았다. 전용 스레드의 블로킹 쓰기는 fd 플래그를 바꾸지 않는다.
+- **종료:** 소멸 시 남은 줄을 쓰도록 최대 500ms 기다린다. 읽는 쪽이 멈춰 끝나지 않으면 기다리지 않는다(종료가 출력 때문에 막히지 않게).
+
+검증:
+- stdout을 아무도 읽지 않아도 40초 동안 HEARTBEAT 40개, 최대 간격 1.02s (`test_REQ_COM_007_heartbeat_continues_when_stdout_reader_stalls`)
+- stderr 파이프가 가득 차 있어도 HEARTBEAT 계속 (`test_REQ_COM_007_heartbeat_continues_when_stderr_reader_stalls`)
+- `2>&1` 파이프가 멈췄다 돌아와도 링크 전이·버림 보고가 나오고 fd 플래그가 그대로 (`test_diagnostics_survive_shared_pipe_stall`)
+- stdout을 읽던 쪽이 닫혀도 버린 줄 보고 (`test_dropped_lines_reported_after_stdout_reader_closes`)
+- `LineSink` 단위 시험: 막히지 않음, 쓴 줄 + 버린 줄 = 넣은 줄, EPIPE 계수, fd 플래그 불변
 
 ## 6. 명령 재전송 (설계안, 12월 1–2주 구현)
 

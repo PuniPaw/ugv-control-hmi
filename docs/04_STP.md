@@ -227,6 +227,6 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | RFC 1982 경계 | 차이가 정확히 2^31이면 "크지 않음" → 폐기 | TC-COM-006-03 |
 | 최대 길이 | 수신 길이 > 1200이면 ①에서 length. 헤더·길이·CRC가 서로 맞아도 마찬가지 (GW 수신 버퍼는 1201B라 초과분은 잘려서 들어온다) | TC-COM-002-03 |
 | DETECTION count 초과 | count와 길이가 맞으면 ⑦ 통과, ⑧ range로 폐기. 1200B 안에 들어가는 count 33~105가 해당 | TC-COM-002-11 |
-| 출력이 막힐 때 | stdout을 읽는 쪽이 멈춰도 판정 주기와 HEARTBEAT 1Hz는 계속된다. 출력 대기열(1000줄)을 넘는 줄은 버리고 stderr에 개수를 알린다 | `test_REQ_COM_007_heartbeat_continues_when_stdout_reader_stalls` |
+| 출력이 막힐 때 | stdout·stderr를 읽는 쪽이 멈추거나 사라져도 판정 주기와 HEARTBEAT 1Hz는 계속된다. stdout 대기열(1000줄)을 넘거나 읽는 쪽이 닫혀 잃은 줄은 세어 stderr에 개수를 알린다. GW는 상속받은 fd의 플래그(O_NONBLOCK)를 바꾸지 않는다 | `test_REQ_COM_007_heartbeat_continues_when_stdout_reader_stalls`, `test_REQ_COM_007_heartbeat_continues_when_stderr_reader_stalls`, `LineSink.REQ_COM_007_publish_does_not_block_when_reader_stalls` |
 | 유실률 | 유실 / (수신 + 유실), 1초 버킷 10개, 창이 비면 null. seq·유실은 스트림별로 세고, IF-03 `stats`는 송신원 단위이므로 그 송신원의 모든 스트림을 합산해 보고한다 | TC-COM-005-04 ~ 07 |
 | HEARTBEAT | 차량 링크 상태와 무관하게 GW 동작 중 항상 1Hz 송신 | TC-COM-007-02 |

@@ -27,14 +27,14 @@
 | 유지보수 | Boost 정기 릴리스 | 활발 | 마지막 릴리스 2020-04 |
 | 느린 클라이언트 대처 | 세션별 쓰기 대기열을 직접 둔다 (시제품: 1000개 상한) | 라이브러리 내장 backpressure | — |
 
-A를 고를 때 GW를 Boost.Asio로 바꾸는 비용도 GW 사본에서 실제로 쟀다. 바뀐 파일은 `app/main.cpp`, `app/line_output.hpp` 2개(약 13줄: include, `namespace asio = boost::asio`, `error_code` 타입, POSIX 매크로 이름)와 CMake의 Asio 대상이다. 단위 시험 79개와 통합 시험 12개가 그대로 통과했다. 판정 로직(`codec`·`ingress`·`link`·`gateway`)은 Asio를 쓰지 않으므로 바뀌지 않는다.
+A를 고를 때 GW를 Boost.Asio로 바꾸는 비용도 GW 사본에서 실제로 쟀다. 바뀐 파일은 `app/main.cpp`, `app/line_output.hpp` 2개(약 13줄: include, `namespace asio = boost::asio`, `error_code` 타입, POSIX 매크로 이름)와 CMake의 Asio 대상이다. 단위 시험 79개와 통합 시험 12개가 그대로 통과했다. (이후 stdout 출력은 Asio를 쓰지 않는 `LineSink`로 바뀌어, 전환 범위는 `app/main.cpp`의 UDP·타이머로 줄었다.) 판정 로직(`codec`·`ingress`·`link`·`gateway`)은 Asio를 쓰지 않으므로 바뀌지 않는다.
 
 ## 결정
 
 **A를 채택한다.** IF-03은 Boost.Beast로 구현하고, GW의 Asio는 standalone Asio에서 Boost.Asio로 바꾼다.
 
 - WebSocket 세션도 기존 `io_context` 한 스레드에서 돈다. `Gateway`에 잠금을 넣지 않는다.
-- 세션마다 쓰기 대기열에 상한을 둔다. 넘치면 그 클라이언트의 메시지만 버리고 계수한다 (`LineOutput`과 같은 정책). 느린 HMI 하나가 판정 주기와 HEARTBEAT를 멈추지 못하게 한다.
+- 세션마다 쓰기 대기열에 상한을 둔다. 넘치면 그 클라이언트의 메시지만 버리고 계수한다 (stdout 출력과 같은 정책). 느린 HMI 하나가 판정 주기와 HEARTBEAT를 멈추지 못하게 한다.
 - Boost는 시스템 패키지(`libboost-dev`)를 `find_package(Boost)`로 찾는다. 시제품과 전환 시험은 Ubuntu 24.04의 1.83에서만 확인했으므로 최소 버전은 1.83으로 둔다. 더 낮은 버전이 필요해지면 그 버전에서 빌드·시험을 확인한 뒤 낮춘다. 헤더 전용 부분만 쓴다(Asio, Beast). FetchContent로 Boost 전체를 받는 방식은 빌드 시간이 커서 쓰지 않는다.
 - standalone Asio FetchContent는 이 전환 PR에서 삭제한다 (두 Asio를 함께 두지 않는다).
 

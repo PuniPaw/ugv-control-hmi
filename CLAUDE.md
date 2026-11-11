@@ -110,7 +110,7 @@
 
 ## 6. 바로 다음 할 일
 
-1. IF-03 WebSocket 중계 (ADR-003): GW Asio를 Boost.Asio로 전환 → Beast 세션(쓰기 대기열 상한) → `LineOutput`과 함께 같은 메시지 발행. 클라우드 환경 setup script에 `libboost-dev` 추가
+1. IF-03 WebSocket 중계 (ADR-003): GW Asio를 Boost.Asio로 전환 → Beast 세션(쓰기 대기열 상한) → stdout `LineSink`와 함께 같은 메시지 발행. 클라우드 환경 setup script에 `libboost-dev` 추가
 2. HMI 뼈대: Vue 3 + TS + Leaflet, IF-03 수신, 지도(위치·궤적), 상태 패널(링크·유실률·배터리)
 3. SDD 5장에 WebSocket 세션 구조 추가, HMI 구조는 새 장으로 추가 (지금 8장은 미정 사항)
 
