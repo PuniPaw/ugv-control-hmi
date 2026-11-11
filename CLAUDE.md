@@ -94,6 +94,7 @@
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)
 - TBD-02: class_id 목록 (부트캠프 모델 확정 시, 현재 PERSON/VEHICLE/ARMORED_VEHICLE/UNKNOWN)
 - TBD-03: 다중 경로점 일괄 전송 메시지 (고도화)
+- TBD-04: HMI 화면 처리 지연을 GW가 감지할 방법. 지금은 HMI가 IF-03 `ts`로 신선도를 감시 (ICD 7장, HMI 경고 체계에서 구현)
 
 ---
 
