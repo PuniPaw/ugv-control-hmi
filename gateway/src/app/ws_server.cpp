@@ -38,8 +38,10 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
                      [self = shared_from_this()](beast::error_code ec, std::size_t) { self->on_request(ec); });
   }
 
-  // 대기열에 넣기만 한다 (호출한 쪽을 막지 않는다). 상한을 넘으면 이 HMI는 이미 몇 초 뒤처진
-  // 것이므로 끊는다. 진행 중인 읽기·쓰기는 소켓을 닫으면 오류로 끝나고, 그때 세션이 사라진다.
+  // 대기열에 넣기만 한다 (호출한 쪽을 막지 않는다). 상한을 넘으면 끊는다: 메모리 상한용이다.
+  // 뒤처진 HMI는 보통 이보다 먼저 ping 응답 제한(max_lag)으로 끊긴다. 대기열이 넘치는 것은
+  // max_lag보다 짧은 시간에 메시지가 몰린 경우다. 진행 중인 읽기·쓰기는 소켓을 닫으면 오류로 끝나고,
+  // 그때 세션이 사라진다.
   void send(const Text& text) {
     if (!open_) return;
     if (queue_.size() >= server_.limits_.max_queued_per_session) {
@@ -60,12 +62,21 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
       reject(http::status::not_found, "IF-03 WebSocket is at " + server_.path_);
       return;
     }
-    if (server_.sessions_.size() >= server_.limits_.max_sessions) {
+    // 핸드셰이크 중인 연결도 센다: 등록(on_accept)까지 기다리면 동시에 들어온 요청들이 모두 통과한다
+    if (server_.sessions_.size() + server_.handshaking_ >= server_.limits_.max_sessions) {
       reject(http::status::service_unavailable, "too many HMI sessions");
       return;
     }
+    ++server_.handshaking_;
     beast::get_lowest_layer(ws_).expires_never();  // 이후 시간 제한은 WebSocket ping/pong 설정이 맡는다
-    ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
+    // max_lag의 절반마다 ping을 보내고, max_lag 안에 HMI에게서 아무것도(pong 포함) 못 받으면 끊는다.
+    // 읽지 않는 HMI는 쌓인 데이터 뒤의 ping을 읽지 못해 pong도 못 보내므로, TCP 버퍼 크기와 무관하게
+    // max_lag 안에 끊긴다. 듣기만 하는 정상 HMI는 WebSocket 구현이 pong을 자동으로 보낸다.
+    websocket::stream_base::timeout opt{};
+    opt.handshake_timeout = kHandshakeTimeout;
+    opt.idle_timeout = server_.limits_.max_lag;
+    opt.keep_alive_pings = true;
+    ws_.set_option(opt);
     ws_.read_message_max(kMaxIncomingMessage);
     ws_.async_accept(request_, [self = shared_from_this()](beast::error_code accept_ec) {
       self->on_accept(accept_ec);
@@ -86,6 +97,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
   }
 
   void on_accept(beast::error_code ec) {
+    --server_.handshaking_;
     if (ec) return;
     ws_.text(true);
     open_ = true;

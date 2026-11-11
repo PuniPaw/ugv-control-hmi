@@ -239,6 +239,90 @@ def test_REQ_COM_008_session_limit(gateway):
     assert asyncio.run(run()) == 503
 
 
+def test_REQ_COM_008_session_limit_concurrent(gateway):
+    """16개가 동시에 접속해도 열리는 세션은 8개 이하, 나머지는 503 (핸드셰이크 중인 연결도 상한에 센다)."""
+    async def run():
+        results = await asyncio.gather(*(websockets.connect(_ws_url(gateway)) for _ in range(16)),
+                                       return_exceptions=True)
+        opened = [r for r in results if not isinstance(r, Exception)]
+        refused = [r for r in results if isinstance(r, websockets.exceptions.InvalidStatus)]
+        for ws in opened:
+            await ws.close()
+        return len(opened), [r.response.status_code for r in refused]
+
+    for _ in range(5):  # 경쟁 조건이라 여러 번
+        opened, refused = asyncio.run(run())
+        assert opened <= 8, f"{opened} sessions open, cap is 8"
+        assert opened + len(refused) == 16 and set(refused) <= {503}, (opened, refused)
+        time.sleep(0.2)  # 닫힌 세션이 GW에서 정리될 때까지
+
+
+def test_REQ_COM_008_stalled_hmi_closed_within_lag_limit(gateway):
+    """운용 조건(기본 소켓 버퍼, TELEMETRY 10Hz)에서 읽지 않는 HMI는 지연 상한(2s) 안에 끊긴다.
+    TCP 버퍼가 수 MB를 받아 둘 수 있어 대기열 상한만으로는 수십 분 걸린다 (PR #16 2차 리뷰).
+    듣기만 하는 정상 HMI는 WebSocket 구현이 ping에 pong으로 답하므로 끊기지 않는다."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect(("127.0.0.1", gateway.ws_port))
+    s.sendall(b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+              b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    head = b""
+    while b"\r\n\r\n" not in head:
+        head += s.recv(1)
+
+    async def run():
+        # 정상 HMI: 아무것도 보내지 않고 듣기만 하되, 브라우저 onmessage처럼 받는 대로 계속 소비한다.
+        # (소비하지 않으면 클라이언트 라이브러리가 소켓 읽기를 멈춰 ping을 못 보고, 그 HMI도 뒤처진 것으로 끊긴다)
+        async with websockets.connect(_ws_url(gateway)) as listener:
+            reader = asyncio.ensure_future(_collect(listener, "telemetry", 60, 8.0))
+            state = START
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as tx:
+                for seq in range(60):  # 6초, 10Hz
+                    tx.sendto(encode_frame(MsgType.TELEMETRY, seq, 0, to_telemetry(state).to_payload()),
+                              ("127.0.0.1", gateway.vehicle_port))
+                    state = step(state, 0.1)
+                    await asyncio.sleep(0.1)
+            got = await reader
+            # 정상 HMI가 닫히기 전에 확인한다: 읽지 않던 HMI의 소켓을 끝까지 읽어 GW가 닫았는지(EOF)
+            s.settimeout(1.0)
+            stalled_closed = _drained_to_eof(s)
+            return len(got), listener.state.name, stalled_closed
+
+    try:
+        received, listener_state, stalled_closed = asyncio.run(run())
+    finally:
+        s.close()
+    assert stalled_closed, "stalled HMI was not closed by GW within 6s"
+    assert listener_state == "OPEN" and received == 60, (listener_state, received)
+
+
+def test_REQ_COM_008_lag_limit_timing(gateway):
+    """읽지 않는 HMI가 끊기는 시각: 2.0s 상한, 판정 여유 0.5s."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect(("127.0.0.1", gateway.ws_port))
+    s.sendall(b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+              b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+    head = b""
+    while b"\r\n\r\n" not in head:
+        head += s.recv(1)
+    t_open = time.monotonic()
+    # 읽기를 멈춘 척: 아무것도 읽지 않다가, 서버가 닫았는지만 확인한다 (MSG_PEEK로 데이터를 꺼내지 않는다)
+    s.settimeout(0.05)
+    closed_at = None
+    while time.monotonic() - t_open < 5.0 and closed_at is None:
+        try:
+            if s.recv(1, socket.MSG_PEEK) == b"":
+                closed_at = time.monotonic() - t_open
+        except socket.timeout:
+            pass
+        except ConnectionResetError:
+            closed_at = time.monotonic() - t_open
+        if closed_at is None and any("ws close" in l for l in gateway.stderr_lines):
+            closed_at = time.monotonic() - t_open
+    s.close()
+    assert closed_at is not None, "not closed within 5s"
+    assert 1.5 <= closed_at <= 2.5, closed_at
+
+
 def test_REQ_COM_008_accept_error_backs_off():
     """fd가 바닥나 accept가 실패해도 즉시 재시도로 CPU를 태우지 않고, 오류를 기록하며, HEARTBEAT는 계속된다."""
     import resource

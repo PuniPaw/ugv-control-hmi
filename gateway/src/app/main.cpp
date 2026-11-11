@@ -47,8 +47,9 @@ using ingress::Source;
 constexpr auto kJudgePeriod = std::chrono::milliseconds(50);  // 링크 판정 주기 (SDD 가정값)
 constexpr std::size_t kMaxStdoutLines = 1000;  // 약 1~2초 분량. 넘치면 표시용 줄만 잃는다
 constexpr std::size_t kMaxStderrLines = 200;   // 진단은 드물다. 이만큼 밀리면 읽는 쪽이 멈춘 것
-constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 넘치면 그 HMI를 끊는다 (몇 초 뒤처진 상태)
+constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 넘치면 그 HMI를 끊는다 (메모리 상한)
 constexpr std::size_t kMaxWsSessions = 8;      // 관제 HMI는 한두 개. 넘치는 접속은 503
+constexpr auto kMaxHmiLag = std::chrono::seconds(2);  // HMI가 이만큼 뒤처지면 끊는다 (REQ-HMI-004 2.0s 예산)
 constexpr const char* kWsPath = "/ws";         // ICD 2장 IF-03
 
 struct Options {
@@ -151,7 +152,7 @@ class GatewayApp {
         detector_(io, o.detector_port, log_, [this](auto* d, auto n) { on_datagram(Source::Detector, d, n); }),
         sim_socket_(io, udp::endpoint(udp::v4(), 0)),
         sim_endpoint_(resolve_v4<udp>(io, o.sim_host, o.sim_port)),
-        ws_(io, resolve_v4<asio::ip::tcp>(io, o.ws_host, o.ws_port), kWsPath, {kMaxWsQueued, kMaxWsSessions},
+        ws_(io, resolve_v4<asio::ip::tcp>(io, o.ws_host, o.ws_port), kWsPath, {kMaxWsQueued, kMaxWsSessions, kMaxHmiLag},
             {[this] { return snapshot_texts(); },
              [this](const std::string& m) { on_hmi_message(m); },
              [this](const std::string& line) { log_.publish(line); }}),
