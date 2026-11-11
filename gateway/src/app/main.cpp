@@ -49,7 +49,7 @@ constexpr std::size_t kMaxStdoutLines = 1000;  // 약 1~2초 분량. 넘치면 �
 constexpr std::size_t kMaxStderrLines = 200;   // 진단은 드물다. 이만큼 밀리면 읽는 쪽이 멈춘 것
 constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 넘치면 그 HMI를 끊는다 (메모리 상한)
 constexpr std::size_t kMaxWsSessions = 8;      // 관제 HMI는 한두 개. 넘치는 접속은 503
-constexpr auto kMaxHmiLag = std::chrono::seconds(2);  // HMI가 이만큼 뒤처지면 끊는다 (REQ-HMI-004 2.0s 예산)
+constexpr auto kMaxHmiLag = std::chrono::seconds(2);  // ping 후 이 안에 응답이 없으면 끊는다 (REQ-COM-008)
 constexpr const char* kWsPath = "/ws";         // ICD 2장 IF-03
 
 struct Options {
@@ -237,10 +237,6 @@ class GatewayApp {
       diag(log_, "stderr reader is behind: dropped ", d - reported_stderr_drops_, " lines");
       reported_stderr_drops_ = d;
     }
-    if (const auto c = ws_.slow_closed(); c != reported_ws_slow_closed_) {
-      diag(log_, "ws clients too slow: closed ", c - reported_ws_slow_closed_, " sessions (queue full)");
-      reported_ws_slow_closed_ = c;
-    }
   }
 
   core::SystemClock clock_;
@@ -248,7 +244,6 @@ class GatewayApp {
   app::LineSink log_;
   std::uint64_t reported_stdout_drops_ = 0;
   std::uint64_t reported_stderr_drops_ = 0;
-  std::uint64_t reported_ws_slow_closed_ = 0;
   gateway::Gateway gateway_;
   gateway::HeartbeatSender heartbeat_;
   core::Periodic stats_period_;

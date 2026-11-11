@@ -184,8 +184,8 @@ def test_REQ_COM_008_stalled_session_is_closed_without_blocking_others(gateway):
     assert [m["data"]["seq"] for m in got] == list(range(20))
     assert len(gaps) >= 4 and max(gaps) < 1.2, gaps
     assert closed_by_gw, "stalled session was not closed"
-    time.sleep(1.1)  # 끊김 보고는 1Hz
-    assert any("ws clients too slow: closed" in line for line in gateway.stderr_lines), gateway.stderr_lines[-5:]
+    time.sleep(0.3)  # 진단 줄이 stderr 수집 스레드에 닿을 때까지
+    assert any("ws close: queue full" in line for line in gateway.stderr_lines), gateway.stderr_lines[-5:]
 
 
 def _drained_to_eof(sock: socket.socket) -> bool:
@@ -295,32 +295,102 @@ def test_REQ_COM_008_stalled_hmi_closed_within_lag_limit(gateway):
     assert listener_state == "OPEN" and received == 60, (listener_state, received)
 
 
-def test_REQ_COM_008_lag_limit_timing(gateway):
-    """읽지 않는 HMI가 끊기는 시각: 2.0s 상한, 판정 여유 0.5s."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect(("127.0.0.1", gateway.ws_port))
-    s.sendall(b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-              b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
-    head = b""
-    while b"\r\n\r\n" not in head:
-        head += s.recv(1)
-    t_open = time.monotonic()
-    # 읽기를 멈춘 척: 아무것도 읽지 않다가, 서버가 닫았는지만 확인한다 (MSG_PEEK로 데이터를 꺼내지 않는다)
-    s.settimeout(0.05)
-    closed_at = None
-    while time.monotonic() - t_open < 5.0 and closed_at is None:
+class _RawHmi:
+    """raw 소켓 HMI: 핸드셰이크 후 drain()이 불릴 때만 버퍼를 읽고, 그 안의 ping에 pong으로 답한다.
+    drain을 부르는 주기가 곧 "HMI가 ping에 답하는 데 걸리는 최대 시간"이다."""
+
+    def __init__(self, port: int):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect(("127.0.0.1", port))
+        self.sock.sendall(b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                          b"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n")
+        head = b""
+        while b"\r\n\r\n" not in head:
+            head += self.sock.recv(1)
+        assert head.startswith(b"HTTP/1.1 101"), head
+        self.sock.setblocking(False)
+        self._buf = b""
+
+    def drain(self, answer_pings: bool = True) -> bool:
+        """쌓인 데이터를 모두 읽고 ping마다 pong을 보낸다. GW가 연결을 닫았으면 False."""
         try:
-            if s.recv(1, socket.MSG_PEEK) == b"":
-                closed_at = time.monotonic() - t_open
-        except socket.timeout:
+            while True:
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    return False
+                self._buf += chunk
+        except BlockingIOError:
             pass
         except ConnectionResetError:
-            closed_at = time.monotonic() - t_open
-        if closed_at is None and any("ws close" in l for l in gateway.stderr_lines):
-            closed_at = time.monotonic() - t_open
-    s.close()
-    assert closed_at is not None, "not closed within 5s"
-    assert 1.5 <= closed_at <= 2.5, closed_at
+            return False
+        while True:  # 서버 프레임은 마스크가 없다
+            if len(self._buf) < 2:
+                break
+            opcode, n, off = self._buf[0] & 0x0F, self._buf[1] & 0x7F, 2
+            if n == 126:
+                if len(self._buf) < 4:
+                    break
+                n, off = int.from_bytes(self._buf[2:4], "big"), 4
+            elif n == 127:
+                if len(self._buf) < 10:
+                    break
+                n, off = int.from_bytes(self._buf[2:10], "big"), 10
+            if len(self._buf) < off + n:
+                break
+            payload, self._buf = self._buf[off:off + n], self._buf[off + n:]
+            if opcode == 0x9 and answer_pings:  # ping → 마스크한 pong (클라이언트 프레임은 마스크 필수)
+                mask = b"\x01\x02\x03\x04"
+                masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+                self.sock.sendall(bytes([0x8A, 0x80 | len(payload)]) + mask + masked)
+        return True
+
+    def close(self):
+        self.sock.close()
+
+
+@pytest.mark.parametrize("period", [0.3, 1.6])
+def test_REQ_COM_008_hmi_answering_ping_within_limit_stays(gateway, period):
+    """ping에 2.0s 안에 답하는 HMI는 끊기지 않는다 (PR #16 3차 리뷰: 이전 설정은 1.3s 주기도 끊었다)."""
+    hmi = _RawHmi(gateway.ws_port)
+    t0 = time.monotonic()
+    alive = True
+    while alive and time.monotonic() - t0 < 20.0:
+        time.sleep(period)
+        alive = hmi.drain()
+    hmi.close()
+    assert alive, f"closed after {time.monotonic() - t0:.1f}s although HMI answered within {period}s"
+
+
+def test_REQ_COM_008_hmi_answering_ping_late_is_closed(gateway):
+    """ping에 5s 주기로만 답하는 HMI는 끊기고, 사유가 지연 상한으로 기록된다."""
+    hmi = _RawHmi(gateway.ws_port)
+    t0 = time.monotonic()
+    alive = True
+    while alive and time.monotonic() - t0 < 20.0:
+        time.sleep(5.0)
+        alive = hmi.drain()
+    hmi.close()
+    assert not alive, "late HMI was not closed within 20s"
+    time.sleep(0.3)
+    assert any("ws close: lag limit" in l for l in gateway.stderr_lines), gateway.stderr_lines[-3:]
+
+
+def test_REQ_COM_008_lag_limit_timing(gateway):
+    """아무것도 보내지 않는 HMI(pong 없음)는 무응답 2.0~4.0s 사이에 끊긴다 (판정 여유 0.5s).
+    데이터는 읽어 버리면서 EOF 시각을 잰다 (읽지 않고 peek하면 접속 직후 받은 데이터 때문에 EOF가 안 보인다)."""
+    hmi = _RawHmi(gateway.ws_port)
+    t0 = time.monotonic()
+    closed_at = None
+    while time.monotonic() - t0 < 6.0:
+        if not hmi.drain(answer_pings=False):
+            closed_at = time.monotonic() - t0
+            break
+        time.sleep(0.02)
+    hmi.close()
+    assert closed_at is not None, "not closed within 6s"
+    assert 2.0 <= closed_at <= 4.5, closed_at
+    time.sleep(0.3)
+    assert any("ws close: lag limit" in l for l in gateway.stderr_lines), gateway.stderr_lines[-3:]
 
 
 def test_REQ_COM_008_accept_error_backs_off():

@@ -39,14 +39,13 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
   }
 
   // 대기열에 넣기만 한다 (호출한 쪽을 막지 않는다). 상한을 넘으면 끊는다: 메모리 상한용이다.
-  // 뒤처진 HMI는 보통 이보다 먼저 ping 응답 제한(max_lag)으로 끊긴다. 대기열이 넘치는 것은
-  // max_lag보다 짧은 시간에 메시지가 몰린 경우다. 진행 중인 읽기·쓰기는 소켓을 닫으면 오류로 끝나고,
+  // 뒤처진 HMI는 보통 이보다 먼저 ping 응답 기한(max_lag)으로 끊긴다. 대기열이 넘치는 것은
+  // 그보다 짧은 시간에 메시지가 몰린 경우다. 진행 중인 읽기·쓰기는 소켓을 닫으면 오류로 끝나고,
   // 그때 세션이 사라진다.
   void send(const Text& text) {
     if (!open_) return;
     if (queue_.size() >= server_.limits_.max_queued_per_session) {
-      ++server_.slow_closed_;
-      close();
+      close("queue full (" + std::to_string(queue_.size()) + " messages)");
       beast::error_code ignored;
       beast::get_lowest_layer(ws_).socket().close(ignored);
       return;
@@ -69,12 +68,15 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
     }
     ++server_.handshaking_;
     beast::get_lowest_layer(ws_).expires_never();  // 이후 시간 제한은 WebSocket ping/pong 설정이 맡는다
-    // max_lag의 절반마다 ping을 보내고, max_lag 안에 HMI에게서 아무것도(pong 포함) 못 받으면 끊는다.
-    // 읽지 않는 HMI는 쌓인 데이터 뒤의 ping을 읽지 못해 pong도 못 보내므로, TCP 버퍼 크기와 무관하게
-    // max_lag 안에 끊긴다. 듣기만 하는 정상 HMI는 WebSocket 구현이 pong을 자동으로 보낸다.
+    // Beast는 idle_timeout/2마다 타이머를 돌린다: 직전 틱 이후 HMI에게서 받은 것이 없으면 ping을 보내고,
+    // 다음 틱까지도 없으면 끊는다. 그래서 idle_timeout = 2 × max_lag로 두면 "ping 후 max_lag 안에
+    // 응답(pong 등)이 없으면 끊는다"가 되고, 아무것도 보내지 않는 HMI는 무응답 max_lag~2×max_lag 사이에
+    // 끊긴다 (PR #16 3차 리뷰: idle_timeout = max_lag로 두면 ping 후 max_lag/2 기한이 된다).
+    // 읽지 않는 HMI는 쌓인 데이터 뒤의 ping을 읽지 못해 pong도 못 보내므로 TCP 버퍼 크기와 무관하게
+    // 끊긴다. 듣기만 하는 정상 HMI는 WebSocket 구현이 pong을 자동으로 보낸다.
     websocket::stream_base::timeout opt{};
     opt.handshake_timeout = kHandshakeTimeout;
-    opt.idle_timeout = server_.limits_.max_lag;
+    opt.idle_timeout = 2 * server_.limits_.max_lag;
     opt.keep_alive_pings = true;
     ws_.set_option(opt);
     ws_.read_message_max(kMaxIncomingMessage);
@@ -111,7 +113,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
     buffer_.clear();
     ws_.async_read(buffer_, [self = shared_from_this()](beast::error_code ec, std::size_t) {
       if (ec) {
-        self->close();
+        self->close(self->read_error_reason(ec));
         return;
       }
       self->server_.cb_.on_message(beast::buffers_to_string(self->buffer_.data()));
@@ -122,7 +124,7 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
   void write_next() {
     ws_.async_write(asio::buffer(*queue_.front()), [self = shared_from_this()](beast::error_code ec, std::size_t) {
       if (ec) {
-        self->close();
+        self->close("write error: " + ec.message());
         return;
       }
       self->queue_.pop_front();
@@ -130,12 +132,20 @@ class WsServer::Session : public std::enable_shared_from_this<Session> {
     });
   }
 
-  // 읽기·쓰기 중 먼저 실패한 쪽이 부른다. 두 번 불려도 한 번만 기록한다.
+  std::string read_error_reason(beast::error_code ec) const {
+    if (ec == beast::error::timeout) {
+      return "lag limit: no reply to ping within " + std::to_string(server_.limits_.max_lag.count()) + " ms";
+    }
+    if (ec == websocket::error::closed) return "closed by HMI";
+    return "read error: " + ec.message();
+  }
+
+  // 먼저 실패한 쪽(읽기·쓰기·대기열 초과)이 부른다. 두 번 불려도 처음 사유만 기록한다.
   // 대기열은 비우지 않는다: 진행 중인 async_write가 맨 앞 문자열을 아직 쓰고 있을 수 있다.
-  void close() {
+  void close(const std::string& reason) {
     open_ = false;
     if (server_.sessions_.erase(shared_from_this()) == 0) return;
-    server_.cb_.log("ws close (" + std::to_string(server_.sessions_.size()) + " clients)");
+    server_.cb_.log("ws close: " + reason + " (" + std::to_string(server_.sessions_.size()) + " clients)");
   }
 
   WsServer& server_;
