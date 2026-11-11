@@ -62,11 +62,11 @@ def test_REQ_SAFE_001_never_received_expires_from_start():
     ("waypoint_lat_over", Command(3, CmdType.WAYPOINT, 900_000_001, 0)),
     ("waypoint_lon_under", Command(4, CmdType.WAYPOINT, 0, -1_800_000_001)),
 ])
-def test_ICD_6_3_rejects_out_of_range_command(name, command):
+def test_REQ_CMD_006_rejects_out_of_range_command(name, command):
     assert parse_uplink(encode_frame(MsgType.COMMAND, 0, 0, command.to_payload())) == "range"
 
 
-def test_ICD_6_3_waypoint_bounds_accepted():
+def test_REQ_CMD_006_waypoint_bounds_accepted():
     for lat, lon in [(900_000_000, 1_800_000_000), (-900_000_000, -1_800_000_000)]:
         msg = parse_uplink(encode_frame(MsgType.COMMAND, 0, 0, Command(9, CmdType.WAYPOINT, lat, lon).to_payload()))
         assert isinstance(msg, ReceivedCommand)
