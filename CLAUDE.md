@@ -28,7 +28,8 @@
 | HMI | Vue 3 + TS | 지도(Leaflet), 영상+박스, 상태 패널, 경고, 명령, 사후 재생 | — |
 
 ### 기술 스택 (확정)
-- GW: C++17, CMake, standalone Asio(UDP), Boost.Beast 또는 uWebSockets(WebSocket, 미정), GoogleTest, cppcheck, libpq 또는 libpqxx
+- GW: C++17, CMake, Boost.Asio(UDP·타이머) + Boost.Beast(WebSocket, ADR-003), GoogleTest, cppcheck, libpq 또는 libpqxx
+  - 현재 코드는 standalone Asio. IF-03 중계 PR에서 Boost.Asio로 전환하고 standalone Asio FetchContent를 삭제한다 (`libboost-dev` 1.74+ 필요)
 - SIM/DET: Python 3, `struct.pack(">...")`로 직렬화
 - HMI: Vue 3 + TypeScript, Leaflet (고도화 단계에서 오프라인 타일)
 - 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/` + `python/`(ugvc_proto, SIM·DET 공용 codec), `testdata/vectors/`(C++·Python 공용 벡터), `tools/`
@@ -73,32 +74,25 @@
 | 문서 | 상태 | 비고 |
 |---|---|---|
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
-| 01_SRS.md (UGVC-SRS-001) | **v0.1 완료** | 요구사항 34개, MVP/고도화 구분 |
-| 02_ICD.md (UGVC-ICD-001) | **v0.1 완료** | IF-01~04, 검증 규칙 |
-| 03_SDD.md | 미작성 | 모듈 구조, 링크 상태도, 명령 재전송 시퀀스, 스레드 구조 (2~3쪽) |
-| 04_STP.md (UGVC-STP-001) | **v0.1 완료** | TC-COM-001~007, TC-QUAL-001 (49개). CMD·SAFE 등은 구현 주에 추가 |
+| 01_SRS.md (UGVC-SRS-001) | **v0.2** | REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화 |
+| 02_ICD.md (UGVC-ICD-001) | **v0.2** | 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID |
+| 03_SDD.md (UGVC-SDD-001) | **v0.1 초안** | 모듈 구조, 수신 흐름, 링크 상태도, 단일 스레드·출력 대기열, 명령 재전송 설계안. HMI는 11/24 주 추가 |
+| 04_STP.md (UGVC-STP-001) | **v0.2** | TC-COM-001~007, TC-QUAL-001. CMD·SAFE 등은 구현 주에 추가 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
 | 06_RTM.md | 미작성 | 스크립트로 생성 예정 |
 | adr/ADR-001 영상 전송 경로 분리 | **승인** | |
 | adr/ADR-002 big-endian·고정소수점·명시 직렬화 | **승인** | |
+| adr/ADR-003 WebSocket은 Boost.Beast, GW Asio는 Boost.Asio로 | **승인** | 시제품 3종 비교 |
 | CHANGELOG.md | 미작성 | |
 
-### SRS v0.2에서 고칠 것
-1. REQ-COM-006: "작은 seq" → "RFC 1982 순환 비교상 이전인 seq" (ICD 9장과 일치시키기)
-2. REQ-COM-005·006: seq 순서·유실은 "송신원별"이 아니라 **스트림(송신원, msg_type)별**로 판정 (ICD 3장과 일치). 링크 상태는 송신원별 그대로
-3. REQ-COM-005: 유실률 = 유실 / (수신 + 유실), 1초 버킷 10개 슬라이딩 창, 창이 비면 `null` (ICD 7.1 `stats.loss_rate_10s`도 nullable로)
-4. REQ-COM-003: 경계는 `≥` (정확히 0.5s에 DEGRADED, 1.0s에 LOST)
-5. REQ-COM-006: 중복 seq도 역순 도착으로 보고 `order` 계수
-6. 초기 링크 상태 LOST(시작 시 이벤트 없음), 늦게 도착한 패킷은 유실 차감 없음, RFC 1982 차이 정확히 2^31은 폐기, DETECTION count 초과는 range, HEARTBEAT는 링크 상태와 무관하게 송신 (STP 5장 표가 정리본)
-7. SIM의 COMMAND 필드 검증(cmd_id ≥ 1, cmd_type 표 6-4, WAYPOINT 좌표 범위 → 폐기 원인 range)을 요구사항으로 신설. 현재 시험 이름은 `test_ICD_6_3_*`
-8. REQ-SAFE-001: "HEARTBEAT를 한 번도 못 받은 경우도 시작 시각부터 3.0초 미수신으로 본다"를 명시 (SIM `HeartbeatWatch(start=...)`)
-9. REQ-HMI-004의 2.0s는 GW LOST 판정(1.0s) + WS 전달 + 화면 반영 합계. STP에서 측정 구간과 방법을 정할 것
+### 문서에 아직 반영할 것
+1. REQ-HMI-004의 2.0s는 GW LOST 판정(1.0s) + WS 전달 + 화면 반영 합계. HMI 경고 구현 주에 STP에서 측정 구간과 방법을 정할 것
+2. REQ-CMD-006의 ACK REJECTED_INVALID 응답은 12월 명령 작업에서 구현 (현재 SIM은 실행하지 않고 폐기만 함)
 
 ### 미확정 사항
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)
 - TBD-02: class_id 목록 (부트캠프 모델 확정 시, 현재 PERSON/VEHICLE/ARMORED_VEHICLE/UNKNOWN)
 - TBD-03: 다중 경로점 일괄 전송 메시지 (고도화)
-- GW WebSocket 라이브러리: Boost.Beast vs uWebSockets
 
 ---
 
@@ -108,18 +102,17 @@
 |---|---|---|
 | 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
-| **11/17–11/23 (현재)** | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 구현 완료, 리뷰 대기 (PR #3 → #4 → #5 → cppcheck PR, 쌓인 순서대로 병합) |
-| 11/24–11/30 | GW → HMI WebSocket 중계, HMI 뼈대(지도, 상태 패널) | |
+| 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 11/11 기준 일정보다 앞섬 |
+| **11/24–11/30 (다음)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | 당겨서 시작 가능 |
 | 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
 | 12월 4주 | README, 시연 영상, 포트폴리오 PDF, STR·RTM 정리 | |
 
 ## 6. 바로 다음 할 일
 
-1. 쌓인 PR 병합 (#3 → #4 → #5 → cppcheck)
-2. SRS·ICD v0.2 정리: 4장 "SRS v0.2에서 고칠 것" 목록과 STP 5장 판정 규칙 반영, ICD 7.1 `stats.lost_count` 확정
-3. 03_SDD.md 초안: 모듈 구조(codec → ingress → link → gateway → if03 → app), 링크 상태도, 50ms 판정 주기, 단일 스레드 io_context 구조
-4. 11/24 주: GW WebSocket 라이브러리 결정(Boost.Beast vs uWebSockets) → IF-03 중계, HMI 뼈대(지도, 상태 패널)
+1. IF-03 WebSocket 중계 (ADR-003): GW Asio를 Boost.Asio로 전환 → Beast 세션(쓰기 대기열 상한) → `LineOutput`과 함께 같은 메시지 발행. 클라우드 환경 setup script에 `libboost-dev` 추가
+2. HMI 뼈대: Vue 3 + TS + Leaflet, IF-03 수신, 지도(위치·궤적), 상태 패널(링크·유실률·배터리)
+3. SDD 5장에 WebSocket 세션 구조, 8장 HMI 구조 추가
 
 ---
 
