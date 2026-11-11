@@ -7,7 +7,7 @@
 // IF-03 WebSocket이 생기면 같은 메시지를 그쪽으로 보낸다.
 // 진단(링크 전이, 오류, 버림 보고)은 stderr에 쓴다. 둘 다 LineSink를 거쳐 io 스레드를 막지 않는다.
 
-#include <asio.hpp>
+#include <boost/asio.hpp>
 
 #include <unistd.h>
 
@@ -31,6 +31,8 @@
 #include "ugvc/gateway/heartbeat.hpp"
 #include "ugvc/if03/messages.hpp"
 #include "line_sink.hpp"
+
+namespace asio = boost::asio;
 
 namespace {
 
@@ -107,7 +109,7 @@ class UdpReceiver {
   void receive() {
     // 완료되면 람다가 호출되고, 처리 후 다시 receive()로 다음 datagram을 기다린다.
     socket_.async_receive_from(asio::buffer(buf_), sender_,
-                               [this](const asio::error_code& ec, std::size_t n) {
+                               [this](const boost::system::error_code& ec, std::size_t n) {
                                  if (ec == asio::error::operation_aborted) return;  // 종료 중
                                  if (!ec) handler_(buf_.data(), n);
                                  else diag(log_, "recv error: ", ec.message());
@@ -167,7 +169,7 @@ class GatewayApp {
     gateway_.poll();
     publish_transitions();
     if (auto hb = heartbeat_.poll()) {
-      asio::error_code ec;
+      boost::system::error_code ec;
       sim_socket_.send_to(asio::buffer(*hb), sim_endpoint_, 0, ec);
       if (ec) diag(log_, "heartbeat send error: ", ec.message());
     }
@@ -177,7 +179,7 @@ class GatewayApp {
     }
     // 직전 예정 시각 + 50ms: 처리 시간만큼 판정 주기가 조금씩 밀리지 않게 한다
     timer_.expires_at(timer_.expiry() + kJudgePeriod);
-    timer_.async_wait([this](const asio::error_code& ec) {
+    timer_.async_wait([this](const boost::system::error_code& ec) {
       if (!ec) tick();
     });
   }
@@ -219,7 +221,7 @@ int main(int argc, char* argv[]) {
     GatewayApp app(io, options);
 
     asio::signal_set signals(io, SIGINT, SIGTERM);
-    signals.async_wait([&io](const asio::error_code&, int) { io.stop(); });
+    signals.async_wait([&io](const boost::system::error_code&, int) { io.stop(); });
 
     io.run();
   } catch (const std::exception& e) {
