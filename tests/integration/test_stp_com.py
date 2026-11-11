@@ -54,3 +54,27 @@ def test_REQ_COM_007_heartbeat_interval(gateway):
         sock.close()
     intervals_ms = [(b - a) * 1000 for a, b in zip(arrivals, arrivals[1:])]
     assert all(900 <= x <= 1100 for x in intervals_ms), intervals_ms
+
+
+def test_REQ_COM_005_stats_1hz(gateway):
+    """TC-COM-005-08: 실제 GW가 송신원마다 stats를 1Hz로 낸다 (봉투 ts 간격 1000 ± 100ms)."""
+    stats = gateway.messages("stats", 4, timeout_s=6.0, pred=lambda m: m["data"]["source"] == "VEHICLE")
+    assert len(stats) == 4, stats
+    intervals_ms = [b["ts"] - a["ts"] for a, b in zip(stats, stats[1:])]
+    assert all(900 <= x <= 1100 for x in intervals_ms), intervals_ms
+
+
+def test_REQ_COM_007_heartbeat_sent_while_vehicle_lost(gateway):
+    """TC-COM-007-02: 차량 패킷이 없어 링크가 LOST인 동안에도 HEARTBEAT를 1Hz로 보낸다."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", gateway.sim_port))
+        sock.settimeout(2.0)
+        arrivals = []
+        for _ in range(3):
+            sock.recvfrom(2048)
+            arrivals.append(time.monotonic())
+    lost = gateway.messages("link_status", 1, timeout_s=2.0,
+                            pred=lambda m: m["data"]["source"] == "VEHICLE")
+    assert lost and lost[0]["data"]["state"] == "LOST", lost
+    intervals_ms = [(b - a) * 1000 for a, b in zip(arrivals, arrivals[1:])]
+    assert all(900 <= x <= 1100 for x in intervals_ms), intervals_ms

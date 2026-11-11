@@ -13,7 +13,7 @@ VECTORS = Path(__file__).resolve().parents[2] / "testdata" / "vectors"
 COMMANDS = json.loads((VECTORS / "command.json").read_text(encoding="utf-8"))["vectors"]
 
 
-def test_REQ_COM_007_parses_heartbeat():
+def test_REQ_SAFE_001_parses_heartbeat():
     assert parse_uplink(encode_frame(MsgType.HEARTBEAT, 7, 1000)) == Heartbeat(7, 1000)
 
 
@@ -37,7 +37,7 @@ def test_REQ_QUAL_001_waypoint_fields():
     (encode_frame(MsgType.COMMAND, 0, 0, bytes(12)), "length"),      # COMMAND는 13B
     (encode_frame(MsgType.HEARTBEAT, 0, 0, b"\x00"), "length"),      # HEARTBEAT는 0B
 ])
-def test_REQ_COM_007_rejects_bad_frames(data, reason):
+def test_uplink_rejects_bad_frames(data, reason):
     assert parse_uplink(data) == reason
 
 
@@ -73,7 +73,7 @@ def test_REQ_CMD_006_waypoint_bounds_accepted():
         assert isinstance(msg, ReceivedCommand)
 
 
-def test_REQ_COM_007_rejects_datagram_over_1200():
+def test_uplink_rejects_datagram_over_1200():
     assert parse_uplink(encode_frame(MsgType.HEARTBEAT, 0, 0) + bytes(1181)) == "length"
 
 
