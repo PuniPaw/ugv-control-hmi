@@ -47,7 +47,8 @@ using ingress::Source;
 constexpr auto kJudgePeriod = std::chrono::milliseconds(50);  // 링크 판정 주기 (SDD 가정값)
 constexpr std::size_t kMaxStdoutLines = 1000;  // 약 1~2초 분량. 넘치면 표시용 줄만 잃는다
 constexpr std::size_t kMaxStderrLines = 200;   // 진단은 드물다. 이만큼 밀리면 읽는 쪽이 멈춘 것
-constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 10Hz 텔레메트리 + 탐지 기준 약 1~2초 분량
+constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 넘치면 그 HMI를 끊는다 (몇 초 뒤처진 상태)
+constexpr std::size_t kMaxWsSessions = 8;      // 관제 HMI는 한두 개. 넘치는 접속은 503
 constexpr const char* kWsPath = "/ws";         // ICD 2장 IF-03
 
 struct Options {
@@ -150,7 +151,7 @@ class GatewayApp {
         detector_(io, o.detector_port, log_, [this](auto* d, auto n) { on_datagram(Source::Detector, d, n); }),
         sim_socket_(io, udp::endpoint(udp::v4(), 0)),
         sim_endpoint_(resolve_v4<udp>(io, o.sim_host, o.sim_port)),
-        ws_(io, resolve_v4<asio::ip::tcp>(io, o.ws_host, o.ws_port), kWsPath, kMaxWsQueued,
+        ws_(io, resolve_v4<asio::ip::tcp>(io, o.ws_host, o.ws_port), kWsPath, {kMaxWsQueued, kMaxWsSessions},
             {[this] { return snapshot_texts(); },
              [this](const std::string& m) { on_hmi_message(m); },
              [this](const std::string& line) { log_.publish(line); }}),
@@ -218,8 +219,11 @@ class GatewayApp {
   }
 
   // IF-03 7.2 명령(HMI → GW). 명령 송신·재전송은 12월(REQ-CMD-002) 작업이라 지금은 기록만 한다.
+  // 받은 텍스트는 JSON 문자열로 이스케이프해 기록한다: 개행 등 제어문자로 진단 줄(링크 전이 등)을
+  // 위조할 수 없게 하고, 200바이트에서 잘려 깨진 UTF-8은 대체 문자로 바꾼다.
   void on_hmi_message(const std::string& m) {
-    diag(log_, "ws message ignored until command relay (REQ-CMD-002): ", m.substr(0, 200));
+    const auto quoted = nlohmann::json(m.substr(0, 200)).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    diag(log_, "ws message ignored until command relay (REQ-CMD-002): ", quoted);
   }
 
   // 버린 줄 수가 늘었으면 stderr에 알린다. stderr 자신이 버린 줄은 자리가 날 때 함께 알린다.
@@ -232,9 +236,9 @@ class GatewayApp {
       diag(log_, "stderr reader is behind: dropped ", d - reported_stderr_drops_, " lines");
       reported_stderr_drops_ = d;
     }
-    if (const auto d = ws_.dropped(); d != reported_ws_drops_) {
-      diag(log_, "ws clients are behind: dropped ", d - reported_ws_drops_, " messages");
-      reported_ws_drops_ = d;
+    if (const auto c = ws_.slow_closed(); c != reported_ws_slow_closed_) {
+      diag(log_, "ws clients too slow: closed ", c - reported_ws_slow_closed_, " sessions (queue full)");
+      reported_ws_slow_closed_ = c;
     }
   }
 
@@ -243,7 +247,7 @@ class GatewayApp {
   app::LineSink log_;
   std::uint64_t reported_stdout_drops_ = 0;
   std::uint64_t reported_stderr_drops_ = 0;
-  std::uint64_t reported_ws_drops_ = 0;
+  std::uint64_t reported_ws_slow_closed_ = 0;
   gateway::Gateway gateway_;
   gateway::HeartbeatSender heartbeat_;
   core::Periodic stats_period_;
