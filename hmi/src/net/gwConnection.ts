@@ -1,14 +1,17 @@
-// IF-03 WebSocket 연결과 재접속 (ICD 7장).
+// IF-03 WebSocket 연결과 재접속 (ICD 7장, REQ-HMI-006).
 //
-// GW가 끊으면(뒤처짐·대기열 초과로 TCP 종료 → close code 1006 등) 1s부터 두 배씩 최대 5s 간격으로
-// 다시 접속한다. 접속되면 간격을 1s로 되돌린다. GW는 접속 직후 현재 stats·link_status를 보내므로
-// 재접속하면 화면이 곧바로 현재 상태로 돌아온다.
+// 끊김으로 보는 경우: onclose(GW 종료, 뒤처져서 끊김 1006 등), 5초 안에 열리지 않는 접속 시도,
+// 열린 뒤 4초 동안 아무것도 받지 못한 연결(GW는 stats를 송신원마다 1Hz로 보내므로 정상이면 1초 안에
+// 뭔가 온다. FIN/RST 없이 GW PC가 사라진 경우를 TCP keepalive보다 빨리 알아챈다).
+// 끊기면 1s부터 두 배씩 최대 5s 간격으로 다시 접속하고, 접속되면 간격을 1s로 되돌린다.
 //
-// WebSocket과 타이머는 주입한다: 단위 시험은 가짜 소켓과 가짜 타이머로 재접속 간격을 확인한다.
+// WebSocket과 타이머는 주입한다: 단위 시험은 가짜 소켓과 가짜 타이머로 확인한다.
 
 export type ConnectionState = "CONNECTING" | "OPEN" | "WAITING_RETRY";
 
 export const RETRY_DELAYS_MS = [1000, 2000, 4000, 5000] as const; // 이후는 마지막 값 반복
+export const CONNECT_TIMEOUT_MS = 5000;
+export const IDLE_TIMEOUT_MS = 4000;
 
 export interface SocketLike {
   onopen: ((ev: unknown) => void) | null;
@@ -24,16 +27,22 @@ export interface Deps {
   clearTimer(handle: unknown): void;
 }
 
+export interface StateDetail {
+  failures: number; // 마지막 OPEN 이후 연속 실패 횟수
+  retryInMs?: number; // WAITING_RETRY일 때
+  reason?: string; // WAITING_RETRY일 때: "close 1006", "connect timeout", "idle timeout", 예외 메시지
+}
+
 export interface Handlers {
   onText(text: string): void;
-  onState(state: ConnectionState, detail: { closeCode?: number; retryInMs?: number }): void;
+  onState(state: ConnectionState, detail: StateDetail): void;
 }
 
 export class GwConnection {
   private socket: SocketLike | null = null;
-  private retryTimer: unknown = null;
-  private failures = 0; // 접속 이후 연속으로 끊긴 횟수 → 다음 대기 간격
-  private stopped = false;
+  private timer: unknown = null; // 한 번에 하나: 접속 제한 시간, 무수신 제한 시간, 재접속 대기
+  private failures = 0;
+  private stopped = true;
 
   constructor(
     private readonly url: string,
@@ -42,45 +51,75 @@ export class GwConnection {
   ) {}
 
   start(): void {
+    this.stop(); // 두 번 불러도 소켓은 하나
     this.stopped = false;
+    this.failures = 0;
     this.connect();
   }
 
   stop(): void {
     this.stopped = true;
-    if (this.retryTimer !== null) this.deps.clearTimer(this.retryTimer);
-    this.retryTimer = null;
+    this.disarm();
+    this.dropSocket();
+  }
+
+  private arm(ms: number, fn: () => void): void {
+    this.disarm();
+    this.timer = this.deps.setTimer(() => {
+      this.timer = null;
+      fn();
+    }, ms);
+  }
+
+  private disarm(): void {
+    if (this.timer !== null) this.deps.clearTimer(this.timer);
+    this.timer = null;
+  }
+
+  /** 소켓의 처리기를 모두 떼고 닫는다. 이후 그 소켓의 이벤트는 전달되지 않는다 */
+  private dropSocket(): void {
     const s = this.socket;
     this.socket = null;
-    if (s) {
-      s.onclose = null; // 스스로 닫는 것은 재접속하지 않는다
+    if (!s) return;
+    s.onopen = s.onclose = s.onmessage = s.onerror = null;
+    try {
       s.close();
+    } catch {
+      // 이미 닫힘
     }
   }
 
   private connect(): void {
-    this.handlers.onState("CONNECTING", {});
-    const s = this.deps.openSocket(this.url);
+    this.handlers.onState("CONNECTING", { failures: this.failures });
+    let s: SocketLike;
+    try {
+      s = this.deps.openSocket(this.url);
+    } catch (e) {
+      this.fail(e instanceof Error ? e.message : String(e)); // 잘못된 주소 등: 같은 재시도 경로
+      return;
+    }
     this.socket = s;
+    this.arm(CONNECT_TIMEOUT_MS, () => this.fail("connect timeout"));
     s.onopen = () => {
       this.failures = 0;
-      this.handlers.onState("OPEN", {});
+      this.handlers.onState("OPEN", { failures: 0 });
+      this.arm(IDLE_TIMEOUT_MS, () => this.fail("idle timeout"));
     };
     s.onmessage = (ev) => {
+      this.arm(IDLE_TIMEOUT_MS, () => this.fail("idle timeout"));
       if (typeof ev.data === "string") this.handlers.onText(ev.data);
     };
     s.onerror = () => {}; // 이어서 onclose가 온다
-    s.onclose = (ev) => {
-      if (this.socket !== s || this.stopped) return;
-      this.socket = null;
-      const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length - 1)] ?? 5000;
-      this.failures += 1;
-      this.handlers.onState("WAITING_RETRY", { closeCode: ev.code, retryInMs: delay });
-      this.retryTimer = this.deps.setTimer(() => {
-        this.retryTimer = null;
-        if (!this.stopped) this.connect();
-      }, delay);
-    };
+    s.onclose = (ev) => this.fail(`close ${ev.code}`);
+  }
+
+  private fail(reason: string): void {
+    if (this.stopped) return;
+    this.dropSocket();
+    const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length - 1)] ?? 5000;
+    this.failures += 1;
+    this.handlers.onState("WAITING_RETRY", { failures: this.failures, retryInMs: delay, reason });
+    this.arm(delay, () => this.connect());
   }
 }
 
@@ -92,7 +131,7 @@ export function defaultGwUrl(pageHost: string, override?: string): string {
 
 /** 브라우저 WebSocket을 SocketLike로 감싼다 (GwConnection은 브라우저 타입에 매이지 않는다). */
 export function browserSocket(url: string): SocketLike {
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url); // 주소가 틀리면 여기서 throw → GwConnection이 재시도 경로로
   const s: SocketLike = {
     onopen: null,
     onclose: null,

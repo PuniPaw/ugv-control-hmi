@@ -1,26 +1,14 @@
 <script setup lang="ts">
-// GW 연결·데이터 신선도 표시 (ICD 7장). 정상일 때는 얇은 상태 줄, 문제가 있으면 경고 색.
-import { computed } from "vue";
-import type { ConnectionState } from "../net/gwConnection";
-import type { Freshness } from "../state/hmiState";
+// GW 연결·데이터 신선도 표시. 문구와 등급은 state/view.ts의 banner()가 정한다.
+import type { Level } from "../state/view";
 
-const props = defineProps<{ connection: ConnectionState; retryInMs?: number; freshness: Freshness; gwUrl: string }>();
-
-const view = computed(() => {
-  if (props.connection !== "OPEN") {
-    const retry = props.retryInMs !== undefined ? ` · ${props.retryInMs / 1000}s 후 재접속` : " · 접속 중";
-    return { level: "bad", text: `GW 연결 끊김${retry}` };
-  }
-  if (props.freshness === "WAITING") return { level: "warn", text: "GW 연결됨 · 데이터 대기 중" };
-  if (props.freshness === "STALE") return { level: "bad", text: "GW 데이터 지연 (2초 이상)" };
-  return { level: "ok", text: "GW 연결됨" };
-});
+defineProps<{ level: Level; text: string; gwUrl: string }>();
 </script>
 
 <template>
-  <div class="banner" :class="view.level" data-testid="connection-banner" :data-level="view.level">
+  <div class="banner" :class="level" data-testid="connection-banner" :data-level="level">
     <span class="title">UGVC 관제</span>
-    <span class="status">{{ view.text }}</span>
+    <span class="status" data-testid="banner-text">{{ text }}</span>
     <span class="url">{{ gwUrl }}</span>
   </div>
 </template>
