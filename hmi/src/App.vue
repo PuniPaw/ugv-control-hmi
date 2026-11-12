@@ -1,9 +1,11 @@
 <script setup lang="ts">
-// HMI 최상위: IF-03 연결 → parseIf03(경계 검증) → apply(순수 상태 갱신) → view(표시 정책) → 화면.
+// HMI 최상위: IF-03 연결 → receiveText(경계 검증 + 순수 상태 갱신) → view(표시 정책) → 화면.
+// 실제 시계(Date.now)와 WebSocket은 이 파일에만 있다.
 import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
-import { parseIf03 } from "./if03/messages";
-import { apply, connectionLost, freshness, gpsValid, initialState, rejectedMessage, type HmiState } from "./state/hmiState";
-import { banner, staleness, type ConnView } from "./state/view";
+import {
+  connectionLost, connectionOpened, freshness, gpsValid, initialState, needsResync, receiveText, type HmiState,
+} from "./state/hmiState";
+import { banner, staleness, toConnView, type ConnView } from "./state/view";
 import { GwConnection, browserSocket, defaultGwUrl } from "./net/gwConnection";
 import ConnectionBanner from "./components/ConnectionBanner.vue";
 import MapView from "./components/MapView.vue";
@@ -25,15 +27,15 @@ const connection = new GwConnection(
   gwUrl,
   {
     onText(text) {
-      const msg = parseIf03(text);
-      state.value = msg === null ? rejectedMessage(state.value) : apply(state.value, msg, Date.now());
+      state.value = receiveText(state.value, text, Date.now());
     },
-    onState(s, d) {
-      if (s === "WAITING_RETRY") {
-        console.warn(`IF-03 연결 끊김 (${d.reason}), ${d.retryInMs}ms 후 재접속`);
+    onState(ev) {
+      if (ev.state === "OPEN") state.value = connectionOpened(state.value, Date.now());
+      if (ev.state === "WAITING_RETRY") {
+        console.warn(`IF-03 연결 끊김 (${ev.reason}), ${ev.retryInMs}ms 후 재접속`);
         state.value = connectionLost(state.value);
       }
-      conn.value = { state: s, failures: d.failures, retryAt: d.retryInMs === undefined ? null : Date.now() + d.retryInMs };
+      conn.value = toConnView(ev, Date.now());
     },
   },
   {
@@ -46,7 +48,11 @@ const connection = new GwConnection(
 let clock = 0;
 onMounted(() => {
   connection.start();
-  clock = window.setInterval(() => (now.value = Date.now()), 250);
+  clock = window.setInterval(() => {
+    now.value = Date.now();
+    // 데이터가 기준선보다 계속 늦게 옴(시계 계단 변화, HMI 적체 등) → 다시 접속해 기준선을 새로 잡는다 (ICD 7장)
+    if (needsResync(state.value, now.value)) connection.reconnect("data late (resync)");
+  }, 250);
 });
 onBeforeUnmount(() => {
   connection.stop();

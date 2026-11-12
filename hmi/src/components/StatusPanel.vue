@@ -40,8 +40,8 @@ const v = computed(() => props.state.vehicle);
       <p v-else class="sub">텔레메트리 수신 전</p>
     </section>
 
-    <section v-if="state.rejected > 0">
-      <p class="sub" data-testid="rejected">형식 오류로 버린 IF-03 메시지 {{ state.rejected }}개</p>
+    <section v-if="state.discarded > 0">
+      <p class="sub" data-testid="discarded">형식 오류로 폐기한 IF-03 메시지 {{ state.discarded }}개</p>
     </section>
   </aside>
 </template>

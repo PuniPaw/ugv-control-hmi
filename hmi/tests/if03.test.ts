@@ -14,6 +14,9 @@ const telemetry = (patch: Record<string, unknown>) =>
     data: { lat: 36, lon: 127, heading_deg: 0, speed_mps: 0, battery_pct: 50, mode: "MISSION", flags: ["GPS_VALID"], seq: 0, rx_ts: 1, ...patch },
   });
 const ERRORS = { sync: 0, version: 0, length: 0, crc: 0, type: 0, range: 0, order: 0 };
+const obj = (patch: Record<string, unknown>) => ({ class: "PERSON", conf: 0.5, x: 1, y: 1, w: 10, h: 10, ...patch });
+const detection = (patch: Record<string, unknown>) =>
+  JSON.stringify({ type: "detection", ts: 1, data: { frame_id: 7, capture_ts: 1, img_w: 640, img_h: 480, objects: [obj({})], ...patch } });
 const stats = (patch: Record<string, unknown>) =>
   JSON.stringify({ type: "stats", ts: 1, data: { source: "VEHICLE", loss_rate_10s: null, rx_count: 0, lost_count: 0, errors: ERRORS, ...patch } });
 
@@ -55,8 +58,30 @@ it("REQ_HMI_007 rejects values outside the ICD ranges and enums", () => {
     stats({ errors: {} }),
     stats({ errors: { ...ERRORS, crc: -1 } }),
     stats({ errors: { ...ERRORS, extra: 0 } }),
+    telemetry({ heading_deg: 360 }),
+    telemetry({ speed_mps: 30.01 }),
+    telemetry({ speed_mps: 1e308 }),
+    telemetry({ battery_pct: 50.5 }),
+    telemetry({ seq: 2 ** 32 }),
+    detection({ frame_id: 2 ** 32 }),
+    detection({ img_w: 0 }),
+    detection({ img_w: 4097 }),
+    detection({ objects: [obj({ w: 0 })] }),
+    detection({ objects: [obj({ x: 640 })] }),
+    detection({ objects: [obj({ x: 600, w: 41 })] }),
+    detection({ objects: [obj({ y: 470, h: 11 })] }),
+    detection({ objects: Array.from({ length: 33 }, () => obj({})) }),
+    detection({ objects: [obj({ class: "BANANA" })] }),
+    detection({ objects: [obj({ conf: 1.01 })] }),
   ]) {
     expect(parseIf03(bad), bad).toBeNull();
   }
-  expect(parseIf03(stats({ loss_rate_10s: null }))).not.toBeNull();
+  for (const ok of [
+    stats({ loss_rate_10s: null }),
+    telemetry({ heading_deg: 359.99, speed_mps: 30, battery_pct: 100, seq: 2 ** 32 - 1 }),
+    detection({ objects: [obj({ x: 600, w: 40 }), obj({ y: 479, h: 1 })] }),
+    detection({ objects: Array.from({ length: 32 }, () => obj({})) }),
+  ]) {
+    expect(parseIf03(ok), ok).not.toBeNull();
+  }
 });

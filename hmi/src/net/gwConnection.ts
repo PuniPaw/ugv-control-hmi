@@ -4,12 +4,14 @@
 // 열린 뒤 4초 동안 아무것도 받지 못한 연결(GW는 stats를 송신원마다 1Hz로 보내므로 정상이면 1초 안에
 // 뭔가 온다. FIN/RST 없이 GW PC가 사라진 경우를 TCP keepalive보다 빨리 알아챈다).
 // 끊기면 1s부터 두 배씩 최대 5s 간격으로 다시 접속하고, 접속되면 간격을 1s로 되돌린다.
+// 호출자가 reconnect()를 부르면(데이터가 계속 늦게 옴 → 기준선 재설정) 같은 경로로 다시 접속한다.
 //
 // WebSocket과 타이머는 주입한다: 단위 시험은 가짜 소켓과 가짜 타이머로 확인한다.
 
 export type ConnectionState = "CONNECTING" | "OPEN" | "WAITING_RETRY";
 
-export const RETRY_DELAYS_MS = [1000, 2000, 4000, 5000] as const; // 이후는 마지막 값 반복
+export const RETRY_DELAYS_MS = [1000, 2000, 4000] as const; // 1s부터 두 배씩
+export const MAX_RETRY_DELAY_MS = 5000; // 그 뒤로는 이 값 (ICD 7장 "최대 5초")
 export const CONNECT_TIMEOUT_MS = 5000;
 export const IDLE_TIMEOUT_MS = 4000;
 
@@ -27,15 +29,15 @@ export interface Deps {
   clearTimer(handle: unknown): void;
 }
 
-export interface StateDetail {
-  failures: number; // 마지막 OPEN 이후 연속 실패 횟수
-  retryInMs?: number; // WAITING_RETRY일 때
-  reason?: string; // WAITING_RETRY일 때: "close 1006", "connect timeout", "idle timeout", 예외 메시지
-}
+/** 연결 상태가 바뀔 때마다 하나. 상태마다 뜻이 있는 값만 가진다 */
+export type ConnEvent =
+  | { state: "CONNECTING"; failures: number } // failures: 마지막 OPEN 이후 연속 실패 횟수 (0이면 첫 시도)
+  | { state: "OPEN" }
+  | { state: "WAITING_RETRY"; failures: number; retryInMs: number; reason: string }; // reason: "close 1006" 등
 
 export interface Handlers {
   onText(text: string): void;
-  onState(state: ConnectionState, detail: StateDetail): void;
+  onState(ev: ConnEvent): void;
 }
 
 export class GwConnection {
@@ -55,6 +57,11 @@ export class GwConnection {
     this.stopped = false;
     this.failures = 0;
     this.connect();
+  }
+
+  /** 지금 연결을 버리고 재접속 경로로 (예: 데이터가 계속 늦게 옴). 정지 상태면 아무것도 하지 않는다 */
+  reconnect(reason: string): void {
+    this.fail(reason);
   }
 
   stop(): void {
@@ -90,7 +97,7 @@ export class GwConnection {
   }
 
   private connect(): void {
-    this.handlers.onState("CONNECTING", { failures: this.failures });
+    this.handlers.onState({ state: "CONNECTING", failures: this.failures });
     let s: SocketLike;
     try {
       s = this.deps.openSocket(this.url);
@@ -102,7 +109,7 @@ export class GwConnection {
     this.arm(CONNECT_TIMEOUT_MS, () => this.fail("connect timeout"));
     s.onopen = () => {
       this.failures = 0;
-      this.handlers.onState("OPEN", { failures: 0 });
+      this.handlers.onState({ state: "OPEN" });
       this.arm(IDLE_TIMEOUT_MS, () => this.fail("idle timeout"));
     };
     s.onmessage = (ev) => {
@@ -116,11 +123,16 @@ export class GwConnection {
   private fail(reason: string): void {
     if (this.stopped) return;
     this.dropSocket();
-    const delay = RETRY_DELAYS_MS[Math.min(this.failures, RETRY_DELAYS_MS.length - 1)] ?? 5000;
+    const delay = retryDelay(this.failures);
     this.failures += 1;
-    this.handlers.onState("WAITING_RETRY", { failures: this.failures, retryInMs: delay, reason });
+    this.handlers.onState({ state: "WAITING_RETRY", failures: this.failures, retryInMs: delay, reason });
     this.arm(delay, () => this.connect());
   }
+}
+
+/** 연속 실패 n번째(0부터)의 재접속 대기 */
+export function retryDelay(failures: number): number {
+  return RETRY_DELAYS_MS[failures] ?? MAX_RETRY_DELAY_MS;
 }
 
 /** 페이지 호스트 기준 기본 주소: ws://<호스트>:8080/ws (VITE_GW_URL로 바꿀 수 있다) */

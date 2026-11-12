@@ -1,7 +1,7 @@
 // 화면 표시 정책 (순수 함수). 컴포넌트는 이 결과를 그리기만 한다.
 
 import type { Source, StatsData, TelemetryData } from "../if03/messages";
-import type { ConnectionState } from "../net/gwConnection";
+import type { ConnEvent, ConnectionState } from "../net/gwConnection";
 import { gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
 
 export type Level = "ok" | "warn" | "bad";
@@ -10,6 +10,18 @@ export interface ConnView {
   state: ConnectionState;
   failures: number; // 마지막 OPEN 이후 연속 실패 횟수 (0이면 첫 접속 시도)
   retryAt: number | null; // WAITING_RETRY일 때 다음 접속 시각 (HMI 시계)
+}
+
+/** 연결 이벤트 → 화면용 연결 상태 (now: 이벤트를 받은 HMI 시각) */
+export function toConnView(ev: ConnEvent, now: number): ConnView {
+  switch (ev.state) {
+    case "CONNECTING":
+      return { state: ev.state, failures: ev.failures, retryAt: null };
+    case "OPEN":
+      return { state: ev.state, failures: 0, retryAt: null };
+    case "WAITING_RETRY":
+      return { state: ev.state, failures: ev.failures, retryAt: now + ev.retryInMs };
+  }
 }
 
 /** 상단 배너 (ICD 7장, REQ-HMI-006) */
@@ -40,7 +52,7 @@ export function staleness(s: HmiState, conn: ConnView, fresh: Freshness): { all:
   return { all, vehicle: all || s.link.VEHICLE.state !== "CONNECTED" };
 }
 
-/** 링크 마지막 수신 후 경과 시간. GW 시각을 기준선으로 HMI 시각으로 바꿔 계산 (시계 차 무관) */
+/** 링크 마지막 수신 후 경과 시간. GW 시각을 기준선(GLOSSARY)으로 HMI 시각으로 바꿔 계산 (시계 차 무관) */
 export function linkAgeText(s: HmiState, src: Source, now: number): string {
   const gwTs = s.link[src].lastRxTs;
   if (gwTs === null) return "수신 없음";

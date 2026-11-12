@@ -4,18 +4,18 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import L from "leaflet";
 import type { Fix, LatLon } from "../state/hmiState";
-import { CHUNK_POINTS, chunk, planTrackUpdate } from "../map/trackSync";
+import { EMPTY_DRAWN, planDraw, type Drawn } from "../map/trackSync";
 
 const props = defineProps<{ fix: Fix | null; fixValid: boolean; track: LatLon[][]; stale: boolean }>();
 
 const el = ref<HTMLDivElement | null>(null);
 const follow = ref(true);
+const trackPoints = ref(0); // 시연 점검용 (렌더러와 무관하게 궤적 점 수 확인)
 let map: L.Map | null = null;
 let marker: L.Marker | null = null;
 let trackLayer: L.LayerGroup | null = null;
-let lines: L.Polyline[] = []; // 궤적 조각들 (CHUNK_POINTS점 이하). 마지막 것에만 점을 덧붙인다
-let lastChunkPoints = 0;
-let drawnTrack: LatLon[][] = [];
+let lastLine: L.Polyline | null = null; // 점을 덧붙일 마지막 선 조각
+let drawn: Drawn = EMPTY_DRAWN;
 const LINE_STYLE: L.PolylineOptions = { color: "#4aa3ff", weight: 3, interactive: false };
 
 const ICON = L.divIcon({ className: "vehicle-icon", html: '<div class="arrow"></div>', iconSize: [24, 24], iconAnchor: [12, 12] });
@@ -30,41 +30,28 @@ onMounted(() => {
 
 onBeforeUnmount(() => map?.remove());
 
-function newLine(points: LatLon[]): void {
-  lines.push(L.polyline(points, LINE_STYLE).addTo(trackLayer!));
-  lastChunkPoints = points.length;
-}
-
-// 구간마다 따로 그린다 (끊긴 곳을 직선으로 잇지 않음). 할 일은 trackSync가 정한다
+// 구간마다 따로 그린다 (끊긴 곳을 직선으로 잇지 않음). 무엇을 그릴지는 trackSync.planDraw가 정하고 여기서는 실행만
 watch(
   () => props.track,
   (track) => {
     if (!trackLayer) return;
-    const plan = planTrackUpdate(drawnTrack, track);
-    drawnTrack = track;
-    switch (plan.kind) {
-      case "none":
-        return;
-      case "append":
-        if (lastChunkPoints < CHUNK_POINTS) {
-          lines[lines.length - 1]!.addLatLng(plan.point);
-          lastChunkPoints += 1;
-        } else {
-          const prev = lines[lines.length - 1]!.getLatLngs() as L.LatLng[];
-          const end = prev[prev.length - 1]!;
-          newLine([[end.lat, end.lng], plan.point]); // 앞 조각의 끝점부터 이어서
-        }
-        return;
-      case "newSegment":
-        newLine([plan.point]);
-        return;
-      case "rebuild":
-        trackLayer.clearLayers();
-        lines = [];
-        lastChunkPoints = 0;
-        for (const seg of track) for (const part of chunk(seg)) newLine(part);
-        return;
+    const plan = planDraw(drawn, track);
+    drawn = plan.drawn;
+    for (const op of plan.ops) {
+      switch (op.op) {
+        case "clear":
+          trackLayer.clearLayers();
+          lastLine = null;
+          break;
+        case "newLine":
+          lastLine = L.polyline(op.points, LINE_STYLE).addTo(trackLayer);
+          break;
+        case "extend":
+          lastLine?.addLatLng(op.point);
+          break;
+      }
     }
+    trackPoints.value = track.reduce((n, seg) => n + seg.length, 0);
   },
 );
 
@@ -94,7 +81,7 @@ function recenter() {
 
 <template>
   <div class="wrap">
-    <div ref="el" class="map-canvas" data-testid="map"></div>
+    <div ref="el" class="map-canvas" data-testid="map" :data-track-points="trackPoints" :data-heading="fix?.heading_deg ?? ''"></div>
     <div v-if="fix && !fixValid" class="note" data-testid="no-fix">위치 무효 · 마지막 유효 위치 표시 중</div>
     <button v-if="!follow" class="follow" @click="recenter">차량 따라가기</button>
   </div>

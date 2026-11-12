@@ -2,7 +2,8 @@
 import { expect, it } from "vitest";
 import type { Flag, If03Message } from "../src/if03/messages";
 import {
-  FRESHNESS_LIMIT_MS, TRACK_MAX_POINTS, TRACK_TRIM_POINTS, apply, connectionLost, freshness, initialState, type HmiState,
+  FRESHNESS_LIMIT_MS, GPS_GAP_SAMPLES, RESYNC_AFTER_MS, TRACK_MAX_POINTS, TRACK_TRIM_POINTS, apply, connectionLost,
+  connectionOpened, freshness, initialState, needsResync, receiveText, toLocalTime, type HmiState,
 } from "../src/state/hmiState";
 
 const GPS: Flag[] = ["GPS_VALID"];
@@ -22,6 +23,8 @@ const vehicleLink = (state: "CONNECTED" | "LOST", ts = 0): If03Message => ({
 });
 const run = (msgs: Array<[If03Message, number]>, s: HmiState = initialState()) =>
   msgs.reduce((acc, [m, at]) => apply(acc, m, at), s);
+/** 연결을 at에 연 상태 */
+const opened = (at = 0) => connectionOpened(initialState(), at);
 
 it("REQ_HMI_002 starts with both links LOST like the GW", () => {
   const s = initialState();
@@ -55,10 +58,19 @@ it("REQ_HMI_001 position without GPS_VALID does not move the vehicle or the trac
 });
 
 it("REQ_HMI_001 track starts a new segment after GPS loss, vehicle LOST or GW disconnect", () => {
-  let s = run([[telemetry(0, 1, 1), 0], [telemetry(1, 0, 0, []), 0], [telemetry(2, 2, 2), 0]]);
+  let s = run([[telemetry(0, 1, 1), 0]]);
+  for (let i = 0; i < GPS_GAP_SAMPLES; i++) s = apply(s, telemetry(1, 0, 0, []), 0); // 약 1초 동안 GPS 무효
+  s = run([[telemetry(2, 2, 2), 0]], s);
   s = run([[vehicleLink("LOST"), 0], [telemetry(3, 3, 3), 0]], s);
   s = run([[telemetry(4, 4, 4), 0]], connectionLost(s));
   expect(s.track).toEqual([[[1, 1]], [[2, 2]], [[3, 3]], [[4, 4]]]);
+});
+
+it("REQ_HMI_001 brief GPS_VALID flicker keeps the segment so the track stays drawable", () => {
+  let s = initialState();
+  for (let i = 0; i < 40; i++) s = apply(s, telemetry(i, i, i, i % 2 === 0 ? GPS : []), 0); // 한 표본씩 번갈아
+  expect(s.track.length).toBe(1);
+  expect(s.track[0]!.length).toBe(20);
 });
 
 it("REQ_HMI_002 link_status and stats update per source", () => {
@@ -76,34 +88,80 @@ it("REQ_HMI_007 apply does not mutate the previous state", () => {
   const s0 = initialState();
   const s1 = apply(s0, telemetry(0, 1, 2), 0);
   expect(s0.track).toEqual([]);
-  expect(s0.clockOffset).toBeNull();
+  expect(s0.session).toBeNull();
   expect(s1).not.toBe(s0);
 });
 
-it("REQ_HMI_006 WAITING before the first stats of a connection", () => {
+it("REQ_HMI_006 WAITING before the first stats of a connection, for at most 2s", () => {
   expect(freshness(initialState(), 0)).toBe("WAITING");
-  const s = run([[stats(1000), 1000]]);
-  expect(freshness(connectionLost(s), 1100)).toBe("WAITING"); // 재접속 직후 이전 연결의 stats로 판정하지 않음
+  const s = run([[stats(1000), 1000]], opened(900));
+  const again = connectionOpened(connectionLost(s), 1100);
+  expect(freshness(again, 1100)).toBe("WAITING"); // 재접속 직후 이전 연결의 stats로 판정하지 않음
+  expect(freshness(again, 1100 + FRESHNESS_LIMIT_MS)).toBe("WAITING");
+  // telemetry는 오지만 stats가 한 번도 오지 않음(예: 모두 폐기) → 2초 뒤 STALE
+  const noStats = run([[telemetry(0, 1, 1, GPS, 1200), 1200]], again);
+  expect(freshness(noStats, 1101 + FRESHNESS_LIMIT_MS)).toBe("STALE");
 });
 
 it("REQ_HMI_006 FRESH within 2s of the last stats, STALE after", () => {
-  const s = run([[stats(1000), 1000]]);
+  const s = run([[stats(1000), 1000]], opened());
   expect(freshness(s, 1000 + FRESHNESS_LIMIT_MS)).toBe("FRESH");
   expect(freshness(s, 1000 + FRESHNESS_LIMIT_MS + 1)).toBe("STALE");
 });
 
 it("REQ_HMI_006 STALE when stats arrive more than 2s later than the connection baseline", () => {
-  const s = run([[stats(1000), 1050], [stats(2000), 2050 + FRESHNESS_LIMIT_MS]]);
-  expect(freshness(s, 2050 + FRESHNESS_LIMIT_MS)).toBe("FRESH"); // 정확히 2000ms 늦음
+  const s = run([[stats(1000), 1050], [stats(2000), 2050 + FRESHNESS_LIMIT_MS]], opened());
+  expect(freshness(s, 2050 + FRESHNESS_LIMIT_MS)).toBe("FRESH"); // 기준선보다 정확히 2000ms 늦음
   const late = run([[stats(3000), 3051 + FRESHNESS_LIMIT_MS]], s);
-  expect(freshness(late, 3051 + FRESHNESS_LIMIT_MS)).toBe("STALE");
+  expect(freshness(late, 3051 + FRESHNESS_LIMIT_MS)).toBe("STALE"); // 기준선보다 2001ms 늦음
 });
 
 it("REQ_HMI_006 freshness ignores a constant clock difference between GW and HMI", () => {
   for (const skew of [-5000, 3000, 3_600_000]) {
-    const s = run([[stats(1000), 1050 + skew], [stats(2000), 2050 + skew]]);
+    const s = run([[stats(1000), 1050 + skew], [stats(2000), 2050 + skew]], opened(skew));
     expect(freshness(s, 2100 + skew), `skew ${skew}`).toBe("FRESH");
     const late = run([[stats(3000), 3050 + skew + 2500]], s);
     expect(freshness(late, 3050 + skew + 2500), `skew ${skew}`).toBe("STALE");
   }
+});
+
+it("REQ_HMI_006 data that keeps arriving late asks for a resync, on-time data does not", () => {
+  // HMI 시계가 연결 중에 +3초 계단 변화: 이후 stats는 모두 기준선보다 3초 늦게 보인다
+  let s = run([[stats(1000), 1050]], opened(1000));
+  for (let t = 2000; t <= 8000; t += 1000) {
+    s = run([[stats(t), t + 50 + 3000]], s);
+    expect(needsResync(s, t + 50 + 3000), `t=${t}`).toBe(t + 50 + 3000 - (2000 + 50 + 3000) >= RESYNC_AFTER_MS);
+  }
+  // 재접속하면 기준선을 새로 잡아 다시 FRESH
+  s = run([[stats(9000), 12050]], connectionOpened(connectionLost(s), 12000));
+  expect(freshness(s, 12100)).toBe("FRESH");
+  expect(needsResync(s, 12100)).toBe(false);
+  // 한 번 늦었다가 다시 제때 오면 늦음이 풀린다
+  let ok = run([[stats(1000), 1050], [stats(2000), 4550]], opened(1000)); // 2.5초 늦음
+  expect(ok.session?.lateSince).toBe(4550);
+  ok = run([[stats(5000), 5050]], ok); // 제때
+  expect(needsResync(ok, 4550 + RESYNC_AFTER_MS)).toBe(false);
+});
+
+it("REQ_HMI_006 one message with an absurd ts recovers through resync", () => {
+  const huge = { ...telemetry(0, 1, 1), ts: Number.MAX_SAFE_INTEGER };
+  let s = run([[stats(1000), 1050], [huge, 1100]], opened(1000));
+  for (let t = 2000; t <= 2000 + RESYNC_AFTER_MS; t += 1000) s = run([[stats(t), t + 50]], s);
+  expect(freshness(s, 2000 + RESYNC_AFTER_MS + 50)).toBe("STALE");
+  expect(needsResync(s, 2000 + RESYNC_AFTER_MS + 50)).toBe(true);
+});
+
+it("REQ_HMI_007 text that is not IF-03 is discarded and counted", () => {
+  let s = receiveText(opened(), "not json", 0);
+  s = receiveText(s, JSON.stringify({ type: "telemetry", ts: 1, data: { lat: 91 } }), 0);
+  expect(s.discarded).toBe(2);
+  s = receiveText(s, JSON.stringify(stats(1)), 10);
+  expect(s.discarded).toBe(2);
+  expect(s.stats.VEHICLE).not.toBeNull();
+});
+
+it("REQ_HMI_002 GW time converts to HMI time through the connection baseline", () => {
+  const s = run([[stats(10_000), 5_020]], opened(5_000)); // HMI 시계가 GW보다 약 5초 늦음
+  expect(toLocalTime(s, 9_000)).toBe(4_020);
+  expect(toLocalTime(initialState(), 9_000)).toBeNull();
 });

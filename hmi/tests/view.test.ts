@@ -1,8 +1,8 @@
 // 화면 표시 정책 (state/view.ts). describe 없음: it 제목이 STP의 시험 이름이다.
 import { expect, it } from "vitest";
 import type { If03Message, TelemetryData } from "../src/if03/messages";
-import { apply, initialState } from "../src/state/hmiState";
-import { banner, batteryLevel, linkAgeText, positionText, staleness, type ConnView } from "../src/state/view";
+import { apply, connectionOpened, initialState } from "../src/state/hmiState";
+import { banner, batteryLevel, linkAgeText, positionText, staleness, toConnView, type ConnView } from "../src/state/view";
 
 const open: ConnView = { state: "OPEN", failures: 0, retryAt: null };
 const vehicle = (flags: TelemetryData["flags"]): TelemetryData => ({
@@ -30,7 +30,7 @@ it("REQ_HMI_006 dims everything when GW is down or stale, and vehicle values whe
 it("REQ_HMI_002 link age uses the connection baseline, not the raw GW clock", () => {
   const skew = -5000; // HMI 시계가 GW보다 5초 늦음
   const m: If03Message = { type: "link_status", ts: 10_000, data: { source: "VEHICLE", state: "CONNECTED", last_rx_ts: 9_700 } };
-  const s = apply(initialState(), m, 10_010 + skew);
+  const s = apply(connectionOpened(initialState(), 10_000 + skew), m, 10_010 + skew);
   expect(linkAgeText(s, "VEHICLE", 10_510 + skew)).toBe("0.8s 전");
   expect(linkAgeText(s, "DETECTOR", 0)).toBe("수신 없음");
 });
@@ -40,4 +40,12 @@ it("REQ_HMI_002 battery color follows BATTERY_LOW and position shows invalid wit
   expect(batteryLevel(vehicle([]))).toBe("ok");
   expect(positionText(vehicle(["GPS_VALID"]))).toBe("36.100000, 127.100000");
   expect(positionText(vehicle([]))).toContain("위치 무효");
+});
+
+it("REQ_HMI_006 connection events become a countdown target in HMI time", () => {
+  expect(toConnView({ state: "WAITING_RETRY", failures: 2, retryInMs: 2000, reason: "close 1006" }, 500)).toEqual({
+    state: "WAITING_RETRY", failures: 2, retryAt: 2500,
+  });
+  expect(toConnView({ state: "CONNECTING", failures: 0 }, 0)).toEqual({ state: "CONNECTING", failures: 0, retryAt: null });
+  expect(toConnView({ state: "OPEN" }, 0)).toEqual({ state: "OPEN", failures: 0, retryAt: null });
 });

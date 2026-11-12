@@ -1,8 +1,7 @@
 // IF-03 재접속 상태 기계 (가짜 소켓·가짜 타이머). describe 없음: it 제목이 STP의 시험 이름이다.
 import { expect, it } from "vitest";
 import {
-  CONNECT_TIMEOUT_MS, GwConnection, IDLE_TIMEOUT_MS, RETRY_DELAYS_MS, defaultGwUrl,
-  type ConnectionState, type SocketLike,
+  CONNECT_TIMEOUT_MS, GwConnection, IDLE_TIMEOUT_MS, defaultGwUrl, type ConnEvent, type SocketLike,
 } from "../src/net/gwConnection";
 
 class FakeSocket implements SocketLike {
@@ -25,12 +24,15 @@ interface Timer { fn: () => void; ms: number; cleared: boolean; fired: boolean }
 function harness(opts: { throwOn?: number[] } = {}) {
   const sockets: FakeSocket[] = [];
   const timers: Timer[] = [];
-  const states: Array<[ConnectionState, number | undefined, string | undefined]> = [];
+  const states: Array<[ConnEvent["state"], number | undefined, string | undefined]> = [];
   const texts: string[] = [];
   let opens = 0;
   const conn = new GwConnection(
     "ws://gw/ws",
-    { onText: (t) => texts.push(t), onState: (s, d) => states.push([s, d.retryInMs, d.reason]) },
+    {
+      onText: (t) => texts.push(t),
+      onState: (ev) => states.push(ev.state === "WAITING_RETRY" ? [ev.state, ev.retryInMs, ev.reason] : [ev.state, undefined, undefined]),
+    },
     {
       openSocket: () => {
         opens += 1;
@@ -69,7 +71,7 @@ it("REQ_HMI_006 retries with 1s, 2s, 4s, 5s, 5s while the GW is unreachable", ()
     h.last().drop();
     h.fire();
   }
-  expect(h.retryDelays()).toEqual([...RETRY_DELAYS_MS, 5000]);
+  expect(h.retryDelays()).toEqual([1000, 2000, 4000, 5000, 5000]);
   expect(h.sockets.length).toBe(6);
 });
 
@@ -119,6 +121,21 @@ it("REQ_HMI_006 a socket constructor that throws goes through the same retry pat
   h.fire(); // 네 번째 시도: 성공
   expect(h.retryDelays()).toEqual([1000, 2000, 4000]);
   expect(h.sockets.length).toBe(2);
+});
+
+it("REQ_HMI_006 reconnect() drops the open socket and goes through the retry path", () => {
+  const h = harness();
+  h.conn.start();
+  const s = h.last();
+  s.open();
+  h.conn.reconnect("data late (resync)");
+  expect(s.closed).toBe(true);
+  expect(h.states.at(-1)).toEqual(["WAITING_RETRY", 1000, "data late (resync)"]);
+  h.fire();
+  expect(h.sockets.length).toBe(2);
+  h.conn.stop();
+  h.conn.reconnect("after stop"); // 정지 뒤에는 아무것도 하지 않음
+  expect(h.pending()).toEqual([]);
 });
 
 it("REQ_HMI_007 passes text frames through and ignores binary", () => {
