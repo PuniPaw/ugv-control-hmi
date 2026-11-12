@@ -35,8 +35,22 @@ def stp_names() -> tuple[set[str], set[str], set[str]]:
     return cpp, py, ts
 
 
+class ToolError(Exception):
+    """시험 목록을 받지 못함 (STP 불일치와 구분: 종료 코드 2)"""
+
+
+def run_list(cmd: list[str], cwd: Path | None, hint: str) -> str:
+    try:
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise ToolError(f"{' '.join(cmd)}: {e}. {hint}") from e
+    if r.returncode != 0:
+        raise ToolError(f"{' '.join(cmd)} 실패 (종료 코드 {r.returncode}). {hint}\n{r.stderr.strip()}")
+    return r.stdout
+
+
 def gtest_names(binary: str) -> set[str]:
-    out = subprocess.run([binary, "--gtest_list_tests"], check=True, capture_output=True, text=True).stdout
+    out = run_list([binary, "--gtest_list_tests"], None, "gateway를 빌드했는지 확인 (cmake --build gateway/build)")
     names, suite = set(), ""
     for line in out.splitlines():
         if not line.startswith(" "):
@@ -55,10 +69,17 @@ def pytest_names() -> set[str]:
 
 
 def vitest_names() -> set[str]:
-    """vitest가 수집한 시험 → "<파일 이름> > <시험 이름>" (describe가 있으면 "a > b"처럼 이름에 들어간다)"""
-    out = subprocess.run(["npx", "vitest", "list", "--json"], cwd=ROOT / "hmi", check=True,
-                         capture_output=True, text=True).stdout
-    return {f"{Path(t['file']).name} > {t['name']}" for t in json.loads(out)}
+    """vitest가 수집한 시험 → "<파일 이름> > <시험 이름>" (describe가 있으면 "a > b"처럼 이름에 들어간다).
+    STP는 파일 이름만 쓰므로, 다른 폴더에 같은 이름의 시험 파일이 생기면 구분할 수 없어 실패시킨다."""
+    out = run_list(["npx", "vitest", "list", "--json"], ROOT / "hmi", "hmi/에서 npm install이 필요할 수 있음")
+    tests = json.loads(out)
+    by_name: dict[str, set[str]] = {}
+    for t in tests:
+        by_name.setdefault(Path(t["file"]).name, set()).add(t["file"])
+    dup = {n: f for n, f in by_name.items() if len(f) > 1}
+    if dup:
+        raise ToolError(f"이름이 같은 vitest 시험 파일이 여러 폴더에 있음: {dup}")
+    return {f"{Path(t['file']).name} > {t['name']}" for t in tests}
 
 
 def srs_ids() -> set[str]:
@@ -71,8 +92,15 @@ def req_id(test_name: str) -> str | None:
 
 
 def main() -> int:
+    if len(sys.argv) != 2:
+        print(__doc__.strip().splitlines()[-1])
+        return 2
     cpp, py, ts = stp_names()
-    code = gtest_names(sys.argv[1]) | pytest_names() | vitest_names()
+    try:
+        code = gtest_names(sys.argv[1]) | pytest_names() | vitest_names()
+    except ToolError as e:
+        print(f"시험 목록을 받지 못함: {e}", file=sys.stderr)
+        return 2
     missing = sorted((cpp | py | ts) - code)
     for name in missing:
         print(f"STP에 있지만 코드에 없는 테스트: {name}")

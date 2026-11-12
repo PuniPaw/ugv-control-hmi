@@ -1,4 +1,4 @@
-// HMI 시연 점검 (STP 수준 D: TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01)
+// HMI 시연 점검 (STP 수준 D: TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01, TC-HMI-006-11)
 // 실제 GW + SIM + HMI(vite dev)를 띄우고 브라우저(Playwright chromium)로 화면을 확인한다.
 //
 //   node e2e/smoke.mjs [--screenshot <png>] [--clock-skew <ms>]
@@ -135,13 +135,13 @@ async function scenario(browser) {
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
   page.on("pageerror", (e) => pageErrors.push(e.message));
-  if (clockSkewMs !== 0) {
-    await page.addInitScript((skew) => {
-      const real = Date.now.bind(Date);
-      Date.now = () => real() + skew;
-    }, clockSkewMs);
-    step(`HMI 시계를 GW보다 ${clockSkewMs}ms 옮김`);
-  }
+  // 페이지 시계를 옮길 수 있게 한다: 시작 시 --clock-skew, 중간에 window.__clockSkew 변경(계단 변화)
+  await page.addInitScript((skew) => {
+    const real = Date.now.bind(Date);
+    window.__clockSkew = skew;
+    Date.now = () => real() + window.__clockSkew;
+  }, clockSkewMs);
+  if (clockSkewMs !== 0) step(`HMI 시계를 GW보다 ${clockSkewMs}ms 옮김`);
   await page.goto(`http://127.0.0.1:${vitePort}/`);
 
   step("1. GW 접속: 접속 직후 stats로 FRESH(배너 ok), 차량 링크 LOST");
@@ -159,13 +159,23 @@ async function scenario(browser) {
   await expectText(page, "battery", /^\d+%$/);
   await expectAttr(page, "vehicle", "data-stale", "false");
   if ((await page.locator(".vehicle-icon").count()) !== 1) throw new Error("차량 마커가 없음");
-  // 직선 주행이라 Leaflet이 궤적을 두 점으로 단순화한다 → 점 개수 대신 궤적 끝이 계속 움직이는지 본다
-  const trackEnd = async () => (await page.locator(".leaflet-overlay-pane path").last().getAttribute("d"))?.split("L").at(-1);
-  const end1 = await trackEnd();
-  await page.waitForTimeout(5000);
-  const end2 = await trackEnd();
-  if (!end1 || end1 === end2) throw new Error(`궤적이 늘지 않음: ${end1} -> ${end2}`);
+  // 진행 방향: 화살표가 heading_deg만큼 회전 (SIM은 87.25°로 직진)
+  const heading = await page.getByTestId("map").getAttribute("data-heading");
+  const rotate = await page.locator(".vehicle-icon .arrow").getAttribute("style");
+  if (heading !== "87.25" || !rotate?.includes("rotate(87.25deg)")) throw new Error(`진행 방향 표시 이상: heading=${heading}, style=${rotate}`);
+  // 궤적: 렌더러와 무관하게 지도에 그린 점 수가 늘어나는지 본다
+  const trackPoints = async () => Number(await page.getByTestId("map").getAttribute("data-track-points"));
+  const n1 = await trackPoints();
+  await page.waitForTimeout(3000);
+  const n2 = await trackPoints();
+  if (!(n2 >= n1 + 20)) throw new Error(`궤적이 늘지 않음: ${n1} -> ${n2} (3초, 10Hz)`);
   if (screenshot) await page.screenshot({ path: screenshot });
+  checkPageErrors();
+
+  step("2b. 연결 중 HMI 시계 +3초 계단 변화: 데이터 지연(bad) 뒤 재접속으로 기준선을 새로 잡아 다시 ok");
+  await page.evaluate(() => (window.__clockSkew += 3000));
+  await expectAttr(page, "connection-banner", "data-level", "bad", 3000);
+  await expectAttr(page, "connection-banner", "data-level", "ok", 12000);
   checkPageErrors();
 
   step("3. SIM 중지: 차량 링크 LOST, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok");
