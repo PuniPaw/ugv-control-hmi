@@ -27,6 +27,7 @@ const skewArg = process.argv.indexOf("--clock-skew");
 const clockSkewMs = skewArg > 0 ? Number(process.argv[skewArg + 1]) : 0;
 
 const children = [];
+let gwPathSuffix = "";
 const pageErrors = [];
 const step = (msg) => console.log(`· ${msg}`);
 
@@ -131,16 +132,26 @@ async function scenario(browser) {
   const ports = { vehicle: await freePort(), detector: await freePort(), sim: await freePort() };
   let gw = await startGateway(ports, 0);
   const vitePort = await freePort();
+  gwPathSuffix = `:${gw.wsPort}/ws`;
   await startVite(vitePort, `ws://127.0.0.1:${gw.wsPort}/ws`);
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
   page.on("pageerror", (e) => pageErrors.push(e.message));
   // 페이지 시계를 옮길 수 있게 한다: 시작 시 --clock-skew, 중간에 window.__clockSkew 변경(계단 변화)
-  await page.addInitScript((skew) => {
+  // GW WebSocket을 몇 번 열었는지 센다 (vite HMR 소켓은 빼고): 기준선 재설정이 실제 재접속으로 일어났는지 확인
+  await page.addInitScript(([skew, gwPath]) => {
     const real = Date.now.bind(Date);
     window.__clockSkew = skew;
     Date.now = () => real() + window.__clockSkew;
-  }, clockSkewMs);
+    window.__gwOpens = 0;
+    const WS = window.WebSocket;
+    window.WebSocket = class extends WS {
+      constructor(url, protocols) {
+        super(url, protocols);
+        if (String(url).endsWith(gwPath)) window.__gwOpens += 1;
+      }
+    };
+  }, [clockSkewMs, gwPathSuffix]);
   if (clockSkewMs !== 0) step(`HMI 시계를 GW보다 ${clockSkewMs}ms 옮김`);
   await page.goto(`http://127.0.0.1:${vitePort}/`);
 
@@ -163,8 +174,8 @@ async function scenario(browser) {
   const heading = await page.getByTestId("map").getAttribute("data-heading");
   const rotate = await page.locator(".vehicle-icon .arrow").getAttribute("style");
   if (heading !== "87.25" || !rotate?.includes("rotate(87.25deg)")) throw new Error(`진행 방향 표시 이상: heading=${heading}, style=${rotate}`);
-  // 궤적: 렌더러와 무관하게 지도에 그린 점 수가 늘어나는지 본다
-  const trackPoints = async () => Number(await page.getByTestId("map").getAttribute("data-track-points"));
+  // 궤적: 지도가 실제로 실행한 그리기 연산으로 센 점 수가 늘어나는지 본다 (렌더러와 무관)
+  const trackPoints = async () => Number(await page.getByTestId("map").getAttribute("data-drawn-points"));
   const n1 = await trackPoints();
   await page.waitForTimeout(3000);
   const n2 = await trackPoints();
@@ -172,10 +183,23 @@ async function scenario(browser) {
   if (screenshot) await page.screenshot({ path: screenshot });
   checkPageErrors();
 
-  step("2b. 연결 중 HMI 시계 +3초 계단 변화: 데이터 지연(bad) 뒤 재접속으로 기준선을 새로 잡아 다시 ok");
+  step("2b. 연결 중 HMI 시계 +3초 계단 변화: 데이터 지연 → 기준선 재설정(재접속 1회, 연결 끊김 표시 없음) → 다시 ok");
+  const opensBefore = await page.evaluate(() => window.__gwOpens);
   await page.evaluate(() => (window.__clockSkew += 3000));
-  await expectAttr(page, "connection-banner", "data-level", "bad", 3000);
-  await expectAttr(page, "connection-banner", "data-level", "ok", 12000);
+  const seen = new Set();
+  const deadline = Date.now() + 15000;
+  let opens = opensBefore;
+  for (;;) {
+    seen.add(await page.getByTestId("banner-text").innerText());
+    opens = await page.evaluate(() => window.__gwOpens);
+    const level = await page.getByTestId("connection-banner").getAttribute("data-level");
+    if (opens > opensBefore && level === "ok") break;
+    if (Date.now() > deadline) throw new Error(`2b: 재접속 ${opens - opensBefore}회, 배너 ${level}, 본 문구 ${[...seen].join(" | ")}`);
+    await page.waitForTimeout(100);
+  }
+  if (opens - opensBefore !== 1) throw new Error(`2b: 재접속이 1회가 아님 (${opens - opensBefore})`);
+  if (![...seen].some((t) => t.startsWith("GW 데이터 지연"))) throw new Error(`2b: 데이터 지연 표시 없음: ${[...seen].join(" | ")}`);
+  if ([...seen].some((t) => t.startsWith("GW 연결 끊김"))) throw new Error(`2b: 기준선 재설정을 연결 끊김으로 표시함: ${[...seen].join(" | ")}`);
   checkPageErrors();
 
   step("3. SIM 중지: 차량 링크 LOST, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok");

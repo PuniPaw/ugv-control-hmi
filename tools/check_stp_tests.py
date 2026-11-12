@@ -2,7 +2,8 @@
 """STP(docs/04_STP.md)의 "테스트" 열에 적힌 이름이 실제로 존재하는지 확인한다 (STP 2.7: TC와 테스트 1:1).
 
 - C++: `Suite.REQ_...` 이름을 gtest 실행 파일의 --gtest_list_tests 출력과 비교
-- Python: `test_REQ_...` 이름을 python/ sim/ tests/ 의 def test_... 와 비교
+- Python: `test_REQ_...` 이름을 `pytest --collect-only`가 python/ sim/ tests/ 에서 모은 실제 시험과 비교
+  (클래스 메서드·async 시험도 포함, 매개변수 `[...]`는 뗀다)
 - TypeScript(HMI): `<파일>.test.ts > <시험 이름>`을 `vitest list --json`이 낸 실제 시험 목록과 비교
   (정규식으로 it("...")를 찾지 않는다: 따옴표 종류, test(), it.each 등을 놓치지 않도록. hmi/에서 npm install 필요)
 
@@ -39,10 +40,10 @@ class ToolError(Exception):
     """시험 목록을 받지 못함 (STP 불일치와 구분: 종료 코드 2)"""
 
 
-def run_list(cmd: list[str], cwd: Path | None, hint: str) -> str:
+def run_list(cmd: list[str], cwd: Path | None, hint: str, env: dict[str, str] | None = None) -> str:
     try:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-    except FileNotFoundError as e:
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env)
+    except OSError as e:  # 없음, 디렉터리, 실행 권한 없음 등
         raise ToolError(f"{' '.join(cmd)}: {e}. {hint}") from e
     if r.returncode != 0:
         raise ToolError(f"{' '.join(cmd)} 실패 (종료 코드 {r.returncode}). {hint}\n{r.stderr.strip()}")
@@ -50,29 +51,42 @@ def run_list(cmd: list[str], cwd: Path | None, hint: str) -> str:
 
 
 def gtest_names(binary: str) -> set[str]:
-    out = run_list([binary, "--gtest_list_tests"], None, "gateway를 빌드했는지 확인 (cmake --build gateway/build)")
+    hint = "gateway를 빌드했는지 확인 (cmake --build gateway/build)"
+    out = run_list([binary, "--gtest_list_tests"], None, hint)
     names, suite = set(), ""
     for line in out.splitlines():
         if not line.startswith(" "):
             suite = line.strip().rstrip(".")
         else:
             names.add(f"{suite}.{line.split()[0]}")
+    if not names:
+        raise ToolError(f"{binary}: gtest 시험 목록이 비어 있음 (gtest 실행 파일이 맞는지 확인). {hint}")
     return names
 
 
 def pytest_names() -> set[str]:
-    names = set()
-    for d in ("python", "sim", "tests"):
-        for f in (ROOT / d).rglob("test_*.py"):
-            names |= set(re.findall(r"^def (test_\w+)\(", f.read_text(encoding="utf-8"), re.M))
+    """pytest가 수집한 시험 함수 이름 (nodeid의 마지막 부분, 매개변수 [...] 제외)"""
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(ROOT / "python"), str(ROOT / "sim")])}
+    out = run_list([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "python", "sim", "tests"],
+                   ROOT, "pytest 설치 확인 (pip install pytest websockets)", env)
+    names = {line.split("::")[-1].split("[")[0] for line in out.splitlines() if "::" in line}
+    if not names:
+        raise ToolError("pytest가 시험을 하나도 수집하지 못함")
     return names
 
 
 def vitest_names() -> set[str]:
     """vitest가 수집한 시험 → "<파일 이름> > <시험 이름>" (describe가 있으면 "a > b"처럼 이름에 들어간다).
     STP는 파일 이름만 쓰므로, 다른 폴더에 같은 이름의 시험 파일이 생기면 구분할 수 없어 실패시킨다."""
-    out = run_list(["npx", "vitest", "list", "--json"], ROOT / "hmi", "hmi/에서 npm install이 필요할 수 있음")
-    tests = json.loads(out)
+    hint = "hmi/에서 npm install이 필요할 수 있음"
+    out = run_list(["npx", "vitest", "list", "--json"], ROOT / "hmi", hint)
+    try:
+        tests = json.loads(out)
+        if not (isinstance(tests, list) and tests and all(isinstance(t, dict) and isinstance(t.get("file"), str)
+                                                          and isinstance(t.get("name"), str) for t in tests)):
+            raise ValueError("시험 목록 형식이 아님")
+    except ValueError as e:  # JSONDecodeError 포함
+        raise ToolError(f"vitest list --json 출력을 해석하지 못함: {e}. {hint}\n{out[:300]}") from e
     by_name: dict[str, set[str]] = {}
     for t in tests:
         by_name.setdefault(Path(t["file"]).name, set()).add(t["file"])
