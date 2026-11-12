@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.2.4 (초안) |
+| 버전 | v0.2.5 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.5, UGVC-ICD-001 v0.7, UGVC-STP-001 v0.9, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.5, UGVC-ICD-001 v0.8, UGVC-STP-001 v0.10, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -21,6 +21,7 @@
 | v0.2.2 | 2026-11-12 | 8장 PR #19 3차 리뷰 반영: 연결 범위 상태를 `session`으로 묶고 연결 이벤트를 판별 유니온으로, 늦은 도착 5초 → 재접속(기준선 재설정), stats 없는 연결 2초 → 지연, GPS 무효 10표본부터 궤적 분리, 파서 범위를 ICD 6장 그대로, 궤적 그리기 연산을 `trackSync.planDraw`가 냄, 폐기 수 경로 `receiveText` |
 | v0.2.3 | 2026-11-12 | 8장 PR #19 4차 리뷰 반영: `HmiController`(연결 + 상태 + 주기 판정 한곳), 기준선 재설정은 `GwConnection.resync()`(실패로 세지 않음, 연결 끊김 표시 없음), `ConnView` 판별 유니온, 늦음 판정 `isLate` 하나, 궤적 구간 판정 `samplesSinceFix` 하나, 지도 `data-drawn-points`는 실행한 연산으로 셈, 옛 이름 정리 |
 | v0.2.4 | 2026-11-12 | 8장 PR #19 5차 리뷰 반영: 접속 시도 이유 `cause`(first·retry·resync), 연결 이벤트 반영은 `HmiController`가(state/는 net/을 모름), 재설정은 궤적을 끊지 않음(`resyncStarted`), 화면 판정 `present()` 하나에 시계 하나, 재접속 카운트다운은 단조 시계, 지도 점 수는 Leaflet 레이어에서 셈, 배너 목록 |
+| v0.2.5 | 2026-11-12 | 8장 PR #19 6차 리뷰 반영: 재설정 접속이 1초 넘게 걸리면 궤적을 끊음(`RESYNC_TRACK_GAP_MS`), 재설정 시계는 stats에서만 시작, 상태 패널 문구까지 `present()`에(`LinkRow`·`VehicleRows`), 컨트롤러가 `onChange(View)`로 넘김, 접속 이유 타입을 `model/connection.ts` 하나에, 지도 점 수는 개발 서버 전용 훅으로 |
 
 ---
 
@@ -208,7 +209,8 @@ flowchart LR
 | `src/net/gwConnection.ts` | IF-03 접속·끊김 판정·재접속, 기준선 재설정 재접속(`resync`, 실패로 세지 않음). 상태 변화는 판별 유니온 `ConnEvent`로 알린다. 소켓과 타이머는 주입받는다 (`Deps`). 브라우저 WebSocket은 `browserSocket`이 `SocketLike`로 감싼다 | REQ-HMI-006 |
 | `src/if03/messages.ts` | IF-03 JSON을 판별 유니온 `If03Message`로 검증. 틀린 메시지와 모르는 type은 `null` | REQ-HMI-007, ICD 7.1 |
 | `src/state/hmiState.ts` | `receiveText()`: 파싱 후 반영 또는 폐기 계수. `apply()`: 메시지 하나를 반영한 새 상태. `connectionOpened()`·`connectionLost()`·`resyncStarted()`: 연결 범위 상태(`session`) 시작·폐기(끊김이면 궤적도 끊음, 재설정이면 궤적 유지). `freshness()`: GW 데이터 신선도. `needsResync()`: 기준선 재설정 필요 여부. 전송 층(`net/`)을 모른다 | REQ-HMI-001·002·006·007 |
-| `src/state/view.ts` | 표시 정책: 화면용 연결 상태 `ConnView`, 배너 등급·문구, 흐림 범위, 경과 시간·유실률·배터리·위치 문구, 이를 한 시각으로 묶은 `present()` | REQ-HMI-002·006 |
+| `src/state/view.ts` | 표시 정책: 화면용 연결 상태 `ConnView`, 배너 등급·문구, 흐림 범위, 상태 패널 행(`LinkRow`·`VehicleRows`: 경과 시간·유실률·배터리·위치 문구), 이를 한 시각으로 묶은 `present()` | REQ-HMI-002·006 |
+| `src/model/connection.ts` | `net/`과 `state/`가 함께 쓰는 접속 이유 타입(`ConnectAttempt`). 두 층은 서로를 import하지 않는다 | |
 | `src/map/trackSync.ts` | 이전에 그린 것과 다음 궤적을 비교해 그리기 연산(`clear`·`newLine`·`extend`) 목록을 낸다 | REQ-HMI-001 |
 | `src/app/hmiController.ts` | 연결 + 상태 + 주기 판정 + 화면 판정을 한곳에 묶는다: 텍스트 → `receiveText`, 연결 이벤트 → `connectionOpened`·`connectionLost`·`resyncStarted`와 `ConnView`, `tick()` → `needsResync`면 `resync()`, `view()` → `present()`. 벽시계·단조 시계·소켓·타이머는 주입 | REQ-HMI-006 |
 | `src/components/*.vue` | 그리기만 한다. 위 모듈의 결과를 그대로 쓰고 판정하지 않는다 | |
@@ -232,7 +234,7 @@ GW가 보낸 JSON은 `parseIf03`에서만 검사한다.
 - **계약(trackSync가 의존):** 점이 늘 때 `apply()`는 마지막 구간 배열만 새로 만들고 다른 구간·점 배열은 그대로 옮긴다. 이 계약이 깨지면 매 점이 전체 다시 그리기가 되는데, 6000점 동안 다시 그리기 횟수를 세는 시험이 이를 잡는다.
 - **궤적 상한:** 전체 3000점(10Hz 약 5분). 넘으면 가장 오래된 점부터 300점을 한 번에 지운다. 지도의 다시 그리기를 30초에 한 번으로 묶기 위해서다(8.5). 전체 궤적은 사후 재생(PostgreSQL 로그)에서 본다.
 - 링크 상태의 초기값은 GW와 같은 LOST다. 접속 직후 GW가 현재 link_status를 보내므로 곧 실제 값으로 바뀐다(ICD 7장).
-- **연결 범위 상태(`session`):** 열린 연결 하나에서만 뜻이 있는 값(연 시각, 기준선, 마지막 stats, 늦음 시작 시각)은 `session: {...} | null` 하나로 묶는다. `HmiController`가 연결 이벤트에 따라 OPEN이면 만들고(`connectionOpened`), 재시도 대기·처음·재시도 접속이면 버리며 궤적을 끊고(`connectionLost`), 기준선 재설정 접속이면 버리기만 한다(`resyncStarted`, 궤적 유지: 재설정은 연결 끊김이 아니다). 화면용 연결 상태 `ConnView`는 판별 유니온이며, 재접속 대기는 단조 시계 기준 예정 시각(`retryAtMono`)을 가진다(벽시계가 바뀌어도 카운트다운이 틀리지 않음). 링크·차량·궤적 값은 "이전 값"으로 남는다.
+- **연결 범위 상태(`session`):** 열린 연결 하나에서만 뜻이 있는 값(연 시각, 기준선, 마지막 stats, 늦음 시작 시각)은 `session: {...} | null` 하나로 묶는다. `HmiController`가 연결 이벤트에 따라 OPEN이면 만들고(`connectionOpened`), 재시도 대기·처음·재시도 접속이면 버리며 궤적을 끊고(`connectionLost`), 기준선 재설정 접속이면 버리기만 한다(`resyncStarted`: 재설정은 연결 끊김이 아니다). 재설정 접속이 열릴 때 재설정 시작부터 걸린 시간(단조 시계)이 1초(`RESYNC_TRACK_GAP_MS`, GPS 무효 10표본과 같은 길이)를 넘으면 그동안 표본이 빠졌으므로 궤적을 끊고, 1초 안이면 한 구간으로 잇는다. 화면용 연결 상태 `ConnView`는 판별 유니온이며, 재접속 대기는 단조 시계 기준 예정 시각(`retryAtMono`)을 가진다(벽시계가 바뀌어도 카운트다운이 틀리지 않음). 링크·차량·궤적 값은 "이전 값"으로 남는다.
 - **폐기:** `receiveText()`가 파싱에 실패한 메시지를 `discarded`로 센다(상태 패널에 표시).
 
 ### 8.4 연결 감시·재접속·신선도 (REQ-HMI-006, ICD 7장)
@@ -254,7 +256,7 @@ stateDiagram-v2
   - 연결이 없거나, 연결 후 2초 안이고 stats를 아직 받지 못함: WAITING
   - 연결 후 2초가 지나도록 stats 없음(모두 폐기된 경우 포함), 마지막 stats를 받은 지 2초 넘음, 또는 그 stats의 (수신 시각 − `ts`)가 기준선보다 2초 넘게 큼: STALE
   - 그 밖: FRESH
-  - **기준선 재설정 시점:** `lateSince`는 기준선보다 늦은 첫 stats의 수신 시각이고(제때 온 stats가 오면 지움), `tick()`은 0.25초마다 본다. 그래서 실제 재설정은 늦어지기 시작한 뒤 5초 이상 약 6.25초 이하다(ICD 7장).
+  - **기준선 재설정 시점:** `lateSince`는 기준선보다 늦은 첫 stats의 수신 시각이고(제때 온 stats가 오면 지움), stats가 아닌 메시지로는 시작하지 않는다(기준선을 낮춘 telemetry 하나로 재설정이 앞당겨지지 않게). `tick()`은 0.25초마다 본다(화면이 보일 때. 배경 탭에서는 브라우저가 늦출 수 있다). 그래서 실제 재설정은 늦어지기 시작한 뒤 5초 이상 약 6.25초 이하다(ICD 7장).
 - **기준선 재설정:** 기준선은 최솟값이라 줄기만 한다. 시계 계단 변화·drift·비정상적으로 큰 `ts` 하나면 제때 온 stats도 계속 늦게 보이고, 메시지는 계속 오므로 무수신 제한도 걸리지 않는다(3차 리뷰 재현: 40초 넘게 "GW 데이터 지연"). 그래서 stats가 기준선보다 2초 넘게 늦은 상태가 5초 이어지면(`needsResync`) `HmiController.tick()`이 `GwConnection.resync()`를 부른다. `resync()`는 지금 소켓을 닫고 곧바로 다시 접속한다. 실패 횟수를 올리지 않고 재시도 간격을 기다리지 않으며, 이벤트에 `resync` 표지를 달아 배너는 "GW 데이터 지연 · 기준선 재설정 중"(warn)으로 보인다("GW 연결 끊김"이 아님). 새 연결에서 기준선을 새로 잡는다. 재설정 접속이 실패하면 그때부터 보통의 재시도 경로를 탄다. 실제로 HMI 처리가 밀린 경우에도 재접속은 밀린 메시지를 버리고 현재 상태부터 다시 받으므로 같은 조치로 회복된다.
   - 한계(ICD 7장): 접속할 때마다 기준선을 새로 잡으므로, 접속 직후부터 밀려 있던 지연과 일정하게 유지되는 지연은 시계 차와 구분하지 못한다.
 - 링크 경과 시간도 같은 기준선으로 GW 시각(`last_rx_ts`)을 HMI 시각으로 바꿔 계산한다(음수가 나오지 않음).
@@ -288,17 +290,17 @@ stateDiagram-v2
   | 200점 SVG polyline `addLatLng` | 0.14ms |
 
   그래서 궤적을 200점 이하 조각(끝점 공유)으로 나눠 그리고, 새 점은 마지막 조각에만 덧붙인다. `trackSync.planDraw(drawn, track)`가 그리기 연산(`clear`, `newLine(points)`, `extend(point)`)과 다음 `drawn`(비교 기준 궤적, 마지막 조각의 점 수)을 낸다. 조각 경계와 이음점도 여기서 정하므로 `MapView`는 연산을 실행만 한다. 다시 그리기는 앞쪽 삭제(301점마다, 10Hz면 약 30초에 한 번)에만 일어난다.
-- 시연 점검이 렌더러와 무관하게 확인할 수 있도록 지도 요소에 `data-drawn-points`(Leaflet 궤적 레이어의 polyline들에 실제로 들어 있는 점 수, 조각 이음점 포함)와 `data-heading`을 둔다. `extend`할 선이 없으면 계획과 실행이 어긋난 결함이므로 예외로 드러낸다.
+- 시연 점검이 렌더러와 무관하게 확인할 수 있도록, 개발 서버에서만 `window.__ugvcTrackPoints()`(Leaflet 궤적 레이어의 polyline들에 실제로 들어 있는 점 수, 조각 이음점 포함)를 두고 지도 요소에 `data-heading`을 둔다. 점 수는 그릴 때마다 세지 않고 점검 스크립트가 부를 때만 센다. `extend`할 선이 없으면 계획과 실행이 어긋난 결함이므로 예외로 드러낸다.
 
 ### 8.6 시험
 
 | 대상 | 방법 |
 |---|---|
 | `parseIf03` | `hmi/tests/fixtures/gw_if03_sample.jsonl`(실제 GW 출력: 위치 유효·무효 telemetry, detection, stats, link_status)을 그대로 넣어 본다. 이 표본은 `capture_gw_if03.py`가 GW를 실행해 만든다. 표본은 생성 시점의 형식이므로, GW의 IF-03 형식을 바꾸면 스크립트를 다시 돌린다. 현재 GW와의 일치는 시연 점검(실제 GW 출력이 파서를 거쳐야 화면이 ok가 됨)이 매번 확인한다 |
-| `HmiController` | 가짜 소켓·타이머·벽시계·단조 시계로 늦음 → 재설정(5~6.25초, 궤적 유지) → 새 기준선 FRESH 전체 순환, 단조 시계 카운트다운, 진짜 끊김 뒤 궤적 분리 |
+| `HmiController` | 가짜 소켓·타이머·벽시계·단조 시계(ms 단위)로 늦음 → 재설정(첫 늦은 stats부터 5~5.25초, 계단부터 ≤6.25초, 계단 위상 4가지) → 새 기준선 FRESH 전체 순환, 느린 재설정 접속은 궤적 분리, 단조 시계 카운트다운, 진짜 끊김 뒤 궤적 분리, 상태 패널 행. 경계값은 코드 상수가 아니라 ICD 값으로 확인 |
 | `receiveText`, `apply`, `freshness`, `needsResync`, `view`, `trackSync` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계·시계 차·계단 변화를 대기 없이 시험. `planDraw` 연산을 실행한 결과가 상태 궤적과 같은지 무작위 8000메시지로 확인 |
 | `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격, 접속·무수신 제한, 예외, stop·재시작 시험 |
-| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`, `data-drawn-points`, `data-heading`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치와, 실행 중 시계 +3초 계단 변화 뒤 회복(GW WebSocket 재접속 정확히 1회, `MutationObserver`로 기록한 배너 변화에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음)도 확인 |
+| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`, `data-heading`)과 개발 서버 훅(`__ugvcTrackPoints`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치와, 실행 중 시계 +3초 계단 변화 뒤 회복(GW WebSocket 재접속 정확히 1회, `MutationObserver`로 기록한 배너 변화에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음)도 확인 |
 
 ## 9. 미정 사항
 
