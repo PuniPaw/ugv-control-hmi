@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.2 (초안) |
+| 버전 | v0.2.1 (초안) |
 | 작성일 | 2026-11-12 |
-| 관련 문서 | UGVC-SRS-001 v0.3, UGVC-ICD-001 v0.4, UGVC-STP-001 v0.5, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.4, UGVC-ICD-001 v0.5, UGVC-STP-001 v0.6, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -17,6 +17,7 @@
 | v0.1.2 | 2026-11-11 | 링크 전이를 콜백(`ILinkTransitionSink`)이 아니라 반환값으로: `LinkMonitor`는 `LinkChange`를 반환하고, `Gateway`가 송신원을 붙여 모으면 `app`이 `take_transitions()`로 꺼낸다. `link`가 `ingress`를 몰라도 된다. 1Hz 상태 보고는 순수 함수 `if03::snapshot` |
 | v0.1.3 | 2026-11-11 | 5장 WebSocket(IF-03) 세션 구조와 IF-03 발행 경로 (ADR-003 구현, REQ-COM-008). 느린 HMI 연결 종료, 세션 상한, accept 재시도 (PR #16 리뷰). 지연 상한(ping/pong), 세션 상한 경쟁 조건 (PR #16 2차 리뷰). ping 응답 기한을 실제 2.0s로(idle_timeout = 4s), 종료 사유 기록 (3차 리뷰). 관련 문서 버전 갱신 |
 | v0.2 | 2026-11-12 | 8장 HMI 구조 신설 (뼈대: IF-03 수신, 상태 갱신, 재접속, 신선도, 지도·상태 패널). 미정 사항은 9장으로 |
+| v0.2.1 | 2026-11-12 | 8장 PR #19 리뷰 반영: 신선도·경과 시간을 연결별 시계 기준선으로 상대 판정, GPS_VALID 없는 위치 무시, 궤적 구간 분리와 조각 그리기(실측 근거), 접속 5s·무수신 4s 제한, 표시 정책을 순수 함수 `view.ts`로, 파서 열거값을 `as const` 배열 하나에서 |
 
 ---
 
@@ -177,7 +178,7 @@ sequenceDiagram
 | `testdata/vectors/*.json`을 C++·Python이 함께 읽음, 생성기는 표준 라이브러리만 사용 | 두 언어 구현이 같은 바이트를 만드는지, 구현과 독립된 기준으로 확인 (ADR-002) |
 | GW가 IF-03 JSON을 stdout에도 출력 | WebSocket 없이 통합 시험(pytest가 subprocess로 GW 실행) |
 | `tools/check_stp_tests.py` | STP의 테스트 이름이 실제 테스트(C++·Python·HMI vitest)와 어긋나면 실패 (RTM grep의 전제) |
-| HMI: 소켓·타이머 주입, 순수 `apply`/`freshness` | 재접속 간격과 신선도 경계를 브라우저 없이 시험 (8.6) |
+| HMI: 소켓·타이머 주입, 순수 `apply`/`freshness`/`view`/`trackSync` | 재접속 간격, 신선도 경계, 시계 차, 표시 정책을 브라우저 없이 시험 (8.6) |
 
 ## 8. HMI 구조
 
@@ -188,62 +189,92 @@ flowchart LR
     WS["WebSocket<br/>(브라우저)"] -->|텍스트 프레임| CONN["net/gwConnection<br/>GwConnection"]
     CONN -->|문자열| PARSE["if03/messages<br/>parseIf03"]
     PARSE -->|If03Message 또는 null| APP["App.vue"]
-    APP -->|"apply(state, msg, 수신 시각)"| STATE["state/hmiState<br/>HmiState (순수 함수)"]
-    STATE --> MAP["MapView<br/>(Leaflet)"]
-    STATE --> PANEL["StatusPanel"]
-    CONN -->|연결 상태| BANNER["ConnectionBanner"]
-    STATE -->|"freshness(state, now)"| BANNER
+    CONN -->|연결 상태| APP
+    APP -->|"apply · connectionLost"| STATE["state/hmiState<br/>HmiState"]
+    STATE --> VIEW["state/view<br/>banner · staleness · 표시 문구"]
+    STATE --> SYNC["map/trackSync<br/>궤적 그리기 계획"]
+    VIEW --> UI["ConnectionBanner · StatusPanel"]
+    SYNC --> MAP["MapView (Leaflet)"]
 ```
 
 | 모듈 | 책임 | 요구사항 |
 |---|---|---|
-| `src/net/gwConnection.ts` | IF-03 접속과 재접속. 소켓과 타이머는 주입받는다 (`Deps`). 브라우저 WebSocket은 `browserSocket`이 `SocketLike`로 감싼다 | REQ-COM-008, ICD 7장 |
-| `src/if03/messages.ts` | IF-03 JSON을 판별 유니온 `If03Message`로 검증. 틀린 메시지와 모르는 type은 `null` | ICD 7.1 |
-| `src/state/hmiState.ts` | `apply()`: 메시지 하나를 반영한 새 상태. `freshness()`: GW 데이터 신선도 | REQ-HMI-001·002, TBD-04 |
-| `src/components/*.vue` | 그리기만 한다. 판정 로직을 두지 않는다 | REQ-HMI-001·002 |
+| `src/net/gwConnection.ts` | IF-03 접속·끊김 판정·재접속. 소켓과 타이머는 주입받는다 (`Deps`). 브라우저 WebSocket은 `browserSocket`이 `SocketLike`로 감싼다 | REQ-HMI-006 |
+| `src/if03/messages.ts` | IF-03 JSON을 판별 유니온 `If03Message`로 검증. 틀린 메시지와 모르는 type은 `null` | REQ-HMI-007, ICD 7.1 |
+| `src/state/hmiState.ts` | `apply()`: 메시지 하나를 반영한 새 상태. `connectionLost()`: 연결 끊김 반영. `freshness()`: GW 데이터 신선도 | REQ-HMI-001·002·006 |
+| `src/state/view.ts` | 표시 정책: 배너 등급·문구, 흐림 범위, 경과 시간·유실률·배터리·위치 문구 | REQ-HMI-002·006 |
+| `src/map/trackSync.ts` | 이전·다음 궤적을 비교해 지도에서 할 일(덧붙이기, 새 구간, 다시 그리기)을 정한다 | REQ-HMI-001 |
+| `src/components/*.vue` | 그리기만 한다. 위 모듈의 결과를 그대로 쓰고 판정하지 않는다 | |
+
+판정은 모두 순수 함수(시각은 인자)에 있고, 실제 시계(`Date.now`, 250ms 주기 갱신)와 WebSocket은 `App.vue`에만 있다.
 
 ### 8.2 경계에서 한 번 검증
 
-GW가 보낸 JSON은 `parseIf03`에서만 검사한다. 통과한 메시지는 필드 형식이 보장된 타입이 되고, 상태·화면 코드는 다시 검사하지 않는다. 검사에 실패한 메시지는 버리고 `rejected`로 센다 (상태 패널 아래에 표시). 12월에 `cmd_result`를 다룰 때는 유니온에 변형을 추가한다. `apply()`의 `switch`는 모든 변형을 다루므로, 처리를 빠뜨리면 컴파일 오류(반환값 누락)가 난다.
+GW가 보낸 JSON은 `parseIf03`에서만 검사한다.
+- 열거값(송신원, 링크 상태, 모드, 플래그, 오류 계수 키)은 `as const` 배열 하나에서 타입과 검사를 함께 만든다. 목록이 둘로 갈라질 수 없다.
+- ICD 범위(위도·경도, 방향 0~360, 배터리 0~100, 유실률·conf 0~1, 계수는 0 이상 정수)와 `errors`의 키 7개를 검사한다.
+- 결과 객체는 검사한 필드만으로 새로 조립한다(캐스트 없음). 정의 밖 필드는 버린다.
+- 하나라도 맞지 않으면 메시지 전체를 버리고 `rejected`로 센다(상태 패널에 표시). GW는 검증 규칙 ⑧로 범위 밖 값을 이미 거르므로, 여기서 걸리는 것은 GW·HMI 버전 불일치 같은 결함이다. 일부 필드만 살려 쓰지 않는다.
+- 12월에 `cmd_result`를 다룰 때는 유니온에 변형을 추가한다. `apply()`의 `switch`가 모든 변형을 다루므로, 처리를 빠뜨리면 컴파일 오류(TS2366, 반환값 누락)가 난다.
 
 ### 8.3 상태 갱신
 
-- `apply(state, msg, receivedAt)`는 새 객체를 반환한다 (이전 상태를 바꾸지 않음). `App.vue`는 이를 `shallowRef`에 통째로 넣는다. 10Hz 텔레메트리마다 깊은 반응성 추적을 하지 않기 위해서다.
-- 궤적은 최근 3000점(10Hz 약 5분)만 유지한다. 오래 운용해도 메모리와 그리기 비용이 늘지 않는다. 전체 궤적은 사후 재생(PostgreSQL 로그)에서 본다.
-- 링크 상태의 초기값은 GW와 같은 LOST다. 접속 직후 GW가 현재 link_status를 보내므로 곧 실제 값으로 바뀐다 (ICD 7장).
+- `apply(state, msg, receivedAt)`는 새 객체를 반환한다(이전 상태를 바꾸지 않음). `App.vue`는 이를 `shallowRef`에 통째로 넣는다. 10Hz 텔레메트리마다 깊은 반응성 추적을 하지 않기 위해서다. 실측: 궤적 3000점에서 `apply()` 한 번 6.4µs.
+- **위치 유효성:** `GPS_VALID`가 없는 텔레메트리(ICD 표 6-2)는 모드·배터리 등은 갱신하지만 위치(`fix`)와 궤적은 바꾸지 않는다. 지도는 마지막 유효 위치를 회색 화살표로 두고 "위치 무효"를 표시한다.
+- **궤적 구간:** 궤적은 구간의 목록이다. GPS 무효, 차량 링크 LOST, GW 연결 끊김 뒤의 첫 유효 위치는 새 구간을 시작한다. 끊긴 곳을 직선으로 잇지 않는다.
+- **궤적 상한:** 전체 3000점(10Hz 약 5분). 넘으면 가장 오래된 점부터 300점을 한 번에 지운다. 지도의 다시 그리기를 30초에 한 번으로 묶기 위해서다(8.5). 전체 궤적은 사후 재생(PostgreSQL 로그)에서 본다.
+- 링크 상태의 초기값은 GW와 같은 LOST다. 접속 직후 GW가 현재 link_status를 보내므로 곧 실제 값으로 바뀐다(ICD 7장).
+- **연결 끊김(`connectionLost`):** 링크·차량·궤적 값은 "이전 값"으로 남기고, 이 연결에서만 뜻이 있는 신선도 기준(`lastStats`, `clockOffset`)은 지운다. 재접속 후 첫 stats 전까지는 WAITING이다.
 
-### 8.4 재접속과 신선도 (ICD 7장의 HMI 의무)
+### 8.4 연결 감시·재접속·신선도 (REQ-HMI-006, ICD 7장)
 
 ```mermaid
 stateDiagram-v2
     [*] --> CONNECTING
     CONNECTING --> OPEN: onopen (실패 횟수 0으로)
-    CONNECTING --> WAITING_RETRY: onclose
-    OPEN --> WAITING_RETRY: onclose (GW 종료, 뒤처져서 끊김 1006)
+    CONNECTING --> WAITING_RETRY: onclose / 5s 안에 열리지 않음 / 소켓 생성 예외
+    OPEN --> WAITING_RETRY: onclose (GW 종료, 뒤처져서 끊김 1006) / 4s 동안 수신 없음
     WAITING_RETRY --> CONNECTING: 1s, 2s, 4s, 5s, 5s… 후
 ```
 
-- 연결 상태가 OPEN이 아니면 배너에 "GW 연결 끊김"과 다음 재접속까지 남은 대기 시간을 표시한다.
-- 신선도 `freshness(state, now)`:
-  - stats를 아직 받지 못함: WAITING
-  - 마지막 stats를 받은 지 2초가 넘었거나, 그 stats가 GW `ts`보다 2초 넘게 늦게 도착함: STALE ("GW 데이터 지연")
+- 타이머는 한 번에 하나다: 접속 제한 5s, 무수신 제한 4s(메시지를 받을 때마다 다시 잰다), 재접속 대기. GW는 송신원마다 1Hz로 stats를 보내므로 정상이면 4s 무수신은 없다. FIN/RST 없이 GW PC가 사라진 경우를 TCP keepalive보다 빨리 알아챈다.
+- 소켓을 버릴 때는 처리기 네 개를 모두 떼고 닫는다. 버린 소켓의 이벤트는 전달되지 않는다. `start()`를 다시 부르면 기존 소켓과 타이머부터 정리한다.
+- **신선도 `freshness(state, now)`:** GW와 HMI가 다른 PC일 수 있으므로(`ws://<페이지 호스트>:8080/ws`, GW `--ws-host 0.0.0.0`) GW 시각과 HMI 시각을 직접 빼지 않는다.
+  - 연결마다 기준선 `clockOffset` = 관측한 (수신 시각 − `ts`)의 최솟값. 두 PC의 시계 차와 최소 전달 지연이 들어 있다.
+  - 이 연결에서 stats를 아직 받지 못함: WAITING
+  - 마지막 stats를 받은 지 2초 넘음, 또는 그 stats의 (수신 시각 − `ts`)가 기준선보다 2초 넘게 큼: STALE
   - 그 밖: FRESH
-- 판정은 메시지가 오지 않을 때도 해야 하므로, `App.vue`가 250ms마다 `now`를 갱신해 다시 계산한다.
-- OPEN이 아니거나 FRESH가 아니면 상태 패널을 흐리게 표시한다. 마지막 값이 현재 값이 아님을 운용자가 알게 하기 위해서다. 정식 경고(REQ-HMI-003·004)는 경고 체계 작업에서 이 판정을 입력으로 쓴다.
+  - 한계(ICD 7장): 접속 직후부터 밀려 있던 지연은 기준선에 들어가 탐지되지 않는다. 연결 중 시계가 계단식으로 바뀌면 재접속까지 그만큼 어긋난다.
+- 링크 경과 시간도 같은 기준선으로 GW 시각(`last_rx_ts`)을 HMI 시각으로 바꿔 계산한다(음수가 나오지 않음).
+- **표시 정책(`view.ts`):**
+  - 배너: 첫 접속 시도는 "GW 접속 중"(warn), 끊긴 뒤는 "GW 연결 끊김 · N초 후 재접속"(bad, 남은 초)과 "재접속 중", 연결되면 대기(warn)·지연(bad)·정상(ok)
+  - 흐림: GW 연결이 끊겼거나 신선도가 FRESH가 아니면 패널 전체를, 그에 더해 차량 링크가 CONNECTED가 아니면 차량 섹션("이전 값")과 지도 마커를 흐리게 한다
+  - 배터리 경고색은 SIM이 정한 `BATTERY_LOW` 플래그(20% 이하)를 따른다. HMI가 따로 문턱을 두지 않는다
+  - 정식 경고(REQ-HMI-003·004)는 경고 체계 작업에서 이 판정들을 입력으로 쓴다
 
 ### 8.5 지도
 
-- Leaflet. 타일 주소는 빌드 변수 `VITE_TILE_URL`로 받는다. 없으면 타일 없이 격자 배경만 그린다 (외부 인터넷 없이 동작. 오프라인 타일 제공은 REQ-HMI-005 고도화).
-- 차량은 `heading_deg`만큼 회전한 화살표로 그린다. 기본은 차량을 따라 지도를 옮기고, 운용자가 지도를 끌면 따라가기를 끈다 ("차량 따라가기" 버튼으로 다시 켬).
+- Leaflet. 타일 주소는 빌드 변수 `VITE_TILE_URL`로 받는다. 없으면 타일 없이 격자 배경만 그린다(외부 인터넷 없이 동작. 오프라인 타일 제공은 REQ-HMI-005 고도화).
+- 차량은 `heading_deg`만큼 회전한 화살표로 그린다. 아이콘은 한 번만 만들고, 이후에는 회전(`transform`)과 상태 클래스(흐림, 위치 무효)만 바꾼다. 기본은 차량을 따라 지도를 옮기고, 운용자가 지도를 끌면 따라가기를 끈다("차량 따라가기" 버튼으로 다시 켬).
+- **궤적 그리기:** Leaflet은 점을 하나 덧붙여도(`addLatLng`) polyline 전체를 다시 투영한다. chromium 실측 결과:
+
+  | 방법 | 호출당 |
+  |---|---|
+  | 3000점 SVG polyline `setLatLngs` | 8.7ms |
+  | 3000점 SVG polyline `addLatLng` | 16.7ms |
+  | 3000점 Canvas polyline `addLatLng` | 14.7ms |
+  | 200점 SVG polyline `addLatLng` | 0.14ms |
+
+  그래서 궤적을 200점 이하 조각(끝점 공유)으로 나눠 그리고, 새 점은 마지막 조각에만 덧붙인다. `trackSync.planTrackUpdate`가 이전·다음 궤적을 참조 비교해 덧붙이기·새 구간·다시 그리기를 정한다. 다시 그리기는 앞쪽 삭제(301점마다, 10Hz면 약 30초에 한 번)에만 일어난다.
 
 ### 8.6 시험
 
 | 대상 | 방법 |
 |---|---|
-| `parseIf03` | 실제 GW stdout에서 받은 IF-03 줄(`hmi/tests/fixtures/gw_if03_sample.jsonl`)을 그대로 넣어 본다. GW 출력 형식과 HMI 파서가 어긋나면 실패한다 |
-| `apply`, `freshness` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계를 대기 없이 시험 |
-| `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격 시험 |
-| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검 (STP 수준 D) |
+| `parseIf03` | `hmi/tests/fixtures/gw_if03_sample.jsonl`(실제 GW 출력: 위치 유효·무효 telemetry, detection, stats, link_status)을 그대로 넣어 본다. 이 표본은 `capture_gw_if03.py`가 GW를 실행해 만든다. 표본은 생성 시점의 형식이므로, GW의 IF-03 형식을 바꾸면 스크립트를 다시 돌린다. 현재 GW와의 일치는 시연 점검(실제 GW 출력이 파서를 거쳐야 화면이 ok가 됨)이 매번 확인한다 |
+| `apply`, `freshness`, `view`, `trackSync` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계·시계 차를 대기 없이 시험 |
+| `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격, 접속·무수신 제한, 예외, stop·재시작 시험 |
+| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치도 확인 |
 
 ## 9. 미정 사항
 

@@ -3,7 +3,8 @@
 
 - C++: `Suite.REQ_...` 이름을 gtest 실행 파일의 --gtest_list_tests 출력과 비교
 - Python: `test_REQ_...` 이름을 python/ sim/ tests/ 의 def test_... 와 비교
-- TypeScript(HMI): `<파일>.test.ts > REQ_...` 이름을 hmi/tests/*.test.ts 의 it("...") 제목과 비교
+- TypeScript(HMI): `<파일>.test.ts > <시험 이름>`을 `vitest list --json`이 낸 실제 시험 목록과 비교
+  (정규식으로 it("...")를 찾지 않는다: 따옴표 종류, test(), it.each 등을 놓치지 않도록. hmi/에서 npm install 필요)
 
 RTM(06)을 grep으로 만들 때 이름이 어긋나면 그 TC가 "시험 없음"으로 보이므로, 어긋나면 실패한다.
 
@@ -13,6 +14,7 @@ RTM은 이름의 REQ ID로 요구사항을 잇기 때문에, 없는 ID(오타)�
 
 사용: tools/check_stp_tests.py <ugvc_tests 실행 파일>
 """
+import json
 import os
 import re
 import subprocess
@@ -29,7 +31,7 @@ def stp_names() -> tuple[set[str], set[str], set[str]]:
     cpp = set(re.findall(r"`([A-Za-z0-9]+\.REQ_[A-Za-z0-9_]+)`", text))
     py = set(re.findall(r"`(test_REQ_[A-Za-z0-9_]+)`", text))
     py |= set(re.findall(r"::(test_REQ_[A-Za-z0-9_]+)`", text))
-    ts = set(re.findall(r"`(\w+\.test\.ts > REQ_[^`]+)`", text))
+    ts = set(re.findall(r"`([^`\s]+\.test\.ts > [^`]+)`", text))
     return cpp, py, ts
 
 
@@ -53,12 +55,10 @@ def pytest_names() -> set[str]:
 
 
 def vitest_names() -> set[str]:
-    """hmi/tests/*.test.ts 의 it("제목") → "<파일> > 제목" (describe 이름은 넣지 않는다)"""
-    names = set()
-    for f in (ROOT / "hmi" / "tests").glob("*.test.ts"):
-        for title in re.findall(r"^\s*it\(\s*\"([^\"]+)\"", f.read_text(encoding="utf-8"), re.M):
-            names.add(f"{f.name} > {title}")
-    return names
+    """vitest가 수집한 시험 → "<파일 이름> > <시험 이름>" (describe가 있으면 "a > b"처럼 이름에 들어간다)"""
+    out = subprocess.run(["npx", "vitest", "list", "--json"], cwd=ROOT / "hmi", check=True,
+                         capture_output=True, text=True).stdout
+    return {f"{Path(t['file']).name} > {t['name']}" for t in json.loads(out)}
 
 
 def srs_ids() -> set[str]:
@@ -66,7 +66,7 @@ def srs_ids() -> set[str]:
 
 
 def req_id(test_name: str) -> str | None:
-    m = re.search(r"REQ_([A-Z]+)_(\d{3})", test_name)
+    m = re.search(r"REQ[_-]([A-Z]+)[_-](\d{3})", test_name)
     return f"REQ-{m.group(1)}-{m.group(2)}" if m else None
 
 

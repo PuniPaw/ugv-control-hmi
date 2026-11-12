@@ -75,10 +75,10 @@
 | 문서 | 상태 | 비고 |
 |---|---|---|
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
-| 01_SRS.md (UGVC-SRS-001) | **v0.3** | 요구사항 31개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계) |
-| 02_ICD.md (UGVC-ICD-001) | **v0.4** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열) |
-| 03_SDD.md (UGVC-SDD-001) | **v0.2 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열), 명령 재전송 설계안. v0.2: 8장 HMI 구조(경계 파서, 순수 `apply`, 재접속·신선도) |
-| 04_STP.md (UGVC-STP-001) | **v0.5 초안** | TC-COM-001~008, TC-HMI-001·002, TC-QUAL-001. 수준 U/I/R + D(시연 점검, `hmi/e2e/smoke.mjs`). `tools/check_stp_tests.py`가 STP 이름(C++·Python·vitest)과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
+| 01_SRS.md (UGVC-SRS-001) | **v0.4** | 요구사항 33개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계). v0.4: REQ-HMI-006(IF-03 연결 감시·재접속·신선도), REQ-HMI-007(IF-03 수신 검증) |
+| 02_ICD.md (UGVC-ICD-001) | **v0.4** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열). v0.5: HMI 신선도는 연결별 시계 기준선 대비(시계 차 무관), 접속 5s·무수신 4s 제한 |
+| 03_SDD.md (UGVC-SDD-001) | **v0.2.1 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열), 명령 재전송 설계안. v0.2: 8장 HMI 구조(경계 파서, 순수 `apply`·`view`·`trackSync`, 재접속·신선도, 궤적 조각 그리기) |
+| 04_STP.md (UGVC-STP-001) | **v0.6 초안** | TC-COM-001~008(GW), TC-HMI-001·002·006·007, TC-QUAL-001. 수준 U/I/R + D(시연 점검, `hmi/e2e/smoke.mjs`, 시계 차 ±로도 실행). `tools/check_stp_tests.py`가 STP 이름(C++ gtest 목록·Python·`vitest list --json`)과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. HMI 시험은 describe 없이 it 제목 = 시험 이름. CMD·SAFE 등은 구현 주에 추가 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
 | 06_RTM.md | 미작성 | 스크립트로 생성 예정 |
 | adr/ADR-001 영상 전송 경로 분리 | **승인** | |
@@ -94,7 +94,7 @@
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)
 - TBD-02: class_id 목록 (부트캠프 모델 확정 시, 현재 PERSON/VEHICLE/ARMORED_VEHICLE/UNKNOWN)
 - TBD-03: 다중 경로점 일괄 전송 메시지 (고도화)
-- TBD-04: HMI 화면 처리 지연을 GW가 감지할 방법. 지금은 HMI가 IF-03 `ts`로 신선도를 감시 (ICD 7장, HMI 경고 체계에서 구현)
+- TBD-04: HMI 화면 처리 지연을 GW가 감지할 방법. 지금은 HMI가 IF-03 `ts`로 신선도를 감시 (ICD 7장, REQ-HMI-006 구현됨. 경고 체계에서 경고로 연결)
 
 ---
 
