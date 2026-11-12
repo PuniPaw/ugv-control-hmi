@@ -52,35 +52,46 @@ def split_row(line: str) -> list[str]:
 
 
 class StpRefs:
-    """STP를 한 번 읽어 백틱 항목을 gtest·pytest·vitest·비시험·해석 불가로 나눈다.
-    - TC 표: 머리 행에서 "테스트" 열을 찾아 그 칸의 항목을 모두 분류한다 (해석 불가는 오류)
-    - 그 밖(체크리스트 등): 시험 이름 형식에 맞는 항목만 모은다"""
+    """STP를 한 번 읽어 백틱 항목을 gtest·pytest·vitest로 모으고, TC 표의 해석 불가 항목을 찾는다.
+    - 시험 이름은 문서 어디에 있든(TC 행의 모든 칸, 체크리스트 등) 형식에 맞으면 모은다 → 코드에 없으면 불일치
+    - 표의 머리 행은 바로 다음 줄이 구분선(|---)인 행이다. 머리에 "테스트" 열이 있으면 그 표의 TC 행은
+      테스트 칸의 모든 항목이 시험 이름이나 시연 점검 참조여야 한다(해석 불가는 오류)
+    - TC-로 시작하는 행인데 속한 표에 "테스트" 열이 없으면 그 행을 오류로 낸다"""
 
     def __init__(self, text: str):
         self.cpp: set[str] = set()
         self.py: set[str] = set()
         self.ts: set[str] = set()
         self.unparsed: list[str] = []
+        lines = text.splitlines()
         test_col: int | None = None
-        for line in text.splitlines():
+        for i, line in enumerate(lines):
             if not line.startswith("|"):
                 test_col = None
                 continue
             cells = split_row(line)
-            if cells and cells[0] == "TC ID":
+            if i + 1 < len(lines) and re.match(r"^\|\s*:?-{3,}", lines[i + 1]):  # 머리 행
                 test_col = cells.index("테스트") if "테스트" in cells else None
                 continue
-            refs = re.findall(r"`([^`]+)`", line)
-            if cells[0].startswith("TC-") and test_col is not None:
-                col_refs = re.findall(r"`([^`]+)`", cells[test_col]) if test_col < len(cells) else []
-                if not col_refs:
-                    self.unparsed.append(f"{cells[0]}: 테스트 칸에 백틱 항목이 없음")
-                for r in col_refs:
-                    if not self._add(r) and not (r in NON_TEST_REFS or OPTION_REF.fullmatch(r)):
-                        self.unparsed.append(f"{cells[0]}: {r}")
-            else:
-                for r in refs:
-                    self._add(r)
+            if re.match(r"^\|\s*:?-{3,}", line):  # 구분선
+                continue
+            for r in re.findall(r"`([^`]+)`", line):
+                self._add(r)
+            if not cells[0].startswith("TC-"):
+                continue
+            if test_col is None or test_col >= len(cells):
+                self.unparsed.append(f"{cells[0]}: 표에 \"테스트\" 열이 없음")
+                continue
+            col_refs = re.findall(r"`([^`]+)`", cells[test_col])
+            if not col_refs:
+                self.unparsed.append(f"{cells[0]}: 테스트 칸에 백틱 항목이 없음")
+            for r in col_refs:
+                if not (self._is_test(r) or r in NON_TEST_REFS or OPTION_REF.fullmatch(r)):
+                    self.unparsed.append(f"{cells[0]}: {r}")
+
+    @staticmethod
+    def _is_test(r: str) -> bool:
+        return bool(GTEST_REF.fullmatch(r) or PYTEST_REF.fullmatch(r) or VITEST_REF.fullmatch(r))
 
     def _add(self, r: str) -> bool:
         if GTEST_REF.fullmatch(r):
@@ -160,18 +171,32 @@ def srs_ids() -> set[str]:
     return set(re.findall(r"^\| (REQ-[A-Z]+-\d{3}) \|", SRS.read_text(encoding="utf-8"), re.M))
 
 
-AREAS = ("COM", "CMD", "AI", "HMI", "LOG", "PERF", "SAFE", "QUAL")  # CLAUDE.md 3장
 REQ_STRICT = re.compile(r"REQ[_-]([A-Z]+)[_-](\d{3})(?!\d)")
-# REQ ID를 쓰려 한 흔적 (앞에 영문자가 없어야 함: freq, prereq 제외):
-#  - 대문자 REQ로 시작하는 토큰 (REQ_006, REQHMI006, REQ.HMI.006, REQ_HMI_O06 …)
-#  - 대소문자 무관 req + 구분자(없어도 됨) + 알려진 영역 (req_hmi_999, Req-Com-1 …). req_timeout 같은 단어는 해당 없음
-REQ_LOOSE = re.compile(r"(?<![A-Za-z])(?:REQ|(?i:req)(?=[\s._-]*(?i:" + "|".join(AREAS) + r")(?![a-z])))")
 
 
-def malformed_req(test_name: str) -> bool:
+def srs_areas() -> tuple[str, ...]:
+    """요구사항 영역 이름(COM, HMI …): SRS에 있는 REQ ID에서 얻는다 (목록을 손으로 옮기지 않음)"""
+    return tuple(sorted({rid.split("-")[1] for rid in srs_ids()}))
+
+
+def req_candidates(areas: tuple[str, ...]) -> re.Pattern[str]:
+    """REQ ID를 쓰려 한 흔적:
+    - 대문자 REQ: 앞이 대문자가 아니고(PREREQ 제외, testREQ_… camelCase는 포함), 뒤가 영문자가 아니거나
+      알려진 영역이 바로 붙는 것 (REQ_006, REQ.HMI.006, REQ_HMI_O06, REQHMI006 / REQUEST·REQUIRED 제외)
+    - 대소문자 무관 req: 앞이 영문자가 아니고(freq·prereq 제외) 구분자(없어도 됨) 뒤에 알려진 영역이 오는 것
+      (req_hmi_999, Req-Com-1 / req_timeout 제외)"""
+    area = "|".join(areas)
+    return re.compile(
+        rf"(?<![A-Z])REQ(?=$|[^A-Za-z]|(?:{area}))"
+        rf"|(?<![A-Za-z])(?i:req)(?=[\s._-]*(?i:{area})(?![a-z]))"
+    )
+
+
+def malformed_req(test_name: str, areas: tuple[str, ...] | None = None) -> bool:
     """REQ ID를 쓰려 했는데 정확한 형식(REQ_<영역>_<세 자리>)이 아닌 것. RTM grep이 놓치거나 다른 ID로 모으므로
-    실패시킨다. 예: REQ_HMI_06, REQ_HMI_0067, REQ HMI 006, req_hmi_999, REQHMI006, REQ.HMI.006, REQ_006"""
-    return any(not REQ_STRICT.match(test_name, m.start()) for m in REQ_LOOSE.finditer(test_name))
+    실패시킨다. 예: REQ_HMI_06, REQ_HMI_0067, REQ HMI 006, req_hmi_999, REQHMI006, REQ.HMI.006, REQ_006, testREQ_HMI_06"""
+    pattern = req_candidates(areas if areas is not None else srs_areas())
+    return any(not REQ_STRICT.match(test_name, m.start()) for m in pattern.finditer(test_name))
 
 
 def req_id(test_name: str) -> str | None:
@@ -196,7 +221,8 @@ def main() -> int:
     unparsed = stp.unparsed
     for item in unparsed:
         print(f"STP 테스트 칸에서 해석하지 못한 항목: {item}")
-    malformed = sorted(n for n in code if malformed_req(n))
+    areas = srs_areas()
+    malformed = sorted(n for n in code if malformed_req(n, areas))
     for name in malformed:
         print(f"형식이 틀린 REQ ID를 단 테스트: {name}")
     known = srs_ids()
