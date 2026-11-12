@@ -27,39 +27,71 @@ STP = Path(os.environ.get("UGVC_STP", ROOT / "docs" / "04_STP.md"))
 SRS = ROOT / "docs" / "01_SRS.md"
 
 
-# TC 표 "테스트" 칸에 시험 이름 대신 올 수 있는 것 (시연 점검 스크립트와 옵션, 검사 스크립트)
+# STP 항목의 형식 (이 한 벌만 쓴다)
+GTEST_REF = re.compile(r"[A-Za-z0-9]+\.REQ_[A-Za-z0-9_]+")
+PYTEST_REF = re.compile(r"(?:\S+::)?(test_REQ_[A-Za-z0-9_]+)")
+VITEST_REF = re.compile(r"[^\s`]+\.test\.ts > .+")
+# TC 표 "테스트" 칸에 시험 이름 대신 올 수 있는 것: 시연 점검 스크립트와 그 옵션, RTM 생성 스크립트(예정 경로)
 NON_TEST_REFS = {"hmi/e2e/smoke.mjs", "tools/rtm"}
 OPTION_REF = re.compile(r"--[a-z][a-z-]*(?: \S+)?")
-GTEST_REF = re.compile(r"[A-Za-z0-9]+\.REQ_[A-Za-z0-9_]+")
-PYTEST_REF = re.compile(r"(?:\S+::)?test_REQ_[A-Za-z0-9_]+")
-VITEST_REF = re.compile(r"[^\s`]+\.test\.ts > .+")
 
 
-def unparsed_stp_refs() -> list[str]:
-    """TC 행의 마지막 칸(테스트)에서 백틱 항목을 모두 꺼내, 어느 형식으로도 해석되지 않는 것을 돌려준다.
-    오타 하나(예: `.test.tsx >`, `>` 앞 공백 누락)로 TC가 추적에서 조용히 빠지지 않게 한다."""
-    bad = []
-    for line in STP.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("| TC-"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split(" | ")]
-        refs = re.findall(r"`([^`]+)`", cells[-1])
-        if not refs:
-            bad.append(f"{cells[0]}: 테스트 칸에 백틱 항목이 없음")
-        for r in refs:
-            if not (r in NON_TEST_REFS or OPTION_REF.fullmatch(r) or GTEST_REF.fullmatch(r)
-                    or PYTEST_REF.fullmatch(r) or VITEST_REF.fullmatch(r)):
-                bad.append(f"{cells[0]}: {r}")
-    return bad
+def split_row(line: str) -> list[str]:
+    """마크다운 표 행을 칸으로 나눈다. 백틱 안의 |는 칸 구분자로 보지 않는다."""
+    cells, cur, in_code = [], "", False
+    for ch in line.strip().strip("|"):
+        if ch == "`":
+            in_code = not in_code
+        if ch == "|" and not in_code:
+            cells.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    cells.append(cur.strip())
+    return cells
 
 
-def stp_names() -> tuple[set[str], set[str], set[str]]:
-    text = STP.read_text(encoding="utf-8")
-    cpp = set(re.findall(r"`([A-Za-z0-9]+\.REQ_[A-Za-z0-9_]+)`", text))
-    py = set(re.findall(r"`(test_REQ_[A-Za-z0-9_]+)`", text))
-    py |= set(re.findall(r"::(test_REQ_[A-Za-z0-9_]+)`", text))
-    ts = set(re.findall(r"`([^`\s]+\.test\.ts > [^`]+)`", text))
-    return cpp, py, ts
+class StpRefs:
+    """STP를 한 번 읽어 백틱 항목을 gtest·pytest·vitest·비시험·해석 불가로 나눈다.
+    - TC 표: 머리 행에서 "테스트" 열을 찾아 그 칸의 항목을 모두 분류한다 (해석 불가는 오류)
+    - 그 밖(체크리스트 등): 시험 이름 형식에 맞는 항목만 모은다"""
+
+    def __init__(self, text: str):
+        self.cpp: set[str] = set()
+        self.py: set[str] = set()
+        self.ts: set[str] = set()
+        self.unparsed: list[str] = []
+        test_col: int | None = None
+        for line in text.splitlines():
+            if not line.startswith("|"):
+                test_col = None
+                continue
+            cells = split_row(line)
+            if cells and cells[0] == "TC ID":
+                test_col = cells.index("테스트") if "테스트" in cells else None
+                continue
+            refs = re.findall(r"`([^`]+)`", line)
+            if cells[0].startswith("TC-") and test_col is not None:
+                col_refs = re.findall(r"`([^`]+)`", cells[test_col]) if test_col < len(cells) else []
+                if not col_refs:
+                    self.unparsed.append(f"{cells[0]}: 테스트 칸에 백틱 항목이 없음")
+                for r in col_refs:
+                    if not self._add(r) and not (r in NON_TEST_REFS or OPTION_REF.fullmatch(r)):
+                        self.unparsed.append(f"{cells[0]}: {r}")
+            else:
+                for r in refs:
+                    self._add(r)
+
+    def _add(self, r: str) -> bool:
+        if GTEST_REF.fullmatch(r):
+            self.cpp.add(r)
+        elif (m := PYTEST_REF.fullmatch(r)):
+            self.py.add(m.group(1))
+        elif VITEST_REF.fullmatch(r):
+            self.ts.add(r)
+        else:
+            return False
+        return True
 
 
 class ToolError(Exception):
@@ -128,18 +160,18 @@ def srs_ids() -> set[str]:
     return set(re.findall(r"^\| (REQ-[A-Z]+-\d{3}) \|", SRS.read_text(encoding="utf-8"), re.M))
 
 
+AREAS = ("COM", "CMD", "AI", "HMI", "LOG", "PERF", "SAFE", "QUAL")  # CLAUDE.md 3장
 REQ_STRICT = re.compile(r"REQ[_-]([A-Z]+)[_-](\d{3})(?!\d)")
-# REQ ID를 쓰려 한 흔적: req 다음에 구분자와 영역 글자, 숫자 (대소문자 무관). "request" 같은 단어는 해당 없음
-REQ_LOOSE = re.compile(r"(?i)req[\s_-]+[a-z]+[\s_-]*\d+")
+# REQ ID를 쓰려 한 흔적 (앞에 영문자가 없어야 함: freq, prereq 제외):
+#  - 대문자 REQ로 시작하는 토큰 (REQ_006, REQHMI006, REQ.HMI.006, REQ_HMI_O06 …)
+#  - 대소문자 무관 req + 구분자(없어도 됨) + 알려진 영역 (req_hmi_999, Req-Com-1 …). req_timeout 같은 단어는 해당 없음
+REQ_LOOSE = re.compile(r"(?<![A-Za-z])(?:REQ|(?i:req)(?=[\s._-]*(?i:" + "|".join(AREAS) + r")(?![a-z])))")
 
 
 def malformed_req(test_name: str) -> bool:
-    """REQ ID를 쓰려 했는데 정확한 형식(REQ_<영역>_<세 자리>)이 아닌 것: REQ_HMI_06, REQ_HMI_0067, req_hmi_999,
-    REQ HMI 006, test_REQ_CMD006 등. RTM grep이 놓치거나 다른 ID로 모으므로 실패시킨다."""
-    for m in REQ_LOOSE.finditer(test_name):
-        if not REQ_STRICT.match(test_name, m.start()):
-            return True
-    return False
+    """REQ ID를 쓰려 했는데 정확한 형식(REQ_<영역>_<세 자리>)이 아닌 것. RTM grep이 놓치거나 다른 ID로 모으므로
+    실패시킨다. 예: REQ_HMI_06, REQ_HMI_0067, REQ HMI 006, req_hmi_999, REQHMI006, REQ.HMI.006, REQ_006"""
+    return any(not REQ_STRICT.match(test_name, m.start()) for m in REQ_LOOSE.finditer(test_name))
 
 
 def req_id(test_name: str) -> str | None:
@@ -151,7 +183,8 @@ def main() -> int:
     if len(sys.argv) != 2:
         print(__doc__.strip().splitlines()[-1])
         return 2
-    cpp, py, ts = stp_names()
+    stp = StpRefs(STP.read_text(encoding="utf-8"))
+    cpp, py, ts = stp.cpp, stp.py, stp.ts
     try:
         code = gtest_names(sys.argv[1]) | pytest_names() | vitest_names()
     except ToolError as e:
@@ -160,7 +193,7 @@ def main() -> int:
     missing = sorted((cpp | py | ts) - code)
     for name in missing:
         print(f"STP에 있지만 코드에 없는 테스트: {name}")
-    unparsed = unparsed_stp_refs()
+    unparsed = stp.unparsed
     for item in unparsed:
         print(f"STP 테스트 칸에서 해석하지 못한 항목: {item}")
     malformed = sorted(n for n in code if malformed_req(n))

@@ -128,11 +128,10 @@ function checkPageErrors() {
 }
 
 async function scenario(browser) {
-  let gwWsPort = 0;
   const ports = { vehicle: await freePort(), detector: await freePort(), sim: await freePort() };
   let gw = await startGateway(ports, 0);
   const vitePort = await freePort();
-  gwWsPort = gw.wsPort;
+  const gwWsPort = gw.wsPort;
   await startVite(vitePort, `ws://127.0.0.1:${gw.wsPort}/ws`);
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 760 } });
@@ -182,8 +181,8 @@ async function scenario(browser) {
   const heading = await page.getByTestId("map").getAttribute("data-heading");
   const rotate = await page.locator(".vehicle-icon .arrow").getAttribute("style");
   if (heading !== "87.25" || !rotate?.includes("rotate(87.25deg)")) throw new Error(`진행 방향 표시 이상: heading=${heading}, style=${rotate}`);
-  // 궤적: Leaflet 궤적 레이어에 실제로 들어 있는 점 수가 늘어나는지 본다 (렌더러와 무관)
-  const drawnPoints = async () => Number(await page.getByTestId("map").getAttribute("data-drawn-points"));
+  // 궤적: Leaflet 궤적 레이어에 실제로 들어 있는 점 수가 늘어나는지 본다 (렌더러와 무관, 개발 서버 전용 훅)
+  const drawnPoints = async () => page.evaluate(() => window.__ugvcTrackPoints());
   const n1 = await drawnPoints();
   await page.waitForTimeout(3000);
   const n2 = await drawnPoints();
