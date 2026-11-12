@@ -1,17 +1,21 @@
 // 화면 표시 정책 (순수 함수). 컴포넌트는 이 결과를 그리기만 한다.
 
-import type { Source, StatsData, TelemetryData } from "../if03/messages";
+import { SOURCES, type LinkState, type Mode, type Source, type StatsData, type TelemetryData } from "../if03/messages";
+import type { ConnectAttempt, ConnectCause } from "../model/connection";
 import { freshness, gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
 
 export type Level = "ok" | "warn" | "bad";
+export interface Banner {
+  level: Level;
+  text: string;
+}
 
 /**
  * 화면용 연결 상태. 재접속 대기는 남은 시간 대신 예정 시각을 가진다. 예정 시각은 **단조 시계**(벽시계가
  * 바뀌어도 흔들리지 않음) 기준이다: 실제 재시도 타이머도 경과 시간으로 동작하기 때문이다.
  */
 export type ConnView =
-  | { state: "CONNECTING"; cause: "first" | "resync" }
-  | { state: "CONNECTING"; cause: "retry"; failures: number }
+  | ({ state: "CONNECTING" } & ConnectAttempt)
   | { state: "OPEN" }
   | { state: "WAITING_RETRY"; failures: number; retryAtMono: number };
 
@@ -20,7 +24,7 @@ export interface Clocks {
   mono: number; // 단조 시계 ms (재접속 카운트다운)
 }
 
-function connectingBanner(cause: "first" | "retry" | "resync"): { level: Level; text: string } {
+function connectingBanner(cause: ConnectCause): Banner {
   switch (cause) {
     case "first":
       return { level: "warn", text: "GW 접속 중" };
@@ -33,7 +37,7 @@ function connectingBanner(cause: "first" | "retry" | "resync"): { level: Level; 
 }
 
 /** 상단 배너 (ICD 7장, REQ-HMI-006) */
-export function banner(conn: ConnView, fresh: Freshness, monoNow: number): { level: Level; text: string } {
+export function banner(conn: ConnView, fresh: Freshness, monoNow: number): Banner {
   switch (conn.state) {
     case "CONNECTING":
       return connectingBanner(conn.cause);
@@ -80,20 +84,57 @@ export function positionText(v: TelemetryData): string {
   return gpsValid(v) ? `${v.lat.toFixed(6)}, ${v.lon.toFixed(6)}` : "위치 무효 (GPS_VALID 없음)";
 }
 
-export interface Presented {
-  fresh: Freshness;
-  banner: { level: Level; text: string };
-  stale: { all: boolean; vehicle: boolean };
-  fixValid: boolean;
+/** 상태 패널 한 줄: 송신원 링크 */
+export interface LinkRow {
+  source: Source;
+  state: LinkState;
+  loss: string;
+  age: string;
 }
 
-/** 화면 판정을 한 번에, 같은 시각으로 (App.vue와 시험이 같은 함수를 쓴다) */
+/** 상태 패널: 차량 값 (텔레메트리 수신 전이면 null) */
+export interface VehicleRows {
+  mode: Mode;
+  battery: string;
+  batteryLevel: Level;
+  speed: string;
+  heading: string;
+  position: string;
+  flags: string;
+}
+
+export interface Presented {
+  fresh: Freshness;
+  banner: Banner;
+  stale: { all: boolean; vehicle: boolean };
+  fixValid: boolean;
+  links: LinkRow[];
+  vehicle: VehicleRows | null;
+}
+
+/** 화면 판정을 한 번에, 같은 시각으로. 컴포넌트는 이 결과를 그리기만 한다 (App.vue와 시험이 같은 함수를 쓴다) */
 export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented {
   const fresh = freshness(s, clocks.wall);
+  const v = s.vehicle;
   return {
     fresh,
     banner: banner(conn, fresh, clocks.mono),
     stale: staleness(s, conn, fresh),
-    fixValid: s.vehicle !== null && gpsValid(s.vehicle),
+    fixValid: v !== null && gpsValid(v),
+    links: SOURCES.map((source) => ({
+      source,
+      state: s.link[source].state,
+      loss: lossText(s.stats[source]),
+      age: linkAgeText(s, source, clocks.wall),
+    })),
+    vehicle: v && {
+      mode: v.mode,
+      battery: `${v.battery_pct}%`,
+      batteryLevel: batteryLevel(v),
+      speed: `${v.speed_mps.toFixed(1)} m/s`,
+      heading: `${v.heading_deg.toFixed(1)}°`,
+      position: positionText(v),
+      flags: v.flags.join(" · ") || "—",
+    },
   };
 }

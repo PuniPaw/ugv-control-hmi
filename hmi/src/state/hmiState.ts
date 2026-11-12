@@ -15,6 +15,9 @@ export const FRESHNESS_LIMIT_MS = 2000; // ICD 7장, REQ-HMI-006
 // "늦게 도착"이 이만큼 이어지면 연결을 다시 맺는다 → 기준선을 새로 잡는다 (시계 계단 변화·drift,
 // 비정상적으로 큰 ts 하나, HMI 처리 적체를 모두 같은 경로로 회복. ICD 7장)
 export const RESYNC_AFTER_MS = 5000;
+// 기준선 재설정 접속이 이보다 오래 걸리면(접속 제한 5초까지 가능) 그동안 빠진 표본이 GPS 무효 GPS_GAP_SAMPLES개
+// (10Hz 약 1초)만큼이므로 궤적을 끊는다. 짧으면 재설정 전후를 한 구간으로 잇는다
+export const RESYNC_TRACK_GAP_MS = 1000;
 
 export type LatLon = [number, number];
 
@@ -90,9 +93,14 @@ function appendPoint(track: LatLon[][], open: boolean, p: LatLon): LatLon[][] {
   return out;
 }
 
-/** IF-03 연결이 열렸을 때 (at: HMI 시계) */
-export function connectionOpened(s: HmiState, at: number): HmiState {
-  return { ...s, session: { openedAt: at, baseline: null, lastStats: null, lateSince: null } };
+/**
+ * IF-03 연결이 열렸을 때 (at: HMI 시계). resyncGapMs: 기준선 재설정 접속이었다면 재설정 시작부터 열릴 때까지
+ * 걸린 시간(단조 시계). RESYNC_TRACK_GAP_MS를 넘으면 그동안 표본이 빠졌으므로 궤적을 끊는다.
+ */
+export function connectionOpened(s: HmiState, at: number, resyncGapMs?: number): HmiState {
+  const session: Session = { openedAt: at, baseline: null, lastStats: null, lateSince: null };
+  const breakTrack = resyncGapMs !== undefined && resyncGapMs > RESYNC_TRACK_GAP_MS;
+  return { ...s, session, samplesSinceFix: breakTrack ? GPS_GAP_SAMPLES : s.samplesSinceFix };
 }
 
 /**
@@ -105,7 +113,8 @@ export function connectionLost(s: HmiState): HmiState {
 
 /**
  * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
- * 궤적은 끊지 않는다 (재접속 수 ms 동안 빠지는 표본은 GPS 무효 몇 표본처럼 이어 그린다).
+ * 여기서는 궤적을 끊지 않는다. 재접속이 RESYNC_TRACK_GAP_MS 안에 열리면 한 구간으로 잇고, 더 걸리면
+ * connectionOpened(…, resyncGapMs)가 끊는다.
  */
 export function resyncStarted(s: HmiState): HmiState {
   return { ...s, session: null };
@@ -120,7 +129,12 @@ function isLate(se: Session): boolean {
 function updateSession(se0: Session, m: If03Message, receivedAt: number): Session {
   const delay = receivedAt - m.ts;
   const baseline = se0.baseline === null ? delay : Math.min(se0.baseline, delay);
-  const se = { ...se0, baseline, lastStats: m.type === "stats" ? { receivedAt, gwTs: m.ts } : se0.lastStats };
+  if (m.type !== "stats") {
+    // stats가 아닌 메시지는 늦음 시작 시각을 정하지 않는다 (ICD 7장: "기준선보다 늦은 첫 stats부터").
+    // 기준선이 낮아져 이미 받은 stats가 늦은 것이 되면 freshness는 바로 STALE이지만, 재설정 시계는 다음 stats부터 잰다
+    return { ...se0, baseline };
+  }
+  const se = { ...se0, baseline, lastStats: { receivedAt, gwTs: m.ts } };
   return { ...se, lateSince: isLate(se) ? (se0.lateSince ?? receivedAt) : null };
 }
 

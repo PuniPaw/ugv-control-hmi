@@ -29,11 +29,10 @@ export interface Deps {
 }
 
 /** 연결 상태가 바뀔 때마다 하나. 상태마다 뜻이 있는 값만 가진다 */
+import type { ConnectAttempt, ConnectCause } from "../model/connection";
+
 export type ConnEvent =
-  // 접속 시도의 이유: 처음, 실패 뒤 재시도(failures: 마지막 OPEN 이후 연속 실패 횟수), 기준선 재설정
-  | { state: "CONNECTING"; cause: "first" }
-  | { state: "CONNECTING"; cause: "retry"; failures: number }
-  | { state: "CONNECTING"; cause: "resync" }
+  | ({ state: "CONNECTING" } & ConnectAttempt)
   | { state: "OPEN" }
   | { state: "WAITING_RETRY"; failures: number; retryInMs: number; reason: string }; // reason: "close 1006" 등
 
@@ -101,7 +100,7 @@ export class GwConnection {
     }
   }
 
-  private connect(cause: "first" | "retry" | "resync"): void {
+  private connect(cause: ConnectCause): void {
     this.handlers.onState(
       cause === "retry" ? { state: "CONNECTING", cause, failures: this.failures } : { state: "CONNECTING", cause },
     );

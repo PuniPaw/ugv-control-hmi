@@ -19,16 +19,12 @@ const controller = new HmiController(
     setTimer: (fn, ms) => window.setTimeout(fn, ms),
     clearTimer: (h) => window.clearTimeout(h as number),
   },
-  () => {
-    view.value = controller.view();
-    now.value = Date.now();
-  },
+  (v) => (view.value = v),
   (msg) => console.warn(msg),
 );
 
 // 매번 새 객체 → 깊은 반응성 대신 shallowRef로 통째 교체
 const view = shallowRef<View>(controller.view());
-const now = shallowRef(Date.now()); // 경과 시간 표시용 (view와 같은 시각)
 const state = computed(() => view.value.state);
 
 let clock = 0;
@@ -46,7 +42,7 @@ onBeforeUnmount(() => {
   <div class="layout">
     <ConnectionBanner class="banner" :level="view.banner.level" :text="view.banner.text" :gw-url="gwUrl" />
     <MapView class="map" :fix="state.fix" :fix-valid="view.fixValid" :track="state.track" :stale="view.stale.vehicle" />
-    <StatusPanel class="panel" :state="state" :now="now" :stale="view.stale" />
+    <StatusPanel class="panel" :view="view" />
   </div>
 </template>
 

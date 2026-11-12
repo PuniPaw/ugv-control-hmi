@@ -10,12 +10,12 @@ const props = defineProps<{ fix: Fix | null; fixValid: boolean; track: LatLon[][
 
 const el = ref<HTMLDivElement | null>(null);
 const follow = ref(true);
-// 시연 점검용: Leaflet 궤적 레이어에 실제로 들어 있는 점 수 (조각 이음점 포함, 렌더러와 무관)
-const drawnPoints = ref(0);
+// 시연 점검용: Leaflet 궤적 레이어에 실제로 들어 있는 점 수 (조각 이음점 포함, 렌더러와 무관).
+// 그릴 때마다 세지 않고, 개발 서버에서만 점검 스크립트가 부를 수 있게 둔다 (e2e/smoke.mjs)
 function countLayerPoints(): number {
   let n = 0;
   trackLayer?.eachLayer((l) => {
-    if (l instanceof L.Polyline) n += (l.getLatLngs() as L.LatLng[]).length;
+    if (l instanceof L.Polyline) n += l.getLatLngs().flat(2).length;
   });
   return n;
 }
@@ -34,6 +34,7 @@ onMounted(() => {
   if (tiles) L.tileLayer(tiles, { maxZoom: 19 }).addTo(map);
   trackLayer = L.layerGroup().addTo(map);
   map.on("dragstart", () => (follow.value = false)); // 운용자가 지도를 옮기면 따라가기를 끈다
+  if (import.meta.env.DEV) (window as unknown as { __ugvcTrackPoints?: () => number }).__ugvcTrackPoints = countLayerPoints;
 });
 
 onBeforeUnmount(() => map?.remove());
@@ -60,7 +61,6 @@ watch(
           break;
       }
     }
-    if (plan.ops.length > 0) drawnPoints.value = countLayerPoints();
   },
 );
 
@@ -90,7 +90,7 @@ function recenter() {
 
 <template>
   <div class="wrap">
-    <div ref="el" class="map-canvas" data-testid="map" :data-drawn-points="drawnPoints" :data-heading="fix?.heading_deg ?? ''"></div>
+    <div ref="el" class="map-canvas" data-testid="map" :data-heading="fix?.heading_deg ?? ''"></div>
     <div v-if="fix && !fixValid" class="note" data-testid="no-fix">위치 무효 · 마지막 유효 위치 표시 중</div>
     <button v-if="!follow" class="follow" @click="recenter">차량 따라가기</button>
   </div>

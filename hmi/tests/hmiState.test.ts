@@ -162,3 +162,15 @@ it("REQ_HMI_006 GW time converts to HMI time through the connection baseline", (
   expect(toLocalTime(s, 9_000)).toBe(4_020);
   expect(toLocalTime(initialState(), 9_000)).toBeNull();
 });
+
+it("REQ_HMI_006 the resync clock starts at the first late stats, not at a message that lowered the baseline", () => {
+  // 제때 온 stats 뒤 ts가 비정상적으로 큰 telemetry 하나 → 기준선이 크게 낮아져 이미 받은 stats가 늦은 것이 된다
+  let s = run([[stats(1000), 1050]], opened(1000));
+  s = run([[{ ...telemetry(0, 1, 1), ts: 1_000_000 }, 1100]], s);
+  expect(freshness(s, 1100)).toBe("STALE"); // 화면은 바로 지연
+  expect(s.session?.lateSince).toBeNull(); // 재설정 시계는 아직 시작하지 않음
+  s = run([[stats(2000), 2050]], s); // 다음 stats: 기준선보다 늦음 → 여기서부터
+  expect(s.session?.lateSince).toBe(2050);
+  expect(needsResync(s, 2050 + RESYNC_AFTER_MS - 1)).toBe(false);
+  expect(needsResync(s, 2050 + RESYNC_AFTER_MS)).toBe(true);
+});

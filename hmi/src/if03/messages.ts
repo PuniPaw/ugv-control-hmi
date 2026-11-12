@@ -171,7 +171,7 @@ function linkStatus(d: Obj): LinkStatusData | null {
   const { source, state, last_rx_ts } = d;
   if (!isSource(source) || !isLinkState(state)) return null;
   // last_rx_ts가 null인 것은 첫 패킷 전뿐이고, 그때 상태는 LOST다 (ICD 7.1)
-  if (last_rx_ts === null) return state === "LOST" ? { source, state, last_rx_ts } : null;
+  if (last_rx_ts === null) return state === "LOST" ? { source, state, last_rx_ts: null } : null;
   return isCount(last_rx_ts) ? { source, state, last_rx_ts } : null;
 }
 
