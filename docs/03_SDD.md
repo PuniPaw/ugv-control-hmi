@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.1.3 (초안) |
-| 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.3, UGVC-ICD-001 v0.4, UGVC-STP-001, ADR-001, ADR-002, ADR-003 |
+| 버전 | v0.2 (초안) |
+| 작성일 | 2026-11-12 |
+| 관련 문서 | UGVC-SRS-001 v0.3, UGVC-ICD-001 v0.4, UGVC-STP-001 v0.5, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -16,12 +16,13 @@
 | v0.1.1 | 2026-11-11 | 5장 출력 구조 변경: stdout·stderr 모두 `LineSink`(출력 전용 스레드)로. O_NONBLOCK 비동기 쓰기가 `2>&1`에서 stderr를 고장 내던 문제(interrogate 검증) 반영 |
 | v0.1.2 | 2026-11-11 | 링크 전이를 콜백(`ILinkTransitionSink`)이 아니라 반환값으로: `LinkMonitor`는 `LinkChange`를 반환하고, `Gateway`가 송신원을 붙여 모으면 `app`이 `take_transitions()`로 꺼낸다. `link`가 `ingress`를 몰라도 된다. 1Hz 상태 보고는 순수 함수 `if03::snapshot` |
 | v0.1.3 | 2026-11-11 | 5장 WebSocket(IF-03) 세션 구조와 IF-03 발행 경로 (ADR-003 구현, REQ-COM-008). 느린 HMI 연결 종료, 세션 상한, accept 재시도 (PR #16 리뷰). 지연 상한(ping/pong), 세션 상한 경쟁 조건 (PR #16 2차 리뷰). ping 응답 기한을 실제 2.0s로(idle_timeout = 4s), 종료 사유 기록 (3차 리뷰). 관련 문서 버전 갱신 |
+| v0.2 | 2026-11-12 | 8장 HMI 구조 신설 (뼈대: IF-03 수신, 상태 갱신, 재접속, 신선도, 지도·상태 패널). 미정 사항은 9장으로 |
 
 ---
 
 ## 1. 범위
 
-이 문서는 통신 게이트웨이(GW, C++17)의 내부 구조를 중심으로, 각 요구사항이 어느 모듈에서 어떻게 구현되는지 설명한다. SIM·DET(Python)는 공용 codec(`python/ugvc_proto`)과의 관계만 다룬다. HMI 설계는 HMI 뼈대 작업에서 새 장으로 추가한다.
+이 문서는 통신 게이트웨이(GW, C++17)의 내부 구조를 중심으로, 각 요구사항이 어느 모듈에서 어떻게 구현되는지 설명한다. SIM·DET(Python)는 공용 codec(`python/ugvc_proto`)과의 관계만 다룬다. HMI(Vue 3 + TypeScript)는 8장에서 다룬다.
 
 ## 2. 모듈 구조
 
@@ -175,12 +176,79 @@ sequenceDiagram
 | `IClock` 주입, `FakeClock::advance` | 0.499s / 0.500s 같은 경계값을 실제 대기 없이 시험 |
 | `testdata/vectors/*.json`을 C++·Python이 함께 읽음, 생성기는 표준 라이브러리만 사용 | 두 언어 구현이 같은 바이트를 만드는지, 구현과 독립된 기준으로 확인 (ADR-002) |
 | GW가 IF-03 JSON을 stdout에도 출력 | WebSocket 없이 통합 시험(pytest가 subprocess로 GW 실행) |
-| `tools/check_stp_tests.py` | STP의 테스트 이름이 실제 테스트와 어긋나면 실패 (RTM grep의 전제) |
+| `tools/check_stp_tests.py` | STP의 테스트 이름이 실제 테스트(C++·Python·HMI vitest)와 어긋나면 실패 (RTM grep의 전제) |
+| HMI: 소켓·타이머 주입, 순수 `apply`/`freshness` | 재접속 간격과 신선도 경계를 브라우저 없이 시험 (8.6) |
 
-## 8. 미정 사항
+## 8. HMI 구조
+
+### 8.1 모듈
+
+```mermaid
+flowchart LR
+    WS["WebSocket<br/>(브라우저)"] -->|텍스트 프레임| CONN["net/gwConnection<br/>GwConnection"]
+    CONN -->|문자열| PARSE["if03/messages<br/>parseIf03"]
+    PARSE -->|If03Message 또는 null| APP["App.vue"]
+    APP -->|"apply(state, msg, 수신 시각)"| STATE["state/hmiState<br/>HmiState (순수 함수)"]
+    STATE --> MAP["MapView<br/>(Leaflet)"]
+    STATE --> PANEL["StatusPanel"]
+    CONN -->|연결 상태| BANNER["ConnectionBanner"]
+    STATE -->|"freshness(state, now)"| BANNER
+```
+
+| 모듈 | 책임 | 요구사항 |
+|---|---|---|
+| `src/net/gwConnection.ts` | IF-03 접속과 재접속. 소켓과 타이머는 주입받는다 (`Deps`). 브라우저 WebSocket은 `browserSocket`이 `SocketLike`로 감싼다 | REQ-COM-008, ICD 7장 |
+| `src/if03/messages.ts` | IF-03 JSON을 판별 유니온 `If03Message`로 검증. 틀린 메시지와 모르는 type은 `null` | ICD 7.1 |
+| `src/state/hmiState.ts` | `apply()`: 메시지 하나를 반영한 새 상태. `freshness()`: GW 데이터 신선도 | REQ-HMI-001·002, TBD-04 |
+| `src/components/*.vue` | 그리기만 한다. 판정 로직을 두지 않는다 | REQ-HMI-001·002 |
+
+### 8.2 경계에서 한 번 검증
+
+GW가 보낸 JSON은 `parseIf03`에서만 검사한다. 통과한 메시지는 필드 형식이 보장된 타입이 되고, 상태·화면 코드는 다시 검사하지 않는다. 검사에 실패한 메시지는 버리고 `rejected`로 센다 (상태 패널 아래에 표시). 12월에 `cmd_result`를 다룰 때는 유니온에 변형을 추가한다. `apply()`의 `switch`는 모든 변형을 다루므로, 처리를 빠뜨리면 컴파일 오류(반환값 누락)가 난다.
+
+### 8.3 상태 갱신
+
+- `apply(state, msg, receivedAt)`는 새 객체를 반환한다 (이전 상태를 바꾸지 않음). `App.vue`는 이를 `shallowRef`에 통째로 넣는다. 10Hz 텔레메트리마다 깊은 반응성 추적을 하지 않기 위해서다.
+- 궤적은 최근 3000점(10Hz 약 5분)만 유지한다. 오래 운용해도 메모리와 그리기 비용이 늘지 않는다. 전체 궤적은 사후 재생(PostgreSQL 로그)에서 본다.
+- 링크 상태의 초기값은 GW와 같은 LOST다. 접속 직후 GW가 현재 link_status를 보내므로 곧 실제 값으로 바뀐다 (ICD 7장).
+
+### 8.4 재접속과 신선도 (ICD 7장의 HMI 의무)
+
+```mermaid
+stateDiagram-v2
+    [*] --> CONNECTING
+    CONNECTING --> OPEN: onopen (실패 횟수 0으로)
+    CONNECTING --> WAITING_RETRY: onclose
+    OPEN --> WAITING_RETRY: onclose (GW 종료, 뒤처져서 끊김 1006)
+    WAITING_RETRY --> CONNECTING: 1s, 2s, 4s, 5s, 5s… 후
+```
+
+- 연결 상태가 OPEN이 아니면 배너에 "GW 연결 끊김"과 다음 재접속까지 남은 대기 시간을 표시한다.
+- 신선도 `freshness(state, now)`:
+  - stats를 아직 받지 못함: WAITING
+  - 마지막 stats를 받은 지 2초가 넘었거나, 그 stats가 GW `ts`보다 2초 넘게 늦게 도착함: STALE ("GW 데이터 지연")
+  - 그 밖: FRESH
+- 판정은 메시지가 오지 않을 때도 해야 하므로, `App.vue`가 250ms마다 `now`를 갱신해 다시 계산한다.
+- OPEN이 아니거나 FRESH가 아니면 상태 패널을 흐리게 표시한다. 마지막 값이 현재 값이 아님을 운용자가 알게 하기 위해서다. 정식 경고(REQ-HMI-003·004)는 경고 체계 작업에서 이 판정을 입력으로 쓴다.
+
+### 8.5 지도
+
+- Leaflet. 타일 주소는 빌드 변수 `VITE_TILE_URL`로 받는다. 없으면 타일 없이 격자 배경만 그린다 (외부 인터넷 없이 동작. 오프라인 타일 제공은 REQ-HMI-005 고도화).
+- 차량은 `heading_deg`만큼 회전한 화살표로 그린다. 기본은 차량을 따라 지도를 옮기고, 운용자가 지도를 끌면 따라가기를 끈다 ("차량 따라가기" 버튼으로 다시 켬).
+
+### 8.6 시험
+
+| 대상 | 방법 |
+|---|---|
+| `parseIf03` | 실제 GW stdout에서 받은 IF-03 줄(`hmi/tests/fixtures/gw_if03_sample.jsonl`)을 그대로 넣어 본다. GW 출력 형식과 HMI 파서가 어긋나면 실패한다 |
+| `apply`, `freshness` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계를 대기 없이 시험 |
+| `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격 시험 |
+| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검 (STP 수준 D) |
+
+## 9. 미정 사항
 
 | 항목 | 정할 때 |
 |---|---|
-| HMI 구조(상태 관리, 영상·탐지 매칭 버퍼) | 11/24 주 HMI 뼈대 |
+| HMI 영상·탐지 매칭 버퍼 (ADR-001, frame_id, 0.5s) | 12월 3주 DET 연결 |
 | PostgreSQL 저장 방식(동기·비동기, 배치) | 12월 1–2주. 단일 스레드를 막지 않는 방식이어야 한다 (5장) |
 | REQ-HMI-004 2.0s 측정 구간과 방법 | HMI 경고 구현 주, STP에 추가 |

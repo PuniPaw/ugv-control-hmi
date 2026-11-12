@@ -3,6 +3,7 @@
 
 - C++: `Suite.REQ_...` 이름을 gtest 실행 파일의 --gtest_list_tests 출력과 비교
 - Python: `test_REQ_...` 이름을 python/ sim/ tests/ 의 def test_... 와 비교
+- TypeScript(HMI): `<파일>.test.ts > REQ_...` 이름을 hmi/tests/*.test.ts 의 it("...") 제목과 비교
 
 RTM(06)을 grep으로 만들 때 이름이 어긋나면 그 TC가 "시험 없음"으로 보이므로, 어긋나면 실패한다.
 
@@ -23,12 +24,13 @@ STP = Path(os.environ.get("UGVC_STP", ROOT / "docs" / "04_STP.md"))
 SRS = ROOT / "docs" / "01_SRS.md"
 
 
-def stp_names() -> tuple[set[str], set[str]]:
+def stp_names() -> tuple[set[str], set[str], set[str]]:
     text = STP.read_text(encoding="utf-8")
     cpp = set(re.findall(r"`([A-Za-z0-9]+\.REQ_[A-Za-z0-9_]+)`", text))
     py = set(re.findall(r"`(test_REQ_[A-Za-z0-9_]+)`", text))
     py |= set(re.findall(r"::(test_REQ_[A-Za-z0-9_]+)`", text))
-    return cpp, py
+    ts = set(re.findall(r"`(\w+\.test\.ts > REQ_[^`]+)`", text))
+    return cpp, py, ts
 
 
 def gtest_names(binary: str) -> set[str]:
@@ -50,6 +52,15 @@ def pytest_names() -> set[str]:
     return names
 
 
+def vitest_names() -> set[str]:
+    """hmi/tests/*.test.ts 의 it("제목") → "<파일> > 제목" (describe 이름은 넣지 않는다)"""
+    names = set()
+    for f in (ROOT / "hmi" / "tests").glob("*.test.ts"):
+        for title in re.findall(r"^\s*it\(\s*\"([^\"]+)\"", f.read_text(encoding="utf-8"), re.M):
+            names.add(f"{f.name} > {title}")
+    return names
+
+
 def srs_ids() -> set[str]:
     return set(re.findall(r"^\| (REQ-[A-Z]+-\d{3}) \|", SRS.read_text(encoding="utf-8"), re.M))
 
@@ -60,16 +71,16 @@ def req_id(test_name: str) -> str | None:
 
 
 def main() -> int:
-    cpp, py = stp_names()
-    code = gtest_names(sys.argv[1]) | pytest_names()
-    missing = sorted((cpp | py) - code)
+    cpp, py, ts = stp_names()
+    code = gtest_names(sys.argv[1]) | pytest_names() | vitest_names()
+    missing = sorted((cpp | py | ts) - code)
     for name in missing:
         print(f"STP에 있지만 코드에 없는 테스트: {name}")
     known = srs_ids()
     unknown = sorted(n for n in code if (rid := req_id(n)) and rid not in known)
     for name in unknown:
         print(f"SRS에 없는 REQ ID를 단 테스트: {name}")
-    print(f"STP 테스트 이름 {len(cpp) + len(py)}개 확인, 불일치 {len(missing)}개. "
+    print(f"STP 테스트 이름 {len(cpp) + len(py) + len(ts)}개 확인, 불일치 {len(missing)}개. "
           f"코드의 REQ 시험 {sum(1 for n in code if req_id(n))}개 중 SRS에 없는 ID {len(unknown)}개")
     return 1 if missing or unknown else 0
 

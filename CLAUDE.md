@@ -31,7 +31,7 @@
 - GW: C++17, CMake, Boost.Asio(UDP·타이머) + Boost.Beast(WebSocket, ADR-003), GoogleTest, cppcheck, libpq 또는 libpqxx
   - Boost는 시스템 패키지(`libboost-dev` 1.83+, 헤더 전용)를 `find_package(Boost CONFIG)`로 쓴다. 클라우드 환경 setup script가 설치한다
 - SIM/DET: Python 3, `struct.pack(">...")`로 직렬화
-- HMI: Vue 3 + TypeScript, Leaflet (고도화 단계에서 오프라인 타일)
+- HMI: Vue 3 + TypeScript, Vite, Leaflet (고도화 단계에서 오프라인 타일), vitest, 시연 점검은 Playwright(전역 설치 chromium)
 - 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/` + `python/`(ugvc_proto, SIM·DET 공용 codec), `testdata/vectors/`(C++·Python 공용 벡터), `tools/`
 - 테스트 벡터는 `tools/vectors/gen_vectors.py`가 표준 라이브러리만으로 생성한다 (우리 codec을 import하지 않음 → 독립 기준)
 - C++ 의존성(FetchContent, git): nlohmann/json v3.11.3(IF-03 JSON·벡터 로드), GoogleTest v1.15.2
@@ -77,8 +77,8 @@
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
 | 01_SRS.md (UGVC-SRS-001) | **v0.3** | 요구사항 31개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계) |
 | 02_ICD.md (UGVC-ICD-001) | **v0.4** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열) |
-| 03_SDD.md (UGVC-SDD-001) | **v0.1.3 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열), 명령 재전송 설계안. HMI는 HMI 뼈대 작업에서 추가 |
-| 04_STP.md (UGVC-STP-001) | **v0.4 초안** | TC-COM-001~008, TC-QUAL-001. TC-COM-005-08·007-02는 실제 GW 통합 시험. `tools/check_stp_tests.py`가 STP 이름과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
+| 03_SDD.md (UGVC-SDD-001) | **v0.2 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열), 명령 재전송 설계안. v0.2: 8장 HMI 구조(경계 파서, 순수 `apply`, 재접속·신선도) |
+| 04_STP.md (UGVC-STP-001) | **v0.5 초안** | TC-COM-001~008, TC-HMI-001·002, TC-QUAL-001. 수준 U/I/R + D(시연 점검, `hmi/e2e/smoke.mjs`). `tools/check_stp_tests.py`가 STP 이름(C++·Python·vitest)과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
 | 06_RTM.md | 미작성 | 스크립트로 생성 예정 |
 | adr/ADR-001 영상 전송 경로 분리 | **승인** | |
@@ -105,15 +105,16 @@
 | 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
 | 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 이어서 SRS·ICD v0.2, SDD 초안, ADR-003(PR #10), thermos·interrogate 검증과 출력 경로 수정·추적성 정리·구조 개편(PR #11~#13). 11/11 기준 일정보다 앞섬 |
-| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | WebSocket 중계 완료 (feat/ws-relay), HMI 뼈대 다음 |
+| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | WebSocket 중계 완료 (PR #16), HMI 뼈대 완료 (feat/hmi-skeleton) |
 | 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
 | 12월 4주 | README, 시연 영상, 포트폴리오 PDF, STR·RTM 정리 | |
 
 ## 6. 바로 다음 할 일
 
-1. HMI 뼈대: Vue 3 + TS + Leaflet, IF-03(`ws://127.0.0.1:8080/ws`) 수신, 지도(위치·궤적), 상태 패널(링크·유실률·배터리)
-2. SDD에 HMI 구조를 새 장으로 추가 (지금 8장은 미정 사항)
+1. 12월 1–2주 작업 당겨서 시작: COMMAND/ACK 재전송(SDD 6장 설계안), HEARTBEAT·Failsafe(SIM), REQ-CMD-006 REJECTED_INVALID
+2. HMI: 명령 패널, 경고 체계(REQ-HMI-003·004, 신선도 STALE를 경고 입력으로), 경로점 표시(REQ-HMI-001)
+3. 후속 이슈 #17, #18
 
 ---
 

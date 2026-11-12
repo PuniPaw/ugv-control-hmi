@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.4 (초안) |
+| 버전 | v0.5 (초안) |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, UGVC-ICD-001, ADR-002 |
 
@@ -15,6 +15,7 @@
 | v0.1 | 2026-11-10 | 최초 작성. 통신(COM), 품질(QUAL-001) 시험 케이스 |
 | v0.2 | 2026-11-10 | 검증 규칙 벡터(`validation.json`) 연결, TC-COM-002-11 케이스 보강(class_id, y·h 경계), TC-QUAL-001 체크리스트에 DETECTION·ACK·헤더 시험 반영 |
 | v0.3 | 2026-11-11 | 추적성 정리(thermos 리뷰): TC-COM-005-08·007-02를 실제 GW 통합 시험으로 바꿈(이전 단위 시험은 범용 `Periodic`이거나 HEARTBEAT와 링크가 연결되지 않은 동어반복). 5장 출력 막힘 규칙에 stderr·EPIPE 반영. `check_stp_tests.py`가 시험 이름의 REQ ID가 SRS에 있는지도 검사 |
+| v0.5 | 2026-11-12 | HMI 뼈대: TC-HMI-001-01~03, TC-HMI-002-01~03, TC-COM-008-16~20(HMI 쪽 IF-03 수신·재접속·신선도). 시험 수준에 vitest(U)와 시연 점검 D(`hmi/e2e/smoke.mjs`, Playwright) 추가. `check_stp_tests.py`가 vitest 이름도 검사 |
 | v0.4 | 2026-11-11 | TC-COM-008 (IF-03 WebSocket 중계) 추가. PR #16 리뷰 반영: 008-06 기대 결과(느린 HMI 연결 종료), 008-07~10 추가. 2차 리뷰 반영: 008-09 동시 접속, 008-11·12 지연 상한. 3차 리뷰 반영: 008-12 EOF로 측정, 008-13·14 ping 응답 기한 경계. 4차 리뷰 반영: 008-12 기대 3.5~4.5s, 008-09 정확히 8개, 008-15 핸드셰이크 전 자원 상한 |
 
 ---
@@ -31,7 +32,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | COM (REQ-COM-001~007) | ✅ | |
 | QUAL (REQ-QUAL-001) | ✅ | REQ-QUAL-002 (고도화) |
 | CMD, SAFE | | 12월 1–2주 (명령·Failsafe 구현 시) |
-| HMI, AI, LOG, PERF | | 11/24 주 이후 해당 기능 구현 시 |
+| HMI (REQ-HMI-001·002 뼈대) | v0.5 | 경로점(REQ-HMI-001), 지연 시간(REQ-HMI-002)은 해당 기능 구현 시 |
+| HMI-003~005, AI, LOG, PERF | | 해당 기능 구현 시 |
 
 ### 1.3 용어
 용어는 루트 `GLOSSARY.md`를 따른다. 특히 **스트림**(송신원 + msg_type), **유효 패킷**, **유실**, **역순 도착**, **유실률**의 정의에 주의한다.
@@ -44,8 +46,9 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 | 기호 | 수준 | 도구 | 대상 |
 |---|---|---|---|
-| U | 단위 | GoogleTest (C++), pytest (Python) | 직렬화, 검증 규칙, 링크 판정, seq·유실 처리. 시간 판정은 모두 가짜 시계로 시험 |
+| U | 단위 | GoogleTest (C++), pytest (Python), vitest (HMI TypeScript) | 직렬화, 검증 규칙, 링크 판정, seq·유실 처리, HMI 상태 갱신·재접속. 시간 판정은 모두 가짜 시계로 시험 |
 | I | 통합 | pytest + GW 실행 파일 | 실제 주기·처리량이 필요한 항목 (REQ-COM-001 처리량, REQ-COM-007 주기) |
+| D | 시연 점검 | `hmi/e2e/smoke.mjs` (Playwright chromium) + 실제 GW·SIM·HMI | 화면 표시 요구사항(SRS 검증 방법 D). 화면 요소를 자동으로 확인하고 화면을 캡처해 STR에 붙인다 |
 | R | 검사 | RTM 스크립트 출력 + 체크리스트 | REQ-QUAL-001 |
 
 ### 2.2 시계 주입
@@ -73,7 +76,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 ### 2.7 이름 규칙
 - TC ID: `TC-<영역>-<요구사항 번호>-<순번>` (예: `TC-COM-003-02`)
-- 테스트 이름: 요구사항 ID를 포함한다. 예: `TEST(LinkMonitor, REQ_COM_003_degraded_at_500ms)`, `def test_REQ_COM_001_10hz_no_loss()`
+- 테스트 이름: 요구사항 ID를 포함한다. 예: `TEST(LinkMonitor, REQ_COM_003_degraded_at_500ms)`, `def test_REQ_COM_001_10hz_no_loss()`, `it("REQ_HMI_001 track keeps ...")`
+- vitest 시험은 3장 표에 `<파일>.test.ts > <it 제목>`으로 적는다 (describe 이름은 넣지 않는다)
 - TC와 테스트는 1:1로 대응하며, 대응 관계는 3장 표의 "테스트" 열이 정본이다.
 
 ---
@@ -194,6 +198,16 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-008-14 | I | 같은 HMI가 5s 주기로만 답함 | 20s 안에 끊기고 stderr에 "ws close: lag limit" | `test_REQ_COM_008_hmi_answering_ping_late_is_closed` |
 | TC-COM-008-15 | I | 업그레이드 요청에 `Content-Length: 1000000` 본문을 붙인 연결 200개가 3초 동안 본문을 보냄, 이후 정상 HMI 접속 | GW RSS 증가 < 20MB, GW 계속 동작, 정상 HMI는 접속해 link_status를 받음 | `test_REQ_COM_008_pre_handshake_flood_bounded` |
 
+HMI 쪽 IF-03 수신 (ICD 7장의 HMI 의무: 재접속, 신선도 감시). U는 `hmi/tests/`, D는 `hmi/e2e/smoke.mjs`.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-COM-008-16 | D | 실제 GW·HMI 연결 중 GW 종료, 같은 포트로 GW 재시작 | 3s 안에 "GW 연결 끊김" 표시와 상태 패널 흐림, 재시작 후 8s 안에 "GW 연결됨" | `hmi/e2e/smoke.mjs` 4·5단계 |
+| TC-COM-008-17 | U | 가짜 소켓이 계속 접속 실패(close 1006) | 재접속 대기 1s, 2s, 4s, 5s, 5s | `gwConnection.test.ts > REQ_COM_008 retries with 1s, 2s, 4s, 5s, 5s while the GW is unreachable` |
+| TC-COM-008-18 | U | 실패 2회 후 접속 성공, 다시 끊김 | 다음 대기가 1s로 돌아감 | `gwConnection.test.ts > REQ_COM_008 resets the delay to 1s after a successful connection` |
+| TC-COM-008-19 | U | 신선도: stats 수신 전, 마지막 stats 후 2000ms·2001ms, GW `ts`보다 2001ms 늦게 도착 | WAITING, FRESH, STALE, STALE | `hmiState.test.ts > REQ_COM_008 WAITING before the first stats`, `hmiState.test.ts > REQ_COM_008 FRESH within 2s of the last stats, STALE after`, `hmiState.test.ts > REQ_COM_008 STALE when stats arrive more than 2s after the GW sent them` |
+| TC-COM-008-20 | U | 실제 GW stdout에서 받은 IF-03 줄(`hmi/tests/fixtures/gw_if03_sample.jsonl`)과 형식이 틀린 메시지를 파싱 | GW 출력은 모두 받아들이고, 틀린 메시지·모르는 type은 버림. 텍스트가 아닌 프레임은 무시 | `if03.test.ts > REQ_COM_008 accepts every message the real GW printed`, `if03.test.ts > REQ_COM_008 rejects malformed or unknown messages`, `gwConnection.test.ts > REQ_COM_008 passes text frames through and ignores binary` |
+
 ### 3.9 REQ-QUAL-001 직렬화·검증 규칙 단위 시험 (검사)
 
 | TC ID | 수준 | 내용 | 합격 기준 | 테스트 |
@@ -211,6 +225,26 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | DETECTION, ACK | TC-COM-002-01, 09, 11, 12, `Codec.REQ_QUAL_001_detection_matches_vectors`, `Codec.REQ_QUAL_001_ack_matches_vectors` |
 | 헤더·big-endian | `Frame.REQ_QUAL_001_*`, `Bytes.REQ_QUAL_001_*` |
 | COMMAND, HEARTBEAT (GW 송신) | TC-COM-007-01 (COMMAND 인코딩은 CMD TC에서 추가) |
+
+### 3.10 REQ-HMI-001 지도 표시 (위치, 진행 방향, 궤적)
+
+경로점 표시는 경로점 명령(12월 명령 작업, TBD-03)과 함께 TC를 추가한다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-HMI-001-01 | U | telemetry 2개 반영 | 현재 위치·방향은 마지막 값, 궤적은 두 점을 순서대로 | `hmiState.test.ts > REQ_HMI_001 telemetry updates position and appends to the track` |
+| TC-HMI-001-02 | U | telemetry 3005개 반영 | 궤적은 최근 3000점(10Hz 약 5분)만 유지 | `hmiState.test.ts > REQ_HMI_001 track keeps the latest TRACK_MAX_POINTS points` |
+| TC-HMI-001-03 | D | SIM 10Hz 송신 중 화면 확인 | 차량 표시(진행 방향 화살표) 1개, 궤적 끝이 5s 동안 움직임, 화면 캡처 | `hmi/e2e/smoke.mjs` 2단계 |
+
+### 3.11 REQ-HMI-002 상태 패널
+
+지연 시간 표시는 영상-탐지 종단 지연(TBD-01) 측정과 함께 TC를 추가한다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-HMI-002-01 | U | 초기 상태 | 두 송신원 모두 LOST (GW 초기값과 같음), 차량 정보 없음 | `hmiState.test.ts > REQ_HMI_002 starts with both links LOST like the GW` |
+| TC-HMI-002-02 | U | VEHICLE link_status(DEGRADED)와 stats 반영 | VEHICLE만 바뀌고 DETECTOR는 그대로, 유실률 반영 | `hmiState.test.ts > REQ_HMI_002 link_status and stats update per source` |
+| TC-HMI-002-03 | D | GW 접속 → SIM 송신 → SIM 중지 | 차량 링크 LOST → CONNECTED → (3s 안에) LOST, 모드·배터리 표시 | `hmi/e2e/smoke.mjs` 1~3단계 |
 
 ---
 
