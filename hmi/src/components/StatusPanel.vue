@@ -2,9 +2,9 @@
 // 상태 패널: 송신원별 링크 상태·10초 유실률, 차량 상태 (REQ-HMI-002). 문구와 판정은 state/view.ts의 present()가
 // 정하고 여기서는 그리기만 한다.
 import type { LinkState, Source } from "../if03/messages";
-import type { View } from "../app/hmiController";
+import type { Presented } from "../state/view";
 
-defineProps<{ view: View }>();
+defineProps<{ view: Presented }>();
 
 const SOURCE_LABEL: Record<Source, string> = { VEHICLE: "차량", DETECTOR: "탐지 노드" };
 const LINK_CLASS: Record<LinkState, string> = { CONNECTED: "ok", DEGRADED: "warn", LOST: "bad" };
@@ -37,8 +37,8 @@ const LINK_CLASS: Record<LinkState, string> = { CONNECTED: "ok", DEGRADED: "warn
       <p v-else class="sub">텔레메트리 수신 전</p>
     </section>
 
-    <section v-if="view.state.discarded > 0">
-      <p class="sub" data-testid="discarded">형식 오류로 폐기한 IF-03 메시지 {{ view.state.discarded }}개</p>
+    <section v-if="view.discarded > 0">
+      <p class="sub" data-testid="discarded">형식 오류로 폐기한 IF-03 메시지 {{ view.discarded }}개</p>
     </section>
   </aside>
 </template>

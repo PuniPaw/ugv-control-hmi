@@ -110,6 +110,7 @@ export interface Presented {
   fixValid: boolean;
   links: LinkRow[];
   vehicle: VehicleRows | null;
+  discarded: number; // 폐기한 IF-03 메시지 수 (0이면 표시 안 함)
 }
 
 /** 화면 판정을 한 번에, 같은 시각으로. 컴포넌트는 이 결과를 그리기만 한다 (App.vue와 시험이 같은 함수를 쓴다) */
@@ -136,5 +137,6 @@ export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented 
       position: positionText(v),
       flags: v.flags.join(" · ") || "—",
     },
+    discarded: s.discarded,
   };
 }

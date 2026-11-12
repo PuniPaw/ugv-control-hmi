@@ -9,6 +9,8 @@
 //
 // WebSocket과 타이머는 주입한다: 단위 시험은 가짜 소켓과 가짜 타이머로 확인한다.
 
+import type { ConnectAttempt } from "../model/connection";
+
 export const RETRY_DELAYS_MS = [1000, 2000, 4000] as const; // 1s부터 두 배씩
 export const MAX_RETRY_DELAY_MS = 5000; // 그 뒤로는 이 값 (ICD 7장 "최대 5초")
 export const CONNECT_TIMEOUT_MS = 5000;
@@ -29,8 +31,6 @@ export interface Deps {
 }
 
 /** 연결 상태가 바뀔 때마다 하나. 상태마다 뜻이 있는 값만 가진다 */
-import type { ConnectAttempt, ConnectCause } from "../model/connection";
-
 export type ConnEvent =
   | ({ state: "CONNECTING" } & ConnectAttempt)
   | { state: "OPEN" }
@@ -57,7 +57,7 @@ export class GwConnection {
     this.stop(); // 두 번 불러도 소켓은 하나
     this.stopped = false;
     this.failures = 0;
-    this.connect("first");
+    this.connect({ cause: "first" });
   }
 
   /** 기준선 재설정: 지금 연결을 버리고 곧바로 다시 접속한다 (실패로 세지 않음). 정지 상태면 아무것도 하지 않는다 */
@@ -65,7 +65,7 @@ export class GwConnection {
     if (this.stopped) return;
     this.disarm();
     this.dropSocket();
-    this.connect("resync");
+    this.connect({ cause: "resync" });
   }
 
   stop(): void {
@@ -100,10 +100,8 @@ export class GwConnection {
     }
   }
 
-  private connect(cause: ConnectCause): void {
-    this.handlers.onState(
-      cause === "retry" ? { state: "CONNECTING", cause, failures: this.failures } : { state: "CONNECTING", cause },
-    );
+  private connect(attempt: ConnectAttempt): void {
+    this.handlers.onState({ state: "CONNECTING", ...attempt });
     let s: SocketLike;
     try {
       s = this.deps.openSocket(this.url);
@@ -132,7 +130,7 @@ export class GwConnection {
     const delay = retryDelay(this.failures);
     this.failures += 1;
     this.handlers.onState({ state: "WAITING_RETRY", failures: this.failures, retryInMs: delay, reason });
-    this.arm(delay, () => this.connect("retry"));
+    this.arm(delay, () => this.connect({ cause: "retry", failures: this.failures }));
   }
 }
 

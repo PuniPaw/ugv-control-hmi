@@ -15,3 +15,8 @@ declare module "*.vue" {
   const component: DefineComponent<object, object, unknown>;
   export default component;
 }
+
+// 개발 서버 전용 시연 점검 훅 (components/MapView.vue, e2e/smoke.mjs)
+interface Window {
+  __ugvcTrackPoints?: () => number;
+}

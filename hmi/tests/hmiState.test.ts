@@ -174,3 +174,17 @@ it("REQ_HMI_006 the resync clock starts at the first late stats, not at a messag
   expect(needsResync(s, 2050 + RESYNC_AFTER_MS - 1)).toBe(false);
   expect(needsResync(s, 2050 + RESYNC_AFTER_MS)).toBe(true);
 });
+
+it("REQ_HMI_001 a gap of 10 or more telemetry seq numbers breaks the track, 9 does not", () => {
+  // seq로 센 받지 못한 표본은 GPS 무효 표본과 같이 센다 (유실, 기준선 재설정으로 버린 적체 등)
+  const keep = run([[telemetry(0, 1, 1), 0], [telemetry(10, 2, 2), 0]]); // seq 1~9: 9개 빠짐
+  expect(keep.track.length).toBe(1);
+  const cut = run([[telemetry(0, 1, 1), 0], [telemetry(11, 2, 2), 0]]); // seq 1~10: 10개 빠짐
+  expect(cut.track.length).toBe(2);
+  const mixed = run([[telemetry(0, 1, 1), 0], [telemetry(5, 0, 0, []), 0], [telemetry(11, 2, 2), 0]]); // 4 + 무효 1 + 5 = 10
+  expect(mixed.track.length).toBe(2);
+  const wrap = run([[telemetry(0xffff_fffe, 1, 1), 0], [telemetry(1, 2, 2), 0]]); // u32 순환: 2개 빠짐
+  expect(wrap.track.length).toBe(1);
+  const wrapGap = run([[telemetry(0xffff_fff0, 1, 1), 0], [telemetry(10, 2, 2), 0]]); // u32 순환: 25개 빠짐
+  expect(wrapGap.track.length).toBe(2);
+});

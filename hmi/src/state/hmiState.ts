@@ -8,16 +8,14 @@ export const TRACK_MAX_POINTS = 3000; // 10Hz 기준 약 5분
 // 상한을 넘으면 이만큼 더 지운다. 메모리 상한(도메인)과 함께, 앞쪽 삭제 횟수를 30초(10Hz)에 한 번으로 묶는다
 // (앞쪽 삭제는 지도에서 전체 다시 그리기가 된다, map/trackSync.ts)
 export const TRACK_TRIM_POINTS = 300;
-// GPS_VALID 없는 표본이 이만큼 이어져야 궤적을 끊는다 (10Hz 약 1초). 한두 표본 깜박임으로 끊으면
-// 점 하나짜리 구간만 남아 궤적이 그려지지 않는다
+// 마지막 유효 위치 뒤 이만큼 표본(10Hz 약 1초)이 위치 없이 지나면 궤적을 끊는다. 표본은 텔레메트리 seq로 센다:
+// GPS_VALID 없는 표본과 받지 못한 표본(seq가 건너뜀: 유실, 기준선 재설정으로 버린 적체·접속 시간 등)을 같이 센다.
+// 한두 표본 깜박임으로 끊으면 점 하나짜리 구간만 남아 궤적이 그려지지 않는다
 export const GPS_GAP_SAMPLES = 10;
 export const FRESHNESS_LIMIT_MS = 2000; // ICD 7장, REQ-HMI-006
 // "늦게 도착"이 이만큼 이어지면 연결을 다시 맺는다 → 기준선을 새로 잡는다 (시계 계단 변화·drift,
 // 비정상적으로 큰 ts 하나, HMI 처리 적체를 모두 같은 경로로 회복. ICD 7장)
 export const RESYNC_AFTER_MS = 5000;
-// 기준선 재설정 접속이 이보다 오래 걸리면(접속 제한 5초까지 가능) 그동안 빠진 표본이 GPS 무효 GPS_GAP_SAMPLES개
-// (10Hz 약 1초)만큼이므로 궤적을 끊는다. 짧으면 재설정 전후를 한 구간으로 잇는다
-export const RESYNC_TRACK_GAP_MS = 1000;
 
 export type LatLon = [number, number];
 
@@ -50,9 +48,10 @@ export interface HmiState {
   // 궤적: 끊긴 구간마다 따로 (연결 끊김, 차량 LOST, GPS 무효 GPS_GAP_SAMPLES개 뒤에는 새 구간). 오래된 것부터.
   // 계약(map/trackSync.ts가 의존): 점이 늘 때는 마지막 구간 배열만 새로 만들고 다른 구간·점 배열은 그대로 둔다
   track: LatLon[][];
-  // 마지막 유효 위치 뒤 GPS 무효 표본 수. GPS_GAP_SAMPLES 이상이면 다음 유효 위치는 새 구간이다
-  // (연결 끊김·차량 LOST·처음에는 GPS_GAP_SAMPLES로 둔다)
+  // 마지막 유효 위치 뒤 위치 없이 지난 표본 수(GPS 무효 + seq가 건너뛴 수, GPS_GAP_SAMPLES에서 멈춤).
+  // GPS_GAP_SAMPLES 이상이면 다음 유효 위치는 새 구간이다 (연결 끊김·차량 LOST·처음에는 GPS_GAP_SAMPLES)
   samplesSinceFix: number;
+  lastTelemetrySeq: number | null; // seq 간격을 재기 위한 직전 텔레메트리 seq
   session: Session | null; // IF-03 연결이 열려 있을 때만
   discarded: number; // 형식·범위가 ICD와 달라 폐기한 IF-03 메시지 수 (누계, GLOSSARY "폐기")
 }
@@ -68,6 +67,7 @@ export function initialState(): HmiState {
     fix: null,
     track: [],
     samplesSinceFix: GPS_GAP_SAMPLES,
+    lastTelemetrySeq: null,
     session: null,
     discarded: 0,
   };
@@ -93,14 +93,9 @@ function appendPoint(track: LatLon[][], open: boolean, p: LatLon): LatLon[][] {
   return out;
 }
 
-/**
- * IF-03 연결이 열렸을 때 (at: HMI 시계). resyncGapMs: 기준선 재설정 접속이었다면 재설정 시작부터 열릴 때까지
- * 걸린 시간(단조 시계). RESYNC_TRACK_GAP_MS를 넘으면 그동안 표본이 빠졌으므로 궤적을 끊는다.
- */
-export function connectionOpened(s: HmiState, at: number, resyncGapMs?: number): HmiState {
-  const session: Session = { openedAt: at, baseline: null, lastStats: null, lateSince: null };
-  const breakTrack = resyncGapMs !== undefined && resyncGapMs > RESYNC_TRACK_GAP_MS;
-  return { ...s, session, samplesSinceFix: breakTrack ? GPS_GAP_SAMPLES : s.samplesSinceFix };
+/** IF-03 연결이 열렸을 때 (at: HMI 시계) */
+export function connectionOpened(s: HmiState, at: number): HmiState {
+  return { ...s, session: { openedAt: at, baseline: null, lastStats: null, lateSince: null } };
 }
 
 /**
@@ -113,8 +108,8 @@ export function connectionLost(s: HmiState): HmiState {
 
 /**
  * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
- * 여기서는 궤적을 끊지 않는다. 재접속이 RESYNC_TRACK_GAP_MS 안에 열리면 한 구간으로 잇고, 더 걸리면
- * connectionOpened(…, resyncGapMs)가 끊는다.
+ * 여기서는 궤적을 끊지 않는다. 재설정 동안 버린 적체·접속 시간만큼 텔레메트리 seq가 건너뛰므로,
+ * 그 간격이 GPS_GAP_SAMPLES 이상이면 다음 유효 위치에서 apply()가 끊는다.
  */
 export function resyncStarted(s: HmiState): HmiState {
   return { ...s, session: null };
@@ -144,16 +139,20 @@ export function apply(s0: HmiState, m: If03Message, receivedAt: number): HmiStat
   switch (m.type) {
     case "telemetry": {
       const v = m.data;
+      // 받지 못한 표본 수: seq 차이 − 1 (u32 순환. GW가 역순은 폐기하므로 차이는 1 이상, SIM 재시작 등은 큰 값)
+      const missed = s.lastTelemetrySeq === null ? 0 : ((v.seq - s.lastTelemetrySeq) >>> 0) - 1;
+      const since = Math.min(s.samplesSinceFix + Math.max(missed, 0), GPS_GAP_SAMPLES);
       if (!gpsValid(v)) {
-        // 위치·궤적은 그대로. 무효가 GPS_GAP_SAMPLES개 이어지면 다음 유효 위치는 새 구간
-        return { ...s, vehicle: v, samplesSinceFix: Math.min(s.samplesSinceFix + 1, GPS_GAP_SAMPLES) };
+        // 위치·궤적은 그대로. 위치 없는 표본이 GPS_GAP_SAMPLES개 쌓이면 다음 유효 위치는 새 구간
+        return { ...s, vehicle: v, lastTelemetrySeq: v.seq, samplesSinceFix: Math.min(since + 1, GPS_GAP_SAMPLES) };
       }
       return {
         ...s,
         vehicle: v,
         fix: { lat: v.lat, lon: v.lon, heading_deg: v.heading_deg },
-        track: appendPoint(s.track, s.samplesSinceFix < GPS_GAP_SAMPLES, [v.lat, v.lon]),
+        track: appendPoint(s.track, since < GPS_GAP_SAMPLES, [v.lat, v.lon]),
         samplesSinceFix: 0,
+        lastTelemetrySeq: v.seq,
       };
     }
     case "link_status": {

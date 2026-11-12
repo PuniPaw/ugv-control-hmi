@@ -11,7 +11,7 @@ import { present, type ConnView, type Presented } from "../state/view";
 
 export interface ControllerDeps extends Deps {
   now(): number; // HMI 벽시계 (ms): 메시지 수신 시각, 신선도
-  monotonic(): number; // 단조 시계 (ms): 재접속 카운트다운, 재설정 접속 시간
+  monotonic(): number; // 단조 시계 (ms): 재접속 카운트다운
 }
 
 export type View = { state: HmiState; conn: ConnView } & Presented;
@@ -19,7 +19,6 @@ export type View = { state: HmiState; conn: ConnView } & Presented;
 export class HmiController {
   private state: HmiState = initialState();
   private conn: ConnView = { state: "CONNECTING", cause: "first" };
-  private resyncStartedAtMono: number | null = null; // 기준선 재설정 접속을 시작한 시각
   private readonly connection: GwConnection;
 
   constructor(
@@ -66,24 +65,20 @@ export class HmiController {
   private onState(ev: ConnEvent): void {
     switch (ev.state) {
       case "OPEN": {
-        const gap = this.resyncStartedAtMono === null ? undefined : this.deps.monotonic() - this.resyncStartedAtMono;
-        this.state = connectionOpened(this.state, this.deps.now(), gap);
+        this.state = connectionOpened(this.state, this.deps.now());
         this.conn = ev;
-        this.resyncStartedAtMono = null;
         break;
       }
       case "WAITING_RETRY":
         this.log(`IF-03 연결 끊김 (${ev.reason}), ${ev.retryInMs}ms 후 재접속`);
         this.state = connectionLost(this.state);
         this.conn = { state: ev.state, failures: ev.failures, retryAtMono: this.deps.monotonic() + ev.retryInMs };
-        this.resyncStartedAtMono = null;
         break;
       case "CONNECTING":
         switch (ev.cause) {
           case "resync":
-            // 재설정은 연결 끊김이 아니다: 연결 범위만 버리고 궤적은 열릴 때 걸린 시간을 보고 정한다
+            // 재설정은 연결 끊김이 아니다: 연결 범위만 버린다 (궤적은 텔레메트리 seq 간격으로 apply()가 정한다)
             this.state = resyncStarted(this.state);
-            this.resyncStartedAtMono = this.deps.monotonic();
             break;
           case "first":
           case "retry":

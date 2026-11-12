@@ -34,10 +34,13 @@ onMounted(() => {
   if (tiles) L.tileLayer(tiles, { maxZoom: 19 }).addTo(map);
   trackLayer = L.layerGroup().addTo(map);
   map.on("dragstart", () => (follow.value = false)); // 운용자가 지도를 옮기면 따라가기를 끈다
-  if (import.meta.env.DEV) (window as unknown as { __ugvcTrackPoints?: () => number }).__ugvcTrackPoints = countLayerPoints;
+  if (import.meta.env.DEV) window.__ugvcTrackPoints = countLayerPoints;
 });
 
-onBeforeUnmount(() => map?.remove());
+onBeforeUnmount(() => {
+  if (import.meta.env.DEV && window.__ugvcTrackPoints === countLayerPoints) delete window.__ugvcTrackPoints;
+  map?.remove();
+});
 
 // 구간마다 따로 그린다 (끊긴 곳을 직선으로 잇지 않음). 무엇을 그릴지는 trackSync.planDraw가 정하고 여기서는 실행만
 watch(
