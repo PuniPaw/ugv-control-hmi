@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import GATEWAY_BIN, REPO, free_udp_port
+from conftest import GATEWAY_BIN, GW_TEST_ARGS, REPO, free_udp_port
 from ugvc_proto.frame import MsgType, encode_frame
 
 from ugvc_sim.telemetry_sender import START
@@ -28,7 +28,7 @@ def test_REQ_COM_007_heartbeat_continues_when_stdout_reader_stalls():
     hb = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     hb.bind(("127.0.0.1", sp))
     hb.setblocking(False)
-    proc = subprocess.Popen([str(GATEWAY_BIN), "--vehicle-port", str(vp), "--detector-port", str(dp),
+    proc = subprocess.Popen([str(GATEWAY_BIN), *GW_TEST_ARGS, "--vehicle-port", str(vp), "--detector-port", str(dp),
                              "--sim-port", str(sp)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     # DETECTION 32객체 한 줄 ≈ 2.5KB × 30Hz: 1~2초 안에 파이프(64KB)가 찬다
     objects = b"".join(bytes.fromhex("00138800010001000a000a") for _ in range(32))
@@ -76,7 +76,7 @@ def test_cli_sim_host_accepts_hostname():
     hb = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     hb.bind(("127.0.0.1", sp))
     hb.settimeout(3.0)
-    proc = subprocess.Popen([str(GATEWAY_BIN), "--vehicle-port", str(free_udp_port()), "--detector-port",
+    proc = subprocess.Popen([str(GATEWAY_BIN), *GW_TEST_ARGS, "--vehicle-port", str(free_udp_port()), "--detector-port",
                              str(free_udp_port()), "--sim-host", "localhost", "--sim-port", str(sp)],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -126,7 +126,7 @@ def _full_pipe() -> tuple[int, int]:
 
 def _spawn(ports, stdout, stderr):
     vp, dp, sp = ports
-    return subprocess.Popen([str(GATEWAY_BIN), "--vehicle-port", str(vp), "--detector-port", str(dp),
+    return subprocess.Popen([str(GATEWAY_BIN), *GW_TEST_ARGS, "--vehicle-port", str(vp), "--detector-port", str(dp),
                              "--sim-port", str(sp)], stdout=stdout, stderr=stderr)
 
 

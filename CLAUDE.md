@@ -29,12 +29,13 @@
 
 ### 기술 스택 (확정)
 - GW: C++17, CMake, Boost.Asio(UDP·타이머) + Boost.Beast(WebSocket, ADR-003), GoogleTest, cppcheck, libpq 또는 libpqxx
-  - 현재 코드는 standalone Asio. IF-03 중계 PR에서 Boost.Asio로 전환하고 standalone Asio FetchContent를 삭제한다 (`libboost-dev` 1.83 필요, ADR-003)
+  - Boost는 시스템 패키지(`libboost-dev` 1.83+, 헤더 전용)를 `find_package(Boost CONFIG)`로 쓴다. 클라우드 환경 setup script가 설치한다
 - SIM/DET: Python 3, `struct.pack(">...")`로 직렬화
 - HMI: Vue 3 + TypeScript, Leaflet (고도화 단계에서 오프라인 타일)
 - 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/` + `python/`(ugvc_proto, SIM·DET 공용 codec), `testdata/vectors/`(C++·Python 공용 벡터), `tools/`
 - 테스트 벡터는 `tools/vectors/gen_vectors.py`가 표준 라이브러리만으로 생성한다 (우리 codec을 import하지 않음 → 독립 기준)
-- C++ 의존성(FetchContent, git): standalone Asio 1.30.2, nlohmann/json v3.11.3(IF-03 JSON·벡터 로드), GoogleTest v1.15.2
+- C++ 의존성(FetchContent, git): nlohmann/json v3.11.3(IF-03 JSON·벡터 로드), GoogleTest v1.15.2
+- 통합 시험 Python 의존성: pytest, websockets
 - 통합 시험: `tests/integration/` (pytest가 GW를 subprocess로 실행)
 
 ---
@@ -74,10 +75,10 @@
 | 문서 | 상태 | 비고 |
 |---|---|---|
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
-| 01_SRS.md (UGVC-SRS-001) | **v0.2** | 요구사항 30개. REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화 |
-| 02_ICD.md (UGVC-ICD-001) | **v0.3** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의 |
-| 03_SDD.md (UGVC-SDD-001) | **v0.1.2 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, 명령 재전송 설계안. HMI는 11/24 주 추가 |
-| 04_STP.md (UGVC-STP-001) | **v0.3 초안** | TC-COM-001~007, TC-QUAL-001. TC-COM-005-08·007-02는 실제 GW 통합 시험. `tools/check_stp_tests.py`가 STP 이름과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
+| 01_SRS.md (UGVC-SRS-001) | **v0.3** | 요구사항 31개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계) |
+| 02_ICD.md (UGVC-ICD-001) | **v0.4** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열) |
+| 03_SDD.md (UGVC-SDD-001) | **v0.1.3 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열), 명령 재전송 설계안. HMI는 HMI 뼈대 작업에서 추가 |
+| 04_STP.md (UGVC-STP-001) | **v0.4 초안** | TC-COM-001~008, TC-QUAL-001. TC-COM-005-08·007-02는 실제 GW 통합 시험. `tools/check_stp_tests.py`가 STP 이름과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
 | 06_RTM.md | 미작성 | 스크립트로 생성 예정 |
 | adr/ADR-001 영상 전송 경로 분리 | **승인** | |
@@ -93,6 +94,7 @@
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)
 - TBD-02: class_id 목록 (부트캠프 모델 확정 시, 현재 PERSON/VEHICLE/ARMORED_VEHICLE/UNKNOWN)
 - TBD-03: 다중 경로점 일괄 전송 메시지 (고도화)
+- TBD-04: HMI 화면 처리 지연을 GW가 감지할 방법. 지금은 HMI가 IF-03 `ts`로 신선도를 감시 (ICD 7장, HMI 경고 체계에서 구현)
 
 ---
 
@@ -103,16 +105,15 @@
 | 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
 | 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 이어서 SRS·ICD v0.2, SDD 초안, ADR-003(PR #10), thermos·interrogate 검증과 출력 경로 수정·추적성 정리·구조 개편(PR #11~#13). 11/11 기준 일정보다 앞섬 |
-| **11/24–11/30 (다음)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | 당겨서 시작 가능 |
+| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | WebSocket 중계 완료 (feat/ws-relay), HMI 뼈대 다음 |
 | 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
 | 12월 4주 | README, 시연 영상, 포트폴리오 PDF, STR·RTM 정리 | |
 
 ## 6. 바로 다음 할 일
 
-1. IF-03 WebSocket 중계 (ADR-003): GW Asio를 Boost.Asio로 전환 → Beast 세션(쓰기 대기열 상한) → stdout `LineSink`와 함께 같은 메시지 발행. 클라우드 환경 setup script에 `libboost-dev` 추가
-2. HMI 뼈대: Vue 3 + TS + Leaflet, IF-03 수신, 지도(위치·궤적), 상태 패널(링크·유실률·배터리)
-3. SDD 5장에 WebSocket 세션 구조 추가, HMI 구조는 새 장으로 추가 (지금 8장은 미정 사항)
+1. HMI 뼈대: Vue 3 + TS + Leaflet, IF-03(`ws://127.0.0.1:8080/ws`) 수신, 지도(위치·궤적), 상태 패널(링크·유실률·배터리)
+2. SDD에 HMI 구조를 새 장으로 추가 (지금 8장은 미정 사항)
 
 ---
 

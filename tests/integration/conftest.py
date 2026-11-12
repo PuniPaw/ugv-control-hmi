@@ -1,6 +1,7 @@
 import json
 import os
 import queue
+import re
 import socket
 import subprocess
 import threading
@@ -12,6 +13,15 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 GATEWAY_BIN = Path(os.environ.get("UGVC_GATEWAY_BIN", REPO / "gateway" / "build" / "ugvc_gateway"))
+# IF-03 WebSocket은 OS가 고른 빈 포트로 연다 (기본 8080은 시험끼리·개발 중인 GW와 충돌한다).
+# 실제 포트는 시작 메시지 "IF-03 ws://127.0.0.1:<port>/ws"에서 읽는다.
+GW_TEST_ARGS = ["--ws-port", "0"]
+
+
+def ws_port_from_banner(line: str) -> int:
+    m = re.search(r"ws://[^:]+:(\d+)/ws", line)
+    assert m, f"no IF-03 port in banner: {line!r}"
+    return int(m.group(1))
 
 
 def pytest_configure(config):
@@ -36,6 +46,8 @@ class GatewayProc:
     vehicle_port: int
     detector_port: int
     sim_port: int
+    ws_port: int = 0
+    stderr_lines: list = field(default_factory=list)  # 진단 줄 (fixture가 계속 읽어 모은다)
     _q: "queue.Queue[dict]" = field(default_factory=queue.Queue)
 
     def start_pump(self) -> None:
@@ -73,13 +85,14 @@ def gateway():
     ports = [free_udp_port() for _ in range(3)]
     proc = subprocess.Popen(
         [str(GATEWAY_BIN), "--vehicle-port", str(ports[0]), "--detector-port", str(ports[1]),
-         "--sim-port", str(ports[2])],
+         "--sim-port", str(ports[2]), *GW_TEST_ARGS],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     line = proc.stderr.readline()
     assert "ugvc_gateway" in line, line
-    # stderr도 계속 비운다: 쌓여서 파이프가 차면 GW의 stderr 쓰기가 블록된다
-    threading.Thread(target=lambda: [None for _ in proc.stderr], daemon=True).start()
-    gw = GatewayProc(proc, *ports)
+    ws_port = ws_port_from_banner(line)
+    gw = GatewayProc(proc, *ports, ws_port=ws_port)
+    # stderr도 계속 비운다: 쌓여서 파이프가 차면 GW의 stderr 쓰기가 블록된다. 시험이 볼 수 있게 모아 둔다
+    threading.Thread(target=lambda: gw.stderr_lines.extend(proc.stderr), daemon=True).start()
     gw.start_pump()
     yield gw
     proc.terminate()

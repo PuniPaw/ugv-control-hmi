@@ -35,21 +35,15 @@ FetchContent_Declare(
   GIT_TAG        v3.11.3
   GIT_SHALLOW    TRUE
 )
-# standalone Asio (헤더 전용, CMake 없음 → 소스만 받아 include 경로로 사용)
-FetchContent_Declare(
-  asio
-  GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-  GIT_TAG        asio-1-30-2
-  GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(nlohmann_json asio)
+FetchContent_MakeAvailable(nlohmann_json)
 
+# Boost.Asio(UDP·타이머)와 Boost.Beast(WebSocket, ADR-003). 헤더 전용 부분만 쓴다.
+# 시스템 패키지(Ubuntu: libboost-dev)로 설치한다. Boost 전체를 FetchContent로 받으면 빌드가 너무 길다.
 find_package(Threads REQUIRED)
+find_package(Boost 1.83 REQUIRED CONFIG)
 add_library(ugvc_asio INTERFACE)
-# SYSTEM: 외부 헤더의 경고는 -Werror 대상에서 제외
-target_include_directories(ugvc_asio SYSTEM INTERFACE ${asio_SOURCE_DIR}/asio/include)
-target_compile_definitions(ugvc_asio INTERFACE ASIO_STANDALONE ASIO_NO_DEPRECATED)
-target_link_libraries(ugvc_asio INTERFACE Threads::Threads)
+target_link_libraries(ugvc_asio INTERFACE Boost::headers Threads::Threads)
+target_compile_definitions(ugvc_asio INTERFACE BOOST_ASIO_NO_DEPRECATED)
 
 # ingress: 수신 검증 규칙 ①~⑨, 원인별 계수 (ICD 9장)
 add_library(ugvc_ingress
@@ -67,10 +61,10 @@ target_include_directories(ugvc_gateway_core PUBLIC include)
 target_link_libraries(ugvc_gateway_core PUBLIC ugvc_ingress nlohmann_json::nlohmann_json PRIVATE ugvc_warnings)
 
 # GW 실행 파일: 소켓·타이머만 담당
-# app_io: 출력 전용 스레드가 쓰는 줄 단위 출력(LineSink). io 스레드를 막지 않는다
-add_library(ugvc_app_io src/app/line_sink.cpp)
+# app_io: io 스레드를 막지 않는 출력 — 줄 단위 stdout·stderr(LineSink, 전용 쓰기 스레드)와 IF-03 WebSocket 서버(WsServer)
+add_library(ugvc_app_io src/app/line_sink.cpp src/app/ws_server.cpp)
 target_include_directories(ugvc_app_io PUBLIC src/app)
-target_link_libraries(ugvc_app_io PUBLIC Threads::Threads PRIVATE ugvc_warnings)
+target_link_libraries(ugvc_app_io PUBLIC ugvc_asio Threads::Threads PRIVATE ugvc_warnings)
 
 add_executable(ugvc_gateway src/app/main.cpp)
 target_link_libraries(ugvc_gateway PRIVATE ugvc_gateway_core ugvc_app_io ugvc_asio ugvc_warnings)
