@@ -1,39 +1,44 @@
 // 화면 표시 정책 (순수 함수). 컴포넌트는 이 결과를 그리기만 한다.
 
 import type { Source, StatsData, TelemetryData } from "../if03/messages";
-import type { ConnEvent } from "../net/gwConnection";
-import { gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
+import { freshness, gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
 
 export type Level = "ok" | "warn" | "bad";
 
-/** 화면용 연결 상태. ConnEvent와 같지만 재접속 대기는 남은 시간 대신 예정 시각(HMI 시계)을 가진다 */
+/**
+ * 화면용 연결 상태. 재접속 대기는 남은 시간 대신 예정 시각을 가진다. 예정 시각은 **단조 시계**(벽시계가
+ * 바뀌어도 흔들리지 않음) 기준이다: 실제 재시도 타이머도 경과 시간으로 동작하기 때문이다.
+ */
 export type ConnView =
-  | { state: "CONNECTING"; failures: number; resync: boolean } // failures 0이면 첫 시도
+  | { state: "CONNECTING"; cause: "first" | "resync" }
+  | { state: "CONNECTING"; cause: "retry"; failures: number }
   | { state: "OPEN" }
-  | { state: "WAITING_RETRY"; failures: number; retryAt: number };
+  | { state: "WAITING_RETRY"; failures: number; retryAtMono: number };
 
-/** 연결 이벤트 → 화면용 연결 상태 (now: 이벤트를 받은 HMI 시각) */
-export function toConnView(ev: ConnEvent, now: number): ConnView {
-  switch (ev.state) {
-    case "CONNECTING":
-    case "OPEN":
-      return ev;
-    case "WAITING_RETRY":
-      return { state: ev.state, failures: ev.failures, retryAt: now + ev.retryInMs };
+export interface Clocks {
+  wall: number; // HMI 벽시계 ms (GW ts·기준선과 비교)
+  mono: number; // 단조 시계 ms (재접속 카운트다운)
+}
+
+function connectingBanner(cause: "first" | "retry" | "resync"): { level: Level; text: string } {
+  switch (cause) {
+    case "first":
+      return { level: "warn", text: "GW 접속 중" };
+    case "retry":
+      return { level: "bad", text: "GW 연결 끊김 · 재접속 중" };
+    case "resync":
+      // 기준선 재설정은 IF-03 연결 끊김이 아니다 (GLOSSARY): 데이터 지연의 회복 과정으로 표시
+      return { level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중" };
   }
 }
 
 /** 상단 배너 (ICD 7장, REQ-HMI-006) */
-export function banner(conn: ConnView, fresh: Freshness, now: number): { level: Level; text: string } {
+export function banner(conn: ConnView, fresh: Freshness, monoNow: number): { level: Level; text: string } {
   switch (conn.state) {
     case "CONNECTING":
-      // 기준선 재설정은 IF-03 연결 끊김이 아니다 (GLOSSARY): 데이터 지연의 회복 과정으로 표시
-      if (conn.resync) return { level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중" };
-      return conn.failures === 0
-        ? { level: "warn", text: "GW 접속 중" }
-        : { level: "bad", text: "GW 연결 끊김 · 재접속 중" };
+      return connectingBanner(conn.cause);
     case "WAITING_RETRY": {
-      const sec = Math.max(0, Math.ceil((conn.retryAt - now) / 1000));
+      const sec = Math.max(0, Math.ceil((conn.retryAtMono - monoNow) / 1000));
       return { level: "bad", text: `GW 연결 끊김 · ${sec}초 후 재접속` };
     }
     case "OPEN":
@@ -73,4 +78,22 @@ export function batteryLevel(v: TelemetryData): Level {
 
 export function positionText(v: TelemetryData): string {
   return gpsValid(v) ? `${v.lat.toFixed(6)}, ${v.lon.toFixed(6)}` : "위치 무효 (GPS_VALID 없음)";
+}
+
+export interface Presented {
+  fresh: Freshness;
+  banner: { level: Level; text: string };
+  stale: { all: boolean; vehicle: boolean };
+  fixValid: boolean;
+}
+
+/** 화면 판정을 한 번에, 같은 시각으로 (App.vue와 시험이 같은 함수를 쓴다) */
+export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented {
+  const fresh = freshness(s, clocks.wall);
+  return {
+    fresh,
+    banner: banner(conn, fresh, clocks.mono),
+    stale: staleness(s, conn, fresh),
+    fixValid: s.vehicle !== null && gpsValid(s.vehicle),
+  };
 }

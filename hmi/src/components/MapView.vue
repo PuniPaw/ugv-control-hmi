@@ -10,8 +10,15 @@ const props = defineProps<{ fix: Fix | null; fixValid: boolean; track: LatLon[][
 
 const el = ref<HTMLDivElement | null>(null);
 const follow = ref(true);
-// 시연 점검용: 실제로 실행한 그리기 연산으로 센 지도 위 점 수 (조각 이음점 포함, 렌더러와 무관)
+// 시연 점검용: Leaflet 궤적 레이어에 실제로 들어 있는 점 수 (조각 이음점 포함, 렌더러와 무관)
 const drawnPoints = ref(0);
+function countLayerPoints(): number {
+  let n = 0;
+  trackLayer?.eachLayer((l) => {
+    if (l instanceof L.Polyline) n += (l.getLatLngs() as L.LatLng[]).length;
+  });
+  return n;
+}
 let map: L.Map | null = null;
 let marker: L.Marker | null = null;
 let trackLayer: L.LayerGroup | null = null;
@@ -43,19 +50,17 @@ watch(
         case "clear":
           trackLayer.clearLayers();
           lastLine = null;
-          drawnPoints.value = 0;
           break;
         case "newLine":
           lastLine = L.polyline(op.points, LINE_STYLE).addTo(trackLayer);
-          drawnPoints.value += op.points.length;
           break;
         case "extend":
           if (!lastLine) throw new Error("trackSync: extend without a line"); // 계획과 실행이 어긋남 (결함)
           lastLine.addLatLng(op.point);
-          drawnPoints.value += 1;
           break;
       }
     }
+    if (plan.ops.length > 0) drawnPoints.value = countLayerPoints();
   },
 );
 

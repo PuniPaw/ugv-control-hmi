@@ -73,6 +73,9 @@ it("REQ_HMI_007 rejects values outside the ICD ranges and enums", () => {
     detection({ objects: Array.from({ length: 33 }, () => obj({})) }),
     detection({ objects: [obj({ class: "BANANA" })] }),
     detection({ objects: [obj({ conf: 1.01 })] }),
+    detection({ capture_ts: 1e300 }),
+    detection({ capture_ts: 2 ** 70 }),
+    '{"type":"link_status","ts":1,"data":{"source":"VEHICLE","state":"CONNECTED","last_rx_ts":null}}',
   ]) {
     expect(parseIf03(bad), bad).toBeNull();
   }
@@ -81,7 +84,9 @@ it("REQ_HMI_007 rejects values outside the ICD ranges and enums", () => {
     telemetry({ heading_deg: 359.99, speed_mps: 30, battery_pct: 100, seq: 2 ** 32 - 1 }),
     detection({ objects: [obj({ x: 600, w: 40 }), obj({ y: 479, h: 1 })] }),
     detection({ objects: Array.from({ length: 32 }, () => obj({})) }),
-    detection({ capture_ts: 2 ** 53 + 2 }), // u64 범위 없음: 2^53 이상도 받는다 (정밀도는 줄 수 있음, ICD 7.1)
+    detection({ capture_ts: 2 ** 53 + 2 }), // u64: 2^53 이상도 받는다 (정밀도는 줄 수 있음, ICD 7.1)
+    detection({ capture_ts: 2 ** 64 }), // 2^64−1을 double로 읽은 값
+    '{"type":"link_status","ts":1,"data":{"source":"VEHICLE","state":"LOST","last_rx_ts":null}}',
   ]) {
     expect(parseIf03(ok), ok).not.toBeNull();
   }

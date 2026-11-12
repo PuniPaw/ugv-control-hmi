@@ -1,8 +1,8 @@
-// HMI가 화면에 그리는 상태. 받은 텍스트는 receiveText()로, IF-03 연결의 열림·끊김은 connectionOpened()·
-// connectionLost()로 반영한다. 모두 순수 함수이며 시각은 인자로 받는다 (단위 시험에서 대기 없이 경계값 확인).
+// HMI가 화면에 그리는 상태 (순수 함수, 시각은 인자). 받은 텍스트는 receiveText()로 반영한다.
+// 연결 이벤트를 어느 함수로 반영할지는 app/hmiController.ts가 정한다: 열림 connectionOpened(),
+// IF-03 연결 끊김 connectionLost(), 기준선 재설정 resyncStarted(). 이 층은 전송 층(net/)을 모른다.
 
 import { parseIf03, type If03Message, type LinkState, type Source, type StatsData, type TelemetryData } from "../if03/messages";
-import type { ConnEvent } from "../net/gwConnection";
 
 export const TRACK_MAX_POINTS = 3000; // 10Hz 기준 약 5분
 // 상한을 넘으면 이만큼 더 지운다. 메모리 상한(도메인)과 함께, 앞쪽 삭제 횟수를 30초(10Hz)에 한 번으로 묶는다
@@ -103,10 +103,12 @@ export function connectionLost(s: HmiState): HmiState {
   return { ...s, session: null, samplesSinceFix: GPS_GAP_SAMPLES };
 }
 
-/** 연결 이벤트 반영: OPEN이면 새 연결 범위를 시작하고, 그 밖(접속 중·재접속 대기)이면 연결 범위를 버린다 */
-export function onConnEvent(s: HmiState, ev: ConnEvent, at: number): HmiState {
-  if (ev.state === "OPEN") return connectionOpened(s, at);
-  return s.session === null ? s : connectionLost(s);
+/**
+ * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
+ * 궤적은 끊지 않는다 (재접속 수 ms 동안 빠지는 표본은 GPS 무효 몇 표본처럼 이어 그린다).
+ */
+export function resyncStarted(s: HmiState): HmiState {
+  return { ...s, session: null };
 }
 
 /** 마지막 stats가 지금 기준선보다 2초 넘게 늦게 도착했는지 (늦음 판정은 여기 하나) */

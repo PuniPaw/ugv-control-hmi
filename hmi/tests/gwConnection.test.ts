@@ -79,6 +79,20 @@ it("REQ_HMI_006 retries with 1s, 2s, 4s, 5s, 5s while the GW is unreachable", ()
   expect(h.sockets.length).toBe(6);
 });
 
+it("REQ_HMI_006 connect attempts say why: first, retry with the failure count, resync", () => {
+  const h = harness();
+  h.conn.start();
+  h.last().drop();
+  h.fire();
+  h.last().open();
+  h.conn.resync();
+  expect(h.events.filter((e) => e.state === "CONNECTING")).toEqual([
+    { state: "CONNECTING", cause: "first" },
+    { state: "CONNECTING", cause: "retry", failures: 1 },
+    { state: "CONNECTING", cause: "resync" },
+  ]);
+});
+
 it("REQ_HMI_006 resets the delay to 1s after a successful connection", () => {
   const h = harness();
   h.conn.start();
@@ -135,7 +149,7 @@ it("REQ_HMI_006 resync() reconnects at once without counting a failure", () => {
   h.conn.resync();
   expect(s.closed).toBe(true);
   expect(h.sockets.length).toBe(2); // 기다리지 않고 바로 새 소켓
-  expect(h.events.at(-1)).toEqual({ state: "CONNECTING", failures: 0, resync: true });
+  expect(h.events.at(-1)).toEqual({ state: "CONNECTING", cause: "resync" });
   expect(h.states.some(([st]) => st === "WAITING_RETRY")).toBe(false); // 연결 끊김으로 알리지 않음
   s.send("old"); // 버린 소켓의 이벤트는 전달되지 않음
   expect(h.texts).toEqual([]);

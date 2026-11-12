@@ -88,8 +88,11 @@ const isStr = (v: unknown): v is string => typeof v === "string";
 const inRange = (v: unknown, lo: number, hi: number): v is number => isNum(v) && v >= lo && v <= hi;
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isInt = (v: unknown, lo: number, hi: number): v is number => isCount(v) && v >= lo && v <= hi;
-// u64 ms(ICD 6.2 capture_ts, 범위 없음): 음이 아닌 정수면 받는다. 2^53 이상은 double로 읽으며 정밀도가 줄 수 있다 (ICD 7.1)
-const isU64 = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+// u64 ms(ICD 6.2 capture_ts): 0 ~ 2^64−1. 2^53 이상은 double로 읽으며 정밀도가 줄 수 있다 (ICD 7.1).
+// 2^64−1은 double로 2^64가 되므로 상한은 2^64를 포함한다
+const U64_MAX_AS_DOUBLE = 2 ** 64;
+const isU64 = (v: unknown): v is number =>
+  typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= U64_MAX_AS_DOUBLE;
 const oneOf =
   <T extends string>(values: readonly T[]) =>
   (v: unknown): v is T =>
@@ -166,10 +169,10 @@ function stats(d: Obj): StatsData | null {
 
 function linkStatus(d: Obj): LinkStatusData | null {
   const { source, state, last_rx_ts } = d;
-  if (isSource(source) && isLinkState(state) && (last_rx_ts === null || isCount(last_rx_ts))) {
-    return { source, state, last_rx_ts };
-  }
-  return null;
+  if (!isSource(source) || !isLinkState(state)) return null;
+  // last_rx_ts가 null인 것은 첫 패킷 전뿐이고, 그때 상태는 LOST다 (ICD 7.1)
+  if (last_rx_ts === null) return state === "LOST" ? { source, state, last_rx_ts } : null;
+  return isCount(last_rx_ts) ? { source, state, last_rx_ts } : null;
 }
 
 /** GW가 보낸 텍스트 한 개를 IF-03 메시지로. 형식·범위가 맞지 않거나 모르는 type이면 null. */
