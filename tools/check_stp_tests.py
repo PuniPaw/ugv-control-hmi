@@ -27,6 +27,32 @@ STP = Path(os.environ.get("UGVC_STP", ROOT / "docs" / "04_STP.md"))
 SRS = ROOT / "docs" / "01_SRS.md"
 
 
+# TC 표 "테스트" 칸에 시험 이름 대신 올 수 있는 것 (시연 점검 스크립트와 옵션, 검사 스크립트)
+NON_TEST_REFS = {"hmi/e2e/smoke.mjs", "tools/rtm"}
+OPTION_REF = re.compile(r"--[a-z][a-z-]*(?: \S+)?")
+GTEST_REF = re.compile(r"[A-Za-z0-9]+\.REQ_[A-Za-z0-9_]+")
+PYTEST_REF = re.compile(r"(?:\S+::)?test_REQ_[A-Za-z0-9_]+")
+VITEST_REF = re.compile(r"[^\s`]+\.test\.ts > .+")
+
+
+def unparsed_stp_refs() -> list[str]:
+    """TC 행의 마지막 칸(테스트)에서 백틱 항목을 모두 꺼내, 어느 형식으로도 해석되지 않는 것을 돌려준다.
+    오타 하나(예: `.test.tsx >`, `>` 앞 공백 누락)로 TC가 추적에서 조용히 빠지지 않게 한다."""
+    bad = []
+    for line in STP.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("| TC-"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split(" | ")]
+        refs = re.findall(r"`([^`]+)`", cells[-1])
+        if not refs:
+            bad.append(f"{cells[0]}: 테스트 칸에 백틱 항목이 없음")
+        for r in refs:
+            if not (r in NON_TEST_REFS or OPTION_REF.fullmatch(r) or GTEST_REF.fullmatch(r)
+                    or PYTEST_REF.fullmatch(r) or VITEST_REF.fullmatch(r)):
+                bad.append(f"{cells[0]}: {r}")
+    return bad
+
+
 def stp_names() -> tuple[set[str], set[str], set[str]]:
     text = STP.read_text(encoding="utf-8")
     cpp = set(re.findall(r"`([A-Za-z0-9]+\.REQ_[A-Za-z0-9_]+)`", text))
@@ -46,7 +72,9 @@ def run_list(cmd: list[str], cwd: Path | None, hint: str, env: dict[str, str] | 
     except OSError as e:  # 없음, 디렉터리, 실행 권한 없음 등
         raise ToolError(f"{' '.join(cmd)}: {e}. {hint}") from e
     if r.returncode != 0:
-        raise ToolError(f"{' '.join(cmd)} 실패 (종료 코드 {r.returncode}). {hint}\n{r.stderr.strip()}")
+        # pytest는 수집 오류를 stdout에 쓴다 → stdout 끝부분도 보여 준다
+        detail = "\n".join(x for x in (r.stderr.strip(), r.stdout.strip()[-1500:]) if x)
+        raise ToolError(f"{' '.join(cmd)} 실패 (종료 코드 {r.returncode}). {hint}\n{detail}")
     return r.stdout
 
 
@@ -100,8 +128,22 @@ def srs_ids() -> set[str]:
     return set(re.findall(r"^\| (REQ-[A-Z]+-\d{3}) \|", SRS.read_text(encoding="utf-8"), re.M))
 
 
+REQ_STRICT = re.compile(r"REQ[_-]([A-Z]+)[_-](\d{3})(?!\d)")
+# REQ ID를 쓰려 한 흔적: req 다음에 구분자와 영역 글자, 숫자 (대소문자 무관). "request" 같은 단어는 해당 없음
+REQ_LOOSE = re.compile(r"(?i)req[\s_-]+[a-z]+[\s_-]*\d+")
+
+
+def malformed_req(test_name: str) -> bool:
+    """REQ ID를 쓰려 했는데 정확한 형식(REQ_<영역>_<세 자리>)이 아닌 것: REQ_HMI_06, REQ_HMI_0067, req_hmi_999,
+    REQ HMI 006, test_REQ_CMD006 등. RTM grep이 놓치거나 다른 ID로 모으므로 실패시킨다."""
+    for m in REQ_LOOSE.finditer(test_name):
+        if not REQ_STRICT.match(test_name, m.start()):
+            return True
+    return False
+
+
 def req_id(test_name: str) -> str | None:
-    m = re.search(r"REQ[_-]([A-Z]+)[_-](\d{3})", test_name)
+    m = REQ_STRICT.search(test_name)
     return f"REQ-{m.group(1)}-{m.group(2)}" if m else None
 
 
@@ -118,13 +160,19 @@ def main() -> int:
     missing = sorted((cpp | py | ts) - code)
     for name in missing:
         print(f"STP에 있지만 코드에 없는 테스트: {name}")
+    unparsed = unparsed_stp_refs()
+    for item in unparsed:
+        print(f"STP 테스트 칸에서 해석하지 못한 항목: {item}")
+    malformed = sorted(n for n in code if malformed_req(n))
+    for name in malformed:
+        print(f"형식이 틀린 REQ ID를 단 테스트: {name}")
     known = srs_ids()
     unknown = sorted(n for n in code if (rid := req_id(n)) and rid not in known)
     for name in unknown:
         print(f"SRS에 없는 REQ ID를 단 테스트: {name}")
     print(f"STP 테스트 이름 {len(cpp) + len(py) + len(ts)}개 확인, 불일치 {len(missing)}개. "
           f"코드의 REQ 시험 {sum(1 for n in code if req_id(n))}개 중 SRS에 없는 ID {len(unknown)}개")
-    return 1 if missing or unknown else 0
+    return 1 if missing or unknown or unparsed or malformed else 0
 
 
 if __name__ == "__main__":
