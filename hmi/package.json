@@ -1,0 +1,28 @@
+{
+  "name": "ugvc-hmi",
+  "private": true,
+  "version": "0.1.0",
+  "description": "UGVC 관제 HMI (Vue 3 + TypeScript + Leaflet). IF-03(GW WebSocket)을 받아 지도와 상태 패널을 그린다.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "vue": "^3.5.45"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^22.20.5",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@vue/tsconfig": "^0.9.1",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0",
+    "vue-tsc": "^3.3.14"
+  }
+}

@@ -1,0 +1,14 @@
+{"data":{"errors":{"crc":0,"length":0,"order":0,"range":0,"sync":0,"type":0,"version":0},"loss_rate_10s":null,"lost_count":0,"rx_count":0,"source":"VEHICLE"},"ts":1794442520574,"type":"stats"}
+{"data":{"last_rx_ts":null,"source":"VEHICLE","state":"LOST"},"ts":1794442520574,"type":"link_status"}
+{"data":{"errors":{"crc":0,"length":0,"order":0,"range":0,"sync":0,"type":0,"version":0},"loss_rate_10s":null,"lost_count":0,"rx_count":0,"source":"DETECTOR"},"ts":1794442520574,"type":"stats"}
+{"data":{"last_rx_ts":null,"source":"DETECTOR","state":"LOST"},"ts":1794442520574,"type":"link_status"}
+{"data":{"last_rx_ts":1794442520844,"source":"VEHICLE","state":"CONNECTED"},"ts":1794442520844,"type":"link_status"}
+{"data":{"battery_pct":76,"flags":["GPS_VALID","CAMERA_OK"],"heading_deg":87.25,"lat":36.1234567,"lon":127.7654321,"mode":"MISSION","rx_ts":1794442520844,"seq":0,"speed_mps":4.5},"ts":1794442520844,"type":"telemetry"}
+{"data":{"battery_pct":76,"flags":["GPS_VALID","CAMERA_OK"],"heading_deg":87.25,"lat":36.1234569,"lon":127.7654371,"mode":"MISSION","rx_ts":1794442520944,"seq":1,"speed_mps":4.5},"ts":1794442520944,"type":"telemetry"}
+{"data":{"battery_pct":76,"flags":["GPS_VALID","CAMERA_OK"],"heading_deg":87.25,"lat":36.1234571,"lon":127.7654421,"mode":"MISSION","rx_ts":1794442521044,"seq":2,"speed_mps":4.5},"ts":1794442521044,"type":"telemetry"}
+{"data":{"last_rx_ts":1794442521044,"source":"VEHICLE","state":"DEGRADED"},"ts":1794442521574,"type":"link_status"}
+{"data":{"errors":{"crc":0,"length":0,"order":0,"range":0,"sync":0,"type":0,"version":0},"loss_rate_10s":0.0,"lost_count":0,"rx_count":3,"source":"VEHICLE"},"ts":1794442521574,"type":"stats"}
+{"data":{"last_rx_ts":1794442521044,"source":"VEHICLE","state":"DEGRADED"},"ts":1794442521574,"type":"link_status"}
+{"data":{"errors":{"crc":0,"length":0,"order":0,"range":0,"sync":0,"type":0,"version":0},"loss_rate_10s":null,"lost_count":0,"rx_count":0,"source":"DETECTOR"},"ts":1794442521574,"type":"stats"}
+{"data":{"last_rx_ts":null,"source":"DETECTOR","state":"LOST"},"ts":1794442521574,"type":"link_status"}
+{"data":{"last_rx_ts":1794442521044,"source":"VEHICLE","state":"LOST"},"ts":1794442522074,"type":"link_status"}
