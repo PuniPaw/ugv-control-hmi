@@ -81,6 +81,7 @@ it("REQ_HMI_007 rejects values outside the ICD ranges and enums", () => {
     telemetry({ heading_deg: 359.99, speed_mps: 30, battery_pct: 100, seq: 2 ** 32 - 1 }),
     detection({ objects: [obj({ x: 600, w: 40 }), obj({ y: 479, h: 1 })] }),
     detection({ objects: Array.from({ length: 32 }, () => obj({})) }),
+    detection({ capture_ts: 2 ** 53 + 2 }), // u64 범위 없음: 2^53 이상도 받는다 (정밀도는 줄 수 있음, ICD 7.1)
   ]) {
     expect(parseIf03(ok), ok).not.toBeNull();
   }

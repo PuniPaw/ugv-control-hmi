@@ -25,13 +25,17 @@ function harness(opts: { throwOn?: number[] } = {}) {
   const sockets: FakeSocket[] = [];
   const timers: Timer[] = [];
   const states: Array<[ConnEvent["state"], number | undefined, string | undefined]> = [];
+  const events: ConnEvent[] = [];
   const texts: string[] = [];
   let opens = 0;
   const conn = new GwConnection(
     "ws://gw/ws",
     {
       onText: (t) => texts.push(t),
-      onState: (ev) => states.push(ev.state === "WAITING_RETRY" ? [ev.state, ev.retryInMs, ev.reason] : [ev.state, undefined, undefined]),
+      onState: (ev) => {
+        events.push(ev);
+        states.push(ev.state === "WAITING_RETRY" ? [ev.state, ev.retryInMs, ev.reason] : [ev.state, undefined, undefined]);
+      },
     },
     {
       openSocket: () => {
@@ -61,7 +65,7 @@ function harness(opts: { throwOn?: number[] } = {}) {
   };
   const last = () => sockets[sockets.length - 1]!;
   const retryDelays = () => states.filter(([s]) => s === "WAITING_RETRY").map(([, ms]) => ms);
-  return { conn, sockets, pending, fire, last, states, texts, retryDelays };
+  return { conn, sockets, pending, fire, last, states, events, texts, retryDelays };
 }
 
 it("REQ_HMI_006 retries with 1s, 2s, 4s, 5s, 5s while the GW is unreachable", () => {
@@ -123,18 +127,23 @@ it("REQ_HMI_006 a socket constructor that throws goes through the same retry pat
   expect(h.sockets.length).toBe(2);
 });
 
-it("REQ_HMI_006 reconnect() drops the open socket and goes through the retry path", () => {
+it("REQ_HMI_006 resync() reconnects at once without counting a failure", () => {
   const h = harness();
   h.conn.start();
   const s = h.last();
   s.open();
-  h.conn.reconnect("data late (resync)");
+  h.conn.resync();
   expect(s.closed).toBe(true);
-  expect(h.states.at(-1)).toEqual(["WAITING_RETRY", 1000, "data late (resync)"]);
-  h.fire();
-  expect(h.sockets.length).toBe(2);
+  expect(h.sockets.length).toBe(2); // 기다리지 않고 바로 새 소켓
+  expect(h.events.at(-1)).toEqual({ state: "CONNECTING", failures: 0, resync: true });
+  expect(h.states.some(([st]) => st === "WAITING_RETRY")).toBe(false); // 연결 끊김으로 알리지 않음
+  s.send("old"); // 버린 소켓의 이벤트는 전달되지 않음
+  expect(h.texts).toEqual([]);
+  h.last().drop(); // 재설정 접속이 실패하면 그때부터는 보통의 재시도 (1s부터)
+  expect(h.retryDelays()).toEqual([1000]);
   h.conn.stop();
-  h.conn.reconnect("after stop"); // 정지 뒤에는 아무것도 하지 않음
+  h.conn.resync(); // 정지 뒤에는 아무것도 하지 않음
+  expect(h.sockets.length).toBe(2);
   expect(h.pending()).toEqual([]);
 });
 

@@ -2,6 +2,7 @@
 // connectionLost()로 반영한다. 모두 순수 함수이며 시각은 인자로 받는다 (단위 시험에서 대기 없이 경계값 확인).
 
 import { parseIf03, type If03Message, type LinkState, type Source, type StatsData, type TelemetryData } from "../if03/messages";
+import type { ConnEvent } from "../net/gwConnection";
 
 export const TRACK_MAX_POINTS = 3000; // 10Hz 기준 약 5분
 // 상한을 넘으면 이만큼 더 지운다. 메모리 상한(도메인)과 함께, 앞쪽 삭제 횟수를 30초(10Hz)에 한 번으로 묶는다
@@ -46,8 +47,9 @@ export interface HmiState {
   // 궤적: 끊긴 구간마다 따로 (연결 끊김, 차량 LOST, GPS 무효 GPS_GAP_SAMPLES개 뒤에는 새 구간). 오래된 것부터.
   // 계약(map/trackSync.ts가 의존): 점이 늘 때는 마지막 구간 배열만 새로 만들고 다른 구간·점 배열은 그대로 둔다
   track: LatLon[][];
-  trackOpen: boolean; // 다음 유효 위치를 마지막 구간에 이을지
-  gpsInvalidRun: number; // 이어진 GPS 무효 표본 수
+  // 마지막 유효 위치 뒤 GPS 무효 표본 수. GPS_GAP_SAMPLES 이상이면 다음 유효 위치는 새 구간이다
+  // (연결 끊김·차량 LOST·처음에는 GPS_GAP_SAMPLES로 둔다)
+  samplesSinceFix: number;
   session: Session | null; // IF-03 연결이 열려 있을 때만
   discarded: number; // 형식·범위가 ICD와 달라 폐기한 IF-03 메시지 수 (누계, GLOSSARY "폐기")
 }
@@ -62,8 +64,7 @@ export function initialState(): HmiState {
     vehicle: null,
     fix: null,
     track: [],
-    trackOpen: false,
-    gpsInvalidRun: 0,
+    samplesSinceFix: GPS_GAP_SAMPLES,
     session: null,
     discarded: 0,
   };
@@ -99,20 +100,26 @@ export function connectionOpened(s: HmiState, at: number): HmiState {
  * → 재접속 후에는 기준선을 새로 잡는다.
  */
 export function connectionLost(s: HmiState): HmiState {
-  return { ...s, session: null, trackOpen: false };
+  return { ...s, session: null, samplesSinceFix: GPS_GAP_SAMPLES };
 }
 
-function updateSession(se: Session, m: If03Message, receivedAt: number): Session {
+/** 연결 이벤트 반영: OPEN이면 새 연결 범위를 시작하고, 그 밖(접속 중·재접속 대기)이면 연결 범위를 버린다 */
+export function onConnEvent(s: HmiState, ev: ConnEvent, at: number): HmiState {
+  if (ev.state === "OPEN") return connectionOpened(s, at);
+  return s.session === null ? s : connectionLost(s);
+}
+
+/** 마지막 stats가 지금 기준선보다 2초 넘게 늦게 도착했는지 (늦음 판정은 여기 하나) */
+function isLate(se: Session): boolean {
+  return se.lastStats !== null && se.baseline !== null &&
+    se.lastStats.receivedAt - se.lastStats.gwTs - se.baseline > FRESHNESS_LIMIT_MS;
+}
+
+function updateSession(se0: Session, m: If03Message, receivedAt: number): Session {
   const delay = receivedAt - m.ts;
-  const baseline = se.baseline === null ? delay : Math.min(se.baseline, delay);
-  if (m.type !== "stats") return { ...se, baseline };
-  const late = delay - baseline > FRESHNESS_LIMIT_MS;
-  return {
-    ...se,
-    baseline,
-    lastStats: { receivedAt, gwTs: m.ts },
-    lateSince: late ? (se.lateSince ?? receivedAt) : null,
-  };
+  const baseline = se0.baseline === null ? delay : Math.min(se0.baseline, delay);
+  const se = { ...se0, baseline, lastStats: m.type === "stats" ? { receivedAt, gwTs: m.ts } : se0.lastStats };
+  return { ...se, lateSince: isLate(se) ? (se0.lateSince ?? receivedAt) : null };
 }
 
 /** 메시지 하나를 반영한 새 상태. receivedAt은 HMI 시계로 받은 시각(ms). */
@@ -123,22 +130,20 @@ export function apply(s0: HmiState, m: If03Message, receivedAt: number): HmiStat
       const v = m.data;
       if (!gpsValid(v)) {
         // 위치·궤적은 그대로. 무효가 GPS_GAP_SAMPLES개 이어지면 다음 유효 위치는 새 구간
-        const run = s.gpsInvalidRun + 1;
-        return { ...s, vehicle: v, gpsInvalidRun: run, trackOpen: run >= GPS_GAP_SAMPLES ? false : s.trackOpen };
+        return { ...s, vehicle: v, samplesSinceFix: Math.min(s.samplesSinceFix + 1, GPS_GAP_SAMPLES) };
       }
       return {
         ...s,
         vehicle: v,
         fix: { lat: v.lat, lon: v.lon, heading_deg: v.heading_deg },
-        track: appendPoint(s.track, s.trackOpen, [v.lat, v.lon]),
-        trackOpen: true,
-        gpsInvalidRun: 0,
+        track: appendPoint(s.track, s.samplesSinceFix < GPS_GAP_SAMPLES, [v.lat, v.lon]),
+        samplesSinceFix: 0,
       };
     }
     case "link_status": {
       const link = { ...s.link, [m.data.source]: { state: m.data.state, lastRxTs: m.data.last_rx_ts } };
       const vehicleLost = m.data.source === "VEHICLE" && m.data.state === "LOST";
-      return { ...s, link, trackOpen: vehicleLost ? false : s.trackOpen };
+      return { ...s, link, samplesSinceFix: vehicleLost ? GPS_GAP_SAMPLES : s.samplesSinceFix };
     }
     case "stats":
       return { ...s, stats: { ...s.stats, [m.data.source]: m.data } };
@@ -169,7 +174,7 @@ export function freshness(s: HmiState, now: number): Freshness {
     return now - se.openedAt > FRESHNESS_LIMIT_MS ? "STALE" : "WAITING";
   }
   if (now - se.lastStats.receivedAt > FRESHNESS_LIMIT_MS) return "STALE";
-  if (se.lastStats.receivedAt - se.lastStats.gwTs - se.baseline > FRESHNESS_LIMIT_MS) return "STALE";
+  if (isLate(se)) return "STALE";
   return "FRESH";
 }
 

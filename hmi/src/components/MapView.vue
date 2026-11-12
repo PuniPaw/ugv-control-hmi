@@ -10,7 +10,8 @@ const props = defineProps<{ fix: Fix | null; fixValid: boolean; track: LatLon[][
 
 const el = ref<HTMLDivElement | null>(null);
 const follow = ref(true);
-const trackPoints = ref(0); // 시연 점검용 (렌더러와 무관하게 궤적 점 수 확인)
+// 시연 점검용: 실제로 실행한 그리기 연산으로 센 지도 위 점 수 (조각 이음점 포함, 렌더러와 무관)
+const drawnPoints = ref(0);
 let map: L.Map | null = null;
 let marker: L.Marker | null = null;
 let trackLayer: L.LayerGroup | null = null;
@@ -42,16 +43,19 @@ watch(
         case "clear":
           trackLayer.clearLayers();
           lastLine = null;
+          drawnPoints.value = 0;
           break;
         case "newLine":
           lastLine = L.polyline(op.points, LINE_STYLE).addTo(trackLayer);
+          drawnPoints.value += op.points.length;
           break;
         case "extend":
-          lastLine?.addLatLng(op.point);
+          if (!lastLine) throw new Error("trackSync: extend without a line"); // 계획과 실행이 어긋남 (결함)
+          lastLine.addLatLng(op.point);
+          drawnPoints.value += 1;
           break;
       }
     }
-    trackPoints.value = track.reduce((n, seg) => n + seg.length, 0);
   },
 );
 
@@ -81,7 +85,7 @@ function recenter() {
 
 <template>
   <div class="wrap">
-    <div ref="el" class="map-canvas" data-testid="map" :data-track-points="trackPoints" :data-heading="fix?.heading_deg ?? ''"></div>
+    <div ref="el" class="map-canvas" data-testid="map" :data-drawn-points="drawnPoints" :data-heading="fix?.heading_deg ?? ''"></div>
     <div v-if="fix && !fixValid" class="note" data-testid="no-fix">위치 무효 · 마지막 유효 위치 표시 중</div>
     <button v-if="!follow" class="follow" @click="recenter">차량 따라가기</button>
   </div>

@@ -1,24 +1,23 @@
 // 화면 표시 정책 (순수 함수). 컴포넌트는 이 결과를 그리기만 한다.
 
 import type { Source, StatsData, TelemetryData } from "../if03/messages";
-import type { ConnEvent, ConnectionState } from "../net/gwConnection";
+import type { ConnEvent } from "../net/gwConnection";
 import { gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
 
 export type Level = "ok" | "warn" | "bad";
 
-export interface ConnView {
-  state: ConnectionState;
-  failures: number; // 마지막 OPEN 이후 연속 실패 횟수 (0이면 첫 접속 시도)
-  retryAt: number | null; // WAITING_RETRY일 때 다음 접속 시각 (HMI 시계)
-}
+/** 화면용 연결 상태. ConnEvent와 같지만 재접속 대기는 남은 시간 대신 예정 시각(HMI 시계)을 가진다 */
+export type ConnView =
+  | { state: "CONNECTING"; failures: number; resync: boolean } // failures 0이면 첫 시도
+  | { state: "OPEN" }
+  | { state: "WAITING_RETRY"; failures: number; retryAt: number };
 
 /** 연결 이벤트 → 화면용 연결 상태 (now: 이벤트를 받은 HMI 시각) */
 export function toConnView(ev: ConnEvent, now: number): ConnView {
   switch (ev.state) {
     case "CONNECTING":
-      return { state: ev.state, failures: ev.failures, retryAt: null };
     case "OPEN":
-      return { state: ev.state, failures: 0, retryAt: null };
+      return ev;
     case "WAITING_RETRY":
       return { state: ev.state, failures: ev.failures, retryAt: now + ev.retryInMs };
   }
@@ -28,11 +27,13 @@ export function toConnView(ev: ConnEvent, now: number): ConnView {
 export function banner(conn: ConnView, fresh: Freshness, now: number): { level: Level; text: string } {
   switch (conn.state) {
     case "CONNECTING":
+      // 기준선 재설정은 IF-03 연결 끊김이 아니다 (GLOSSARY): 데이터 지연의 회복 과정으로 표시
+      if (conn.resync) return { level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중" };
       return conn.failures === 0
         ? { level: "warn", text: "GW 접속 중" }
         : { level: "bad", text: "GW 연결 끊김 · 재접속 중" };
     case "WAITING_RETRY": {
-      const sec = conn.retryAt === null ? 0 : Math.max(0, Math.ceil((conn.retryAt - now) / 1000));
+      const sec = Math.max(0, Math.ceil((conn.retryAt - now) / 1000));
       return { level: "bad", text: `GW 연결 끊김 · ${sec}초 후 재접속` };
     }
     case "OPEN":

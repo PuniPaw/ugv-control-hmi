@@ -4,14 +4,18 @@ import type { If03Message, TelemetryData } from "../src/if03/messages";
 import { apply, connectionOpened, initialState } from "../src/state/hmiState";
 import { banner, batteryLevel, linkAgeText, positionText, staleness, toConnView, type ConnView } from "../src/state/view";
 
-const open: ConnView = { state: "OPEN", failures: 0, retryAt: null };
+const open: ConnView = { state: "OPEN" };
 const vehicle = (flags: TelemetryData["flags"]): TelemetryData => ({
   lat: 36.1, lon: 127.1, heading_deg: 0, speed_mps: 0, battery_pct: 18, mode: "RTB", flags, seq: 0, rx_ts: 0,
 });
 
 it("REQ_HMI_006 banner distinguishes first connect, disconnect with countdown, waiting, stale and ok", () => {
-  expect(banner({ state: "CONNECTING", failures: 0, retryAt: null }, "WAITING", 0)).toEqual({ level: "warn", text: "GW 접속 중" });
-  expect(banner({ state: "CONNECTING", failures: 2, retryAt: null }, "WAITING", 0).level).toBe("bad");
+  expect(banner({ state: "CONNECTING", failures: 0, resync: false }, "WAITING", 0)).toEqual({ level: "warn", text: "GW 접속 중" });
+  expect(banner({ state: "CONNECTING", failures: 2, resync: false }, "WAITING", 0).level).toBe("bad");
+  // 기준선 재설정은 연결 끊김이 아니다
+  expect(banner({ state: "CONNECTING", failures: 0, resync: true }, "WAITING", 0)).toEqual({
+    level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중",
+  });
   expect(banner({ state: "WAITING_RETRY", failures: 1, retryAt: 5000 }, "WAITING", 3200).text).toBe("GW 연결 끊김 · 2초 후 재접속");
   expect(banner(open, "WAITING", 0)).toEqual({ level: "warn", text: "GW 연결됨 · 데이터 대기 중" });
   expect(banner(open, "STALE", 0)).toEqual({ level: "bad", text: "GW 데이터 지연 (2초 이상)" });
@@ -25,6 +29,7 @@ it("REQ_HMI_006 dims everything when GW is down or stale, and vehicle values whe
   expect(staleness(lost, open, "FRESH")).toEqual({ all: false, vehicle: true });
   expect(staleness(connected, open, "STALE")).toEqual({ all: true, vehicle: true });
   expect(staleness(connected, { state: "WAITING_RETRY", failures: 1, retryAt: 0 }, "FRESH")).toEqual({ all: true, vehicle: true });
+  expect(staleness(connected, { state: "CONNECTING", failures: 0, resync: true }, "FRESH")).toEqual({ all: true, vehicle: true });
 });
 
 it("REQ_HMI_002 link age uses the connection baseline, not the raw GW clock", () => {
@@ -46,6 +51,6 @@ it("REQ_HMI_006 connection events become a countdown target in HMI time", () => 
   expect(toConnView({ state: "WAITING_RETRY", failures: 2, retryInMs: 2000, reason: "close 1006" }, 500)).toEqual({
     state: "WAITING_RETRY", failures: 2, retryAt: 2500,
   });
-  expect(toConnView({ state: "CONNECTING", failures: 0 }, 0)).toEqual({ state: "CONNECTING", failures: 0, retryAt: null });
-  expect(toConnView({ state: "OPEN" }, 0)).toEqual({ state: "OPEN", failures: 0, retryAt: null });
+  expect(toConnView({ state: "CONNECTING", failures: 0, resync: true }, 0)).toEqual({ state: "CONNECTING", failures: 0, resync: true });
+  expect(toConnView({ state: "OPEN" }, 0)).toEqual({ state: "OPEN" });
 });

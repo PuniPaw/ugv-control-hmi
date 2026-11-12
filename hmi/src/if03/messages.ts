@@ -88,6 +88,8 @@ const isStr = (v: unknown): v is string => typeof v === "string";
 const inRange = (v: unknown, lo: number, hi: number): v is number => isNum(v) && v >= lo && v <= hi;
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const isInt = (v: unknown, lo: number, hi: number): v is number => isCount(v) && v >= lo && v <= hi;
+// u64 ms(ICD 6.2 capture_ts, 범위 없음): 음이 아닌 정수면 받는다. 2^53 이상은 double로 읽으며 정밀도가 줄 수 있다 (ICD 7.1)
+const isU64 = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const oneOf =
   <T extends string>(values: readonly T[]) =>
   (v: unknown): v is T =>
@@ -127,7 +129,7 @@ function detectedObject(o: unknown, imgW: number, imgH: number): DetectedObject 
 function detection(d: Obj): DetectionData | null {
   const { frame_id, capture_ts, img_w, img_h, objects } = d;
   if (
-    !(isInt(frame_id, 0, U32_MAX) && isCount(capture_ts) && isInt(img_w, 1, IMG_MAX) && isInt(img_h, 1, IMG_MAX) &&
+    !(isInt(frame_id, 0, U32_MAX) && isU64(capture_ts) && isInt(img_w, 1, IMG_MAX) && isInt(img_h, 1, IMG_MAX) &&
       Array.isArray(objects) && objects.length <= MAX_OBJECTS)
   ) {
     return null;

@@ -34,9 +34,13 @@ it("REQ_HMI_002 starts with both links LOST like the GW", () => {
 });
 
 it("REQ_HMI_001 telemetry updates position and appends to the track", () => {
-  const s = run([[telemetry(0, 36.1, 127.1), 0], [telemetry(1, 36.2, 127.2), 0]]);
+  const s0 = initialState();
+  const s1 = apply(s0, telemetry(0, 36.1, 127.1), 0);
+  const s = apply(s1, telemetry(1, 36.2, 127.2), 0);
   expect(s.fix).toEqual({ lat: 36.2, lon: 127.2, heading_deg: 90 });
   expect(s.track).toEqual([[[36.1, 127.1], [36.2, 127.2]]]);
+  expect(s0.track).toEqual([]); // 이전 상태는 바뀌지 않는다 (지도 그리기가 참조 비교에 의존)
+  expect(s1.track).toEqual([[[36.1, 127.1]]]);
 });
 
 it("REQ_HMI_001 track never exceeds TRACK_MAX_POINTS and drops the oldest points in blocks", () => {
@@ -82,14 +86,6 @@ it("REQ_HMI_002 link_status and stats update per source", () => {
   expect(s.link.DETECTOR.state).toBe("LOST");
   expect(s.stats.VEHICLE?.loss_rate_10s).toBe(0.1);
   expect(s.stats.DETECTOR).toBeNull();
-});
-
-it("REQ_HMI_007 apply does not mutate the previous state", () => {
-  const s0 = initialState();
-  const s1 = apply(s0, telemetry(0, 1, 2), 0);
-  expect(s0.track).toEqual([]);
-  expect(s0.session).toBeNull();
-  expect(s1).not.toBe(s0);
 });
 
 it("REQ_HMI_006 WAITING before the first stats of a connection, for at most 2s", () => {
@@ -153,14 +149,15 @@ it("REQ_HMI_006 one message with an absurd ts recovers through resync", () => {
 
 it("REQ_HMI_007 text that is not IF-03 is discarded and counted", () => {
   let s = receiveText(opened(), "not json", 0);
-  s = receiveText(s, JSON.stringify({ type: "telemetry", ts: 1, data: { lat: 91 } }), 0);
+  const outOfRange = telemetry(0, 91, 127); // 다른 필드는 모두 갖추고 위도만 범위 밖
+  s = receiveText(s, JSON.stringify(outOfRange), 0);
   expect(s.discarded).toBe(2);
   s = receiveText(s, JSON.stringify(stats(1)), 10);
   expect(s.discarded).toBe(2);
   expect(s.stats.VEHICLE).not.toBeNull();
 });
 
-it("REQ_HMI_002 GW time converts to HMI time through the connection baseline", () => {
+it("REQ_HMI_006 GW time converts to HMI time through the connection baseline", () => {
   const s = run([[stats(10_000), 5_020]], opened(5_000)); // HMI 시계가 GW보다 약 5초 늦음
   expect(toLocalTime(s, 9_000)).toBe(4_020);
   expect(toLocalTime(initialState(), 9_000)).toBeNull();
