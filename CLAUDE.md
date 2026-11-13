@@ -123,16 +123,16 @@
 | 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
 | 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 이어서 SRS·ICD v0.2, SDD 초안, ADR-003(PR #10), thermos·interrogate 검증과 출력 경로 수정·추적성 정리·구조 개편(PR #11~#13). 11/11 기준 일정보다 앞섬 |
-| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | WebSocket 중계 완료 (PR #16), HMI 뼈대 완료 (feat/hmi-skeleton) |
-| 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | |
+| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | 완료: WebSocket 중계 (PR #16), HMI 뼈대 (PR #19, 독립 리뷰 8차. 연결 감시·재접속·신선도 REQ-HMI-006, 수신 검증 REQ-HMI-007 신설). 이 과정에서 병합 기준을 정함(3장) |
+| **12월 1–2주 (당겨서 시작)** | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | COMMAND/ACK 재전송 착수 (feat/cmd-retransmit) |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
 | 12월 4주 | README, 시연 영상, 포트폴리오 PDF, STR·RTM 정리 | |
 
 ## 6. 바로 다음 할 일
 
-1. 12월 1–2주 작업 당겨서 시작: COMMAND/ACK 재전송(SDD 6장 설계안), HEARTBEAT·Failsafe(SIM), REQ-CMD-006 REJECTED_INVALID
-2. HMI: 명령 패널, 경고 체계(REQ-HMI-003·004, 신선도 STALE를 경고 입력으로), 경로점 표시(REQ-HMI-001)
-3. 후속 이슈 #17, #18
+1. COMMAND/ACK 재전송(SDD 6장 설계안, REQ-CMD-*): GW `CommandTracker`(가짜 시계, 1.0s·3회), SIM ACK·중복 cmd_id, REQ-CMD-006 REJECTED_INVALID(xfail 해제)
+2. HEARTBEAT·Failsafe(SIM), 이어서 HMI 명령 패널, 경고 체계(REQ-HMI-003·004, 신선도 STALE를 경고 입력으로), 경로점 표시(REQ-HMI-001)
+3. 후속 이슈 #17, #18, #22(REQ ID 여러 개 검사), #23(재설정 창 안 SIM 재시작 궤적)
 
 ---
 
