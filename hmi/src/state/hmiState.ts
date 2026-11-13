@@ -9,9 +9,9 @@ export const TRACK_MAX_POINTS = 3000; // 10Hz 기준 약 5분
 // (앞쪽 삭제는 지도에서 전체 다시 그리기가 된다, map/trackSync.ts)
 export const TRACK_TRIM_POINTS = 300;
 // 마지막 유효 위치 뒤 이만큼 표본(10Hz 약 1초)이 위치 없이 지나면 궤적을 끊는다. 표본은 텔레메트리 seq로 센다:
-// GPS_VALID 없는 표본과 받지 못한 표본(seq가 건너뜀: 유실, 기준선 재설정으로 버린 적체·접속 시간 등)을 같이 센다.
+// GPS_VALID 없는 표본과 받지 못한 표본(seq가 건너뜀: 유실, 기준선 재설정으로 버린 적체·접속 대기 등)을 같이 센다.
 // 한두 표본 깜박임으로 끊으면 점 하나짜리 구간만 남아 궤적이 그려지지 않는다
-export const GPS_GAP_SAMPLES = 10;
+export const NO_FIX_GAP_SAMPLES = 10;
 export const FRESHNESS_LIMIT_MS = 2000; // ICD 7장, REQ-HMI-006
 // "늦게 도착"이 이만큼 이어지면 연결을 다시 맺는다 → 기준선을 새로 잡는다 (시계 계단 변화·drift,
 // 비정상적으로 큰 ts 하나, HMI 처리 적체를 모두 같은 경로로 회복. ICD 7장)
@@ -45,13 +45,12 @@ export interface HmiState {
   stats: Record<Source, StatsData | null>;
   vehicle: TelemetryData | null; // 마지막 텔레메트리 (위치가 무효일 수 있음)
   fix: Fix | null; // 마지막 유효 위치. GPS_VALID가 없는 텔레메트리는 이것을 바꾸지 않는다
-  // 궤적: 끊긴 구간마다 따로 (연결 끊김, 차량 LOST, GPS 무효 GPS_GAP_SAMPLES개 뒤에는 새 구간). 오래된 것부터.
+  // 궤적: 끊긴 구간마다 따로 (IF-03 연결 끊김, 차량 LOST, 위치 없이 NO_FIX_GAP_SAMPLES 표본 뒤에는 새 구간). 오래된 것부터.
   // 계약(map/trackSync.ts가 의존): 점이 늘 때는 마지막 구간 배열만 새로 만들고 다른 구간·점 배열은 그대로 둔다
   track: LatLon[][];
-  // 마지막 유효 위치 뒤 위치 없이 지난 표본 수(GPS 무효 + seq가 건너뛴 수, GPS_GAP_SAMPLES에서 멈춤).
-  // GPS_GAP_SAMPLES 이상이면 다음 유효 위치는 새 구간이다 (연결 끊김·차량 LOST·처음에는 GPS_GAP_SAMPLES)
-  samplesSinceFix: number;
-  lastTelemetrySeq: number | null; // seq 간격을 재기 위한 직전 텔레메트리 seq
+  // 마지막 유효 위치의 텔레메트리 seq. 다음 유효 위치와의 seq 차이로 그 사이 위치 없이 지난 표본(GPS 무효 +
+  // 받지 못한 것)을 센다. null이면 다음 유효 위치는 새 구간 (처음, IF-03 연결 끊김, 차량 LOST)
+  lastFixSeq: number | null;
   session: Session | null; // IF-03 연결이 열려 있을 때만
   discarded: number; // 형식·범위가 ICD와 달라 폐기한 IF-03 메시지 수 (누계, GLOSSARY "폐기")
 }
@@ -66,8 +65,7 @@ export function initialState(): HmiState {
     vehicle: null,
     fix: null,
     track: [],
-    samplesSinceFix: GPS_GAP_SAMPLES,
-    lastTelemetrySeq: null,
+    lastFixSeq: null,
     session: null,
     discarded: 0,
   };
@@ -103,13 +101,13 @@ export function connectionOpened(s: HmiState, at: number): HmiState {
  * → 재접속 후에는 기준선을 새로 잡는다.
  */
 export function connectionLost(s: HmiState): HmiState {
-  return { ...s, session: null, samplesSinceFix: GPS_GAP_SAMPLES };
+  return { ...s, session: null, lastFixSeq: null };
 }
 
 /**
  * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
  * 여기서는 궤적을 끊지 않는다. 재설정 동안 버린 적체·접속 시간만큼 텔레메트리 seq가 건너뛰므로,
- * 그 간격이 GPS_GAP_SAMPLES 이상이면 다음 유효 위치에서 apply()가 끊는다.
+ * 그 간격이 NO_FIX_GAP_SAMPLES 이상이면 다음 유효 위치에서 apply()가 끊는다.
  */
 export function resyncStarted(s: HmiState): HmiState {
   return { ...s, session: null };
@@ -139,26 +137,24 @@ export function apply(s0: HmiState, m: If03Message, receivedAt: number): HmiStat
   switch (m.type) {
     case "telemetry": {
       const v = m.data;
-      // 받지 못한 표본 수: seq 차이 − 1 (u32 순환. GW가 역순은 폐기하므로 차이는 1 이상, SIM 재시작 등은 큰 값)
-      const missed = s.lastTelemetrySeq === null ? 0 : ((v.seq - s.lastTelemetrySeq) >>> 0) - 1;
-      const since = Math.min(s.samplesSinceFix + Math.max(missed, 0), GPS_GAP_SAMPLES);
-      if (!gpsValid(v)) {
-        // 위치·궤적은 그대로. 위치 없는 표본이 GPS_GAP_SAMPLES개 쌓이면 다음 유효 위치는 새 구간
-        return { ...s, vehicle: v, lastTelemetrySeq: v.seq, samplesSinceFix: Math.min(since + 1, GPS_GAP_SAMPLES) };
-      }
+      if (!gpsValid(v)) return { ...s, vehicle: v }; // 위치·궤적은 그대로 (위치 없는 표본은 seq 차이로 센다)
+      // 마지막 유효 위치와의 seq 차이(u32 순환). 차이 d면 그 사이 위치 없이 지난 표본은 d−1개.
+      // 차량 LOST 뒤 GW의 seq 기준값 재설정(ICD 9장)이나 SIM 재시작으로 seq가 뒤로 가면 순환해 큰 값이 되어 끊긴다
+      const d = s.lastFixSeq === null ? null : (v.seq - s.lastFixSeq) >>> 0;
+      if (d === 0) return { ...s, vehicle: v }; // 같은 seq: 같은 위치를 다시 붙이지 않는다
+      const open = d !== null && d - 1 < NO_FIX_GAP_SAMPLES;
       return {
         ...s,
         vehicle: v,
         fix: { lat: v.lat, lon: v.lon, heading_deg: v.heading_deg },
-        track: appendPoint(s.track, since < GPS_GAP_SAMPLES, [v.lat, v.lon]),
-        samplesSinceFix: 0,
-        lastTelemetrySeq: v.seq,
+        track: appendPoint(s.track, open, [v.lat, v.lon]),
+        lastFixSeq: v.seq,
       };
     }
     case "link_status": {
       const link = { ...s.link, [m.data.source]: { state: m.data.state, lastRxTs: m.data.last_rx_ts } };
       const vehicleLost = m.data.source === "VEHICLE" && m.data.state === "LOST";
-      return { ...s, link, samplesSinceFix: vehicleLost ? GPS_GAP_SAMPLES : s.samplesSinceFix };
+      return { ...s, link, lastFixSeq: vehicleLost ? null : s.lastFixSeq };
     }
     case "stats":
       return { ...s, stats: { ...s.stats, [m.data.source]: m.data } };

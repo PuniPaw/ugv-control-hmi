@@ -36,8 +36,6 @@ function harness(tickDelayMs = QUARTER_MS) {
   let seq = 0; // GW가 매긴 텔레메트리 seq (HMI에 닿지 않아도 늘어난다)
   let quarter = 0;
   let paused = false; // GW가 보낸 것이 HMI에 닿지 않음 (재설정 접속 대기, 버려진 적체)
-  let firstStatsAfter: number | null = null;
-  let lastStatsAt = 0;
   const sockets: FakeSocket[] = [];
   const timers: Array<{ fn: () => void; done: boolean }> = [];
   const banners: string[] = [];
@@ -70,8 +68,10 @@ function harness(tickDelayMs = QUARTER_MS) {
     mono += ms;
     gwNow += ms;
   };
-  /** 250ms 한 칸: 10Hz telemetry(2~3개)와 1초마다 stats가 도착하고(전달 50ms), tickDelayMs 뒤 tick */
-  const step = () => {
+  /** 250ms 한 칸: 10Hz telemetry(2~3개)와 1초마다 stats가 도착하고(전달 50ms), tickDelayMs 뒤 tick.
+   *  이 칸에 stats가 도착했으면 그 단조 시각을 돌려준다 */
+  const step = (): number | null => {
+    let statsAt: number | null = null;
     advance(QUARTER_MS - tickDelayMs);
     const n = 2 + (quarter % 2);
     for (let k = 0; k < n; k++) {
@@ -80,12 +80,12 @@ function harness(tickDelayMs = QUARTER_MS) {
     }
     if (quarter % 4 === 0 && !paused) {
       live().onmessage?.({ data: statsText(gwNow - 50) });
-      lastStatsAt = mono;
-      if (firstStatsAfter === null) firstStatsAfter = mono;
+      statsAt = mono;
     }
     quarter++;
     advance(tickDelayMs);
     c.tick();
+    return statsAt;
   };
   return {
     c, sockets, timers, banners, live, step,
@@ -95,10 +95,6 @@ function harness(tickDelayMs = QUARTER_MS) {
     mono: () => mono,
     quarter: () => quarter,
     pause: (p: boolean) => (paused = p),
-    /** 이후 처음 도착하는 stats의 단조 시각을 기록하기 시작 */
-    watchNextStats: () => (firstStatsAfter = null),
-    nextStatsAt: () => firstStatsAfter,
-    lastStatsAt: () => lastStatsAt,
     /** GW가 VEHICLE 링크 상태를 보냄 (마지막 수신은 GW 시각으로 agoMs 전) */
     sendVehicleLink: (agoMs: number) =>
       live().onmessage?.({
@@ -118,21 +114,24 @@ function clockStepRun(offsetQuarters: number, tickDelayMs = QUARTER_MS) {
   h.stepWall(3000);
   const stepAt = h.mono();
   h.banners.length = 0;
-  h.watchNextStats(); // 계단 뒤 첫 stats = 첫 늦은 stats
-  while (h.sockets.length === 1 && h.mono() - stepAt < 20_000) h.step();
-  return { h, stepAt, firstLateAt: h.nextStatsAt()!, resyncAt: h.mono() };
+  let firstLateAt: number | null = null; // 계단 뒤 첫 stats = 첫 늦은 stats
+  while (h.sockets.length === 1 && h.mono() - stepAt < 20_000) {
+    const statsAt = h.step();
+    if (firstLateAt === null) firstLateAt = statsAt;
+  }
+  return { h, stepAt, firstLateAt: firstLateAt!, resyncAt: h.mono() };
 }
 
-it("REQ_HMI_006 a clock step is recovered by resync 5s after the first late stats, at the next tick, and at most 6.25s after the step", () => {
+it("REQ_HMI_006 a clock step is recovered by resync 5 to 5.25s after the first late stats and at most 6.25s after the step", () => {
   // 위상 두 가지: 계단에서 다음 stats까지(offset), stats 도착에서 tick까지(tickDelay)
   for (const tickDelay of [1, 125, 249, 250]) {
     for (const offset of [0, 1, 2, 3]) {
       const { h, stepAt, firstLateAt, resyncAt } = clockStepRun(offset, tickDelay);
       const at = `offset ${offset}, tick ${tickDelay}ms after stats`;
       expect(h.sockets.length, at).toBe(2);
-      // ICD: 첫 늦은 stats부터 5초가 지난 뒤 첫 tick (tick은 250ms 주기, stats 도착 뒤 tickDelay에 첫 tick)
-      const expected = tickDelay + QUARTER_MS * Math.ceil((ICD_RESYNC_AFTER_MS - tickDelay) / QUARTER_MS);
-      expect(resyncAt - firstLateAt, at).toBe(expected);
+      // ICD: 첫 늦은 stats부터 5초 이상, 판정 주기(250ms) 하나 안에
+      expect(resyncAt - firstLateAt, at).toBeGreaterThanOrEqual(ICD_RESYNC_AFTER_MS);
+      expect(resyncAt - firstLateAt, at).toBeLessThan(ICD_RESYNC_AFTER_MS + QUARTER_MS);
       expect(resyncAt - stepAt, at).toBeGreaterThanOrEqual(ICD_RESYNC_AFTER_MS);
       expect(resyncAt - stepAt, at).toBeLessThanOrEqual(ICD_RESYNC_MAX_MS);
       expect(h.view().conn).toEqual({ state: "CONNECTING", cause: "resync" });
@@ -151,24 +150,25 @@ it("REQ_HMI_006 after a quick resync the new baseline is FRESH and the track sta
   expect(v.state.track.length).toBe(1); // 재설정은 연결 끊김이 아니므로 궤적을 잇는다
 });
 
-it("REQ_HMI_001 samples lost around a resync break the track whether the socket opened slowly or a backlog was dropped", () => {
-  // (a) 재설정 접속이 3초 동안 열리지 않음 (b) 소켓은 바로 열렸지만 처리 적체 3초분을 버림 — 둘 다 seq가 약 30 건너뜀
-  for (const kind of ["slow open", "dropped backlog"]) {
-    const { h } = clockStepRun(0);
-    if (kind === "slow open") {
-      h.pause(true);
-      for (let i = 0; i < 12; i++) h.step();
-      h.pause(false);
-      h.live().onopen?.({});
-    } else {
-      h.live().onopen?.({});
-      h.pause(true);
-      for (let i = 0; i < 12; i++) h.step(); // 새 연결은 현재 상태부터: 그동안의 표본은 HMI에 오지 않는다
-      h.pause(false);
-    }
-    for (let i = 0; i < 4; i++) h.step();
-    expect(h.view().state.track.length, kind).toBe(2);
-  }
+it("REQ_HMI_001 a resync connection that opens after 3s breaks the track", () => {
+  const { h } = clockStepRun(0);
+  h.pause(true);
+  for (let i = 0; i < 12; i++) h.step(); // 3초 동안 접속이 열리지 않음: GW seq는 약 30 진행
+  h.pause(false);
+  h.live().onopen?.({});
+  for (let i = 0; i < 4; i++) h.step();
+  expect(h.view().state.track.length).toBe(2);
+});
+
+it("REQ_HMI_001 a resync connection that opens at once but skips about 30 seq breaks the track", () => {
+  // 처리 적체를 버린 재설정과 같은 입력: 소켓은 바로 열리지만 그 뒤 도착하는 첫 텔레메트리 seq가 약 30 건너뜀
+  const { h } = clockStepRun(0);
+  h.live().onopen?.({});
+  h.pause(true);
+  for (let i = 0; i < 12; i++) h.step();
+  h.pause(false);
+  for (let i = 0; i < 4; i++) h.step();
+  expect(h.view().state.track.length).toBe(2);
 });
 
 it("REQ_HMI_006 on-time data never triggers a resync", () => {
@@ -213,12 +213,22 @@ it("REQ_HMI_002 the status panel rows come from the same judgement as the banner
   h.live().onopen?.({});
   for (let i = 0; i < 8; i++) h.step();
   h.sendVehicleLink(300); // GW 시계로 0.3초 전 수신 (GW와 HMI 시계는 서로 다르다)
-  h.live().onmessage?.({ data: "not IF-03" }); // 폐기 수도 같은 판정으로 패널에 간다
   const v = h.c.view();
   expect(v.links.map((l) => l.source)).toEqual(["VEHICLE", "DETECTOR"]);
   expect(v.links[0]).toEqual({ source: "VEHICLE", state: "CONNECTED", loss: "0.0%", age: "0.3s 전" });
   expect(v.links[1]).toMatchObject({ state: "LOST", loss: "—", age: "수신 없음" });
   expect(v.vehicle).toMatchObject({ mode: "MISSION", battery: "50%", batteryLevel: "ok", speed: "1.0 m/s" });
   expect(v.vehicle?.position).toMatch(/^36\.\d{6}, 127\.000000$/);
-  expect(v.discarded).toBe(1);
+});
+
+it("REQ_HMI_007 discarded IF-03 messages are counted for display in the status panel", () => {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  h.step();
+  expect(h.c.view().discarded).toBe(0);
+  h.live().onmessage?.({ data: "not IF-03" });
+  h.live().onmessage?.({ data: JSON.stringify({ type: "telemetry", ts: 1, data: { lat: 91 } }) });
+  expect(h.c.view().discarded).toBe(2); // 상태 패널(data-testid="discarded")이 그리는 값
+  expect(h.c.view().state.vehicle?.lat).not.toBe(91);
 });

@@ -2,7 +2,7 @@
 import { expect, it } from "vitest";
 import type { Flag, If03Message } from "../src/if03/messages";
 import {
-  FRESHNESS_LIMIT_MS, GPS_GAP_SAMPLES, RESYNC_AFTER_MS, TRACK_MAX_POINTS, TRACK_TRIM_POINTS, apply, connectionLost,
+  FRESHNESS_LIMIT_MS, NO_FIX_GAP_SAMPLES, RESYNC_AFTER_MS, TRACK_MAX_POINTS, TRACK_TRIM_POINTS, apply, connectionLost,
   connectionOpened, freshness, initialState, needsResync, receiveText, toLocalTime, type HmiState,
 } from "../src/state/hmiState";
 
@@ -63,10 +63,10 @@ it("REQ_HMI_001 position without GPS_VALID does not move the vehicle or the trac
 
 it("REQ_HMI_001 track starts a new segment after GPS loss, vehicle LOST or GW disconnect", () => {
   let s = run([[telemetry(0, 1, 1), 0]]);
-  for (let i = 0; i < GPS_GAP_SAMPLES; i++) s = apply(s, telemetry(1, 0, 0, []), 0); // 약 1초 동안 GPS 무효
-  s = run([[telemetry(2, 2, 2), 0]], s);
-  s = run([[vehicleLink("LOST"), 0], [telemetry(3, 3, 3), 0]], s);
-  s = run([[telemetry(4, 4, 4), 0]], connectionLost(s));
+  for (let i = 1; i <= NO_FIX_GAP_SAMPLES; i++) s = apply(s, telemetry(i, 0, 0, []), 0); // 약 1초 동안 GPS 무효
+  s = run([[telemetry(NO_FIX_GAP_SAMPLES + 1, 2, 2), 0]], s);
+  s = run([[vehicleLink("LOST"), 0], [telemetry(20, 3, 3), 0]], s);
+  s = run([[telemetry(21, 4, 4), 0]], connectionLost(s));
   expect(s.track).toEqual([[[1, 1]], [[2, 2]], [[3, 3]], [[4, 4]]]);
 });
 
@@ -187,4 +187,10 @@ it("REQ_HMI_001 a gap of 10 or more telemetry seq numbers breaks the track, 9 do
   expect(wrap.track.length).toBe(1);
   const wrapGap = run([[telemetry(0xffff_fff0, 1, 1), 0], [telemetry(10, 2, 2), 0]]); // u32 순환: 25개 빠짐
   expect(wrapGap.track.length).toBe(2);
+  // seq가 뒤로 감 (차량 LOST 뒤 GW의 seq 기준값 재설정, SIM 재시작): 순환해 큰 차이 → 끊김
+  const backward = run([[telemetry(500, 1, 1), 0], [telemetry(3, 2, 2), 0]]);
+  expect(backward.track.length).toBe(2);
+  // 같은 seq가 다시 와도 같은 위치를 두 번 붙이지 않는다
+  const dup = run([[telemetry(7, 1, 1), 0], [telemetry(7, 1, 1), 0]]);
+  expect(dup.track).toEqual([[[1, 1]]]);
 });
