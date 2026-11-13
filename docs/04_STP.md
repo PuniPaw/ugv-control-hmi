@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.11 (초안) |
+| 버전 | v0.12 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.5, UGVC-ICD-001 v0.9, UGVC-SDD-001 v0.2.6, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.5, UGVC-ICD-001 v0.10, UGVC-SDD-001 v0.2.7, ADR-002 |
 
 ## 개정 이력
 
@@ -23,6 +23,7 @@
 | v0.9 | 2026-11-12 | PR #19 5차 리뷰 반영: TC-HMI-006-11은 페이지 안 `MutationObserver`로 배너 변화를 빠짐없이 기록해 "기준선 재설정 중" 있음·"GW 연결 끊김" 없음을 확인, TC-HMI-001-03은 Leaflet 레이어의 실제 점 수, TC-HMI-006-16에 재설정 시점 상한(6.25초)과 궤적 유지, TC-HMI-006-18(접속 이유 cause)·19(단조 시계 카운트다운)·TC-HMI-001-08(진짜 끊김 뒤 궤적 분리) 추가, TC-HMI-006-13 문구 정정, TC-HMI-007-03에 `capture_ts` 상한·`last_rx_ts` null인 CONNECTED. `check_stp_tests.py`는 TC 행의 해석하지 못한 항목과 형식이 틀린 REQ ID도 실패 |
 | v0.10 | 2026-11-12 | PR #19 6차 리뷰 반영: TC-HMI-006-16을 ms 단위·계단 위상 4가지·ICD 값 기준으로(첫 늦은 stats부터 5~5.25초, 계단부터 ≤6.25초), TC-HMI-001-09(느린 재설정 접속은 궤적 분리), TC-HMI-006-20(재설정 시계는 stats에서만 시작), TC-HMI-002-07(상태 패널 행이 같은 판정에서 나옴) 추가. TC-HMI-001-03은 개발 서버 훅으로 레이어 점 수. TC-HMI-006-01 기대 문구에 "재접속 중" 포함. 표 순서 정리, 후속 범위(경로점·지연 시간) 명시. `check_stp_tests.py`는 표 머리의 "테스트" 열로 해석하고 REQ 형식 검사의 오탐·누락을 고침(자체 시험 `tools/tests/`) |
 | v0.11 | 2026-11-12 | PR #19 7차 리뷰 반영: TC-HMI-001-09를 seq 간격 기준(느린 접속·버린 적체 두 경우)으로 바꾸고 TC-HMI-001-10(간격 경계 9·10, u32 순환) 추가, TC-HMI-006-16에 stats→tick 위상 4가지와 위상별 정확한 재설정 시각, TC-HMI-002-07에 폐기 수. 2.7에 도구 자체 시험 예외. `check_stp_tests.py`는 TC 행의 모든 칸에서 시험 이름을 모으고, "테스트" 열이 없는 표의 TC 행을 오류로, 대문자 REQ 후보는 REQUEST 등을 제외 |
+| v0.12 | 2026-11-12 | PR #19 8차 리뷰 반영: TC-HMI-001-09를 두 시험으로 나누고 (b)의 주장 범위를 실제 입력으로 좁힘, TC-HMI-001-10에 seq 역행·같은 seq, TC-HMI-006-16 기대 결과를 ICD 범위(5000 이상 5250 미만)로, 폐기 수 표시 확인을 REQ-HMI-007 시험으로(TC-HMI-007-05). 2.7에 REQ 모양 약어 금지·도구 커밋 규칙. `check_stp_tests.py`는 표 밖 줄·앞 공백 표 행도 수집, TC 행은 머리 행으로 보지 않음, 옵션만 있는 TC 행 오류, REQ 후보를 ID 모양으로 좁힘 |
 
 ---
 
@@ -85,7 +86,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 - 테스트 이름: 요구사항 ID를 포함한다. 예: `TEST(LinkMonitor, REQ_COM_003_degraded_at_500ms)`, `def test_REQ_COM_001_10hz_no_loss()`, `it("REQ_HMI_001 track keeps ...")`
 - 3장 TC 표의 "테스트" 열(머리 행의 열 이름으로 찾는다)에 적은 백틱 항목은 모두 시험 이름(gtest·pytest·vitest) 또는 시연 점검 참조여야 한다. 해석하지 못한 항목이 있으면 `check_stp_tests.py`가 실패한다
 - vitest 시험은 3장 표에 "파일 이름 > 시험 이름"으로 적는다 (예: `hmiState.test.ts > REQ_HMI_002 starts with both links LOST like the GW`). HMI 시험 파일은 `describe`를 쓰지 않아 it 제목이 곧 시험 이름이다. `check_stp_tests.py`는 `vitest list --json`의 실제 목록과 비교한다
-- 시험 이름에는 모두 REQ ID를 단다 (RTM grep에서 빠지지 않도록). 예외: 검사 도구 자체 시험(`tools/tests/`)은 제품 요구사항의 증거가 아니므로 REQ ID를 달지 않고 STP·RTM 대상이 아니다
+- 시험 이름에는 모두 REQ ID를 단다 (RTM grep에서 빠지지 않도록). 예외: 검사 도구 자체 시험(`tools/tests/`)은 제품 요구사항의 증거가 아니므로 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 도구만 바꾸는 커밋도 같은 이유로 REQ ID 없이 `test(tools):`·`fix(tools):`로 쓴다
+- 시험 이름에서 `req`·`REQ` 뒤에 영역 이름과 숫자가 바로 오는 약어(예: `req_cmd_3`)는 REQ ID와 구분할 수 없어 형식 오류로 걸린다. 이런 약어는 쓰지 않는다(`request_cmd_3`처럼 풀어 쓴다)
 - TC와 테스트는 1:1로 대응하며, 대응 관계는 3장 표의 "테스트" 열이 정본이다.
 
 ---
@@ -238,8 +240,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-HMI-001-06 | U | 연속된 apply() 결과로 그리기 연산, 무작위 8000메시지(GPS 무효 20%, 연결 끊김 1%)에서 연산을 실행한 결과, 6000점 동안 전체 다시 그리기 횟수, 조각 나누기 | extend·newLine·clear를 구분, 실행 결과를 끝점 공유로 이으면 상태 궤적과 같음, 조각 ≤200점, clear는 앞쪽 삭제 때만(301점마다) | `trackSync.test.ts > REQ_HMI_001 plans extend, new line and rebuild from successive apply() results`, `trackSync.test.ts > REQ_HMI_001 executing the planned ops always draws exactly the state track`, `trackSync.test.ts > REQ_HMI_001 rebuilds only when the oldest points are trimmed`, `trackSync.test.ts > REQ_HMI_001 chunks share end points so the drawn line has no gaps` |
 | TC-HMI-001-07 | U | GPS_VALID가 한 표본씩 번갈아 40개 | 구간 하나에 유효 위치 20점 (점 하나짜리 구간이 생기지 않아 궤적이 그려짐) | `hmiState.test.ts > REQ_HMI_001 brief GPS_VALID flicker keeps the segment so the track stays drawable` |
 | TC-HMI-001-08 | U | HmiController에서 IF-03 연결이 실제로 끊겼다가(close 1006) 재접속 | 궤적이 두 구간 (기준선 재설정과 달리 진짜 끊김은 궤적을 끊음) | `hmiController.test.ts > REQ_HMI_001 a real IF-03 disconnect starts a new track segment` |
-| TC-HMI-001-09 | U | HmiController에서 기준선 재설정 전후로 표본 약 30개가 빠짐: (a) 재설정 접속이 3s 동안 열리지 않음 (b) 소켓은 바로 열렸지만 처리 적체 3s분을 버림 | 두 경우 모두 궤적 두 구간 (빠르고 빠진 표본이 없으면 TC-HMI-006-16처럼 한 구간) | `hmiController.test.ts > REQ_HMI_001 samples lost around a resync break the track whether the socket opened slowly or a backlog was dropped` |
-| TC-HMI-001-10 | U | 유효 위치 사이 텔레메트리 seq 간격: 9개 빠짐, 10개 빠짐, 무효 1 + 빠짐 9, u32 순환(2개·25개 빠짐) | 9개는 한 구간, 10개 이상은 두 구간 (GPS 무효와 빠진 표본을 같이 셈), 순환을 올바로 셈 | `hmiState.test.ts > REQ_HMI_001 a gap of 10 or more telemetry seq numbers breaks the track, 9 does not` |
+| TC-HMI-001-09 | U | HmiController에서 기준선 재설정 전후로 텔레메트리 seq가 약 30 건너뜀: (a) 재설정 접속이 3s 동안 열리지 않음 (b) 소켓은 바로 열렸지만 그 뒤 첫 텔레메트리 seq가 약 30 건너뜀(처리 적체를 버린 재설정과 같은 입력. 브라우저 쪽 적체를 버리는 동작 자체는 이 시험의 대상이 아님) | 두 경우 모두 궤적 두 구간 (빠지는 표본이 없으면 TC-HMI-006-16처럼 한 구간) | `hmiController.test.ts > REQ_HMI_001 a resync connection that opens after 3s breaks the track`, `hmiController.test.ts > REQ_HMI_001 a resync connection that opens at once but skips about 30 seq breaks the track` |
+| TC-HMI-001-10 | U | 유효 위치 사이 텔레메트리 seq 간격: 9개 빠짐, 10개 빠짐, 무효 1 + 빠짐 9, u32 순환(2개·25개 빠짐), seq 역행(500 → 3), 같은 seq 재수신 | 9개는 한 구간, 10개 이상은 두 구간 (GPS 무효와 빠진 표본을 같이 셈), 순환을 올바로 셈, 역행은 두 구간, 같은 seq는 점을 다시 붙이지 않음 | `hmiState.test.ts > REQ_HMI_001 a gap of 10 or more telemetry seq numbers breaks the track, 9 does not` |
 
 ### 3.11 REQ-HMI-002 상태 패널
 
@@ -252,7 +254,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-HMI-002-03 | D | GW 접속 → SIM 송신 → SIM 중지 | 차량 링크 LOST → CONNECTED(유실률 0.0%, 경과 0.x초) → 3s 안에 LOST, 모드·배터리 표시 | `hmi/e2e/smoke.mjs` 1~3단계 |
 | TC-HMI-002-04 | U | HMI 시계가 GW보다 5s 늦을 때 링크 경과 시간 | 0.8s (음수가 아님), 수신 전이면 "수신 없음" | `view.test.ts > REQ_HMI_002 link age uses the connection baseline, not the raw GW clock` |
 | TC-HMI-002-05 | U | 배터리 색, 위치 표시 | BATTERY_LOW 플래그가 있을 때만 경고색, GPS_VALID가 없으면 "위치 무효" | `view.test.ts > REQ_HMI_002 battery color follows BATTERY_LOW and position shows invalid without GPS_VALID` |
-| TC-HMI-002-07 | U | HmiController 화면 판정에서 VEHICLE link_status(GW 시계로 0.3s 전 수신)·텔레메트리·형식 오류 메시지 1개 반영 | 상태 패널 행이 배너와 같은 `present()` 판정에서 나옴: VEHICLE CONNECTED·유실 0.0%·"0.3s 전", DETECTOR "수신 없음", 차량 모드·배터리·속도·위치 문구, 폐기 수 1 | `hmiController.test.ts > REQ_HMI_002 the status panel rows come from the same judgement as the banner` |
+| TC-HMI-002-07 | U | HmiController 화면 판정에서 VEHICLE link_status(GW 시계로 0.3s 전 수신)·텔레메트리반영 | 상태 패널 행이 배너와 같은 `present()` 판정에서 나옴: VEHICLE CONNECTED·유실 0.0%·"0.3s 전", DETECTOR "수신 없음", 차량 모드·배터리·속도·위치 문구 | `hmiController.test.ts > REQ_HMI_002 the status panel rows come from the same judgement as the banner` |
 
 ### 3.12 REQ-HMI-006 IF-03 연결 감시·재접속·데이터 신선도
 
@@ -273,7 +275,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-HMI-006-13 | U | `ts`가 2^53−1인 메시지 하나로 기준선이 망가진 연결 | STALE이 되고 5s 뒤 재설정 요청 (재설정 뒤 회복 경로는 TC-HMI-006-16이 확인) | `hmiState.test.ts > REQ_HMI_006 one message with an absurd ts recovers through resync` |
 | TC-HMI-006-14 | U | 연결 후 telemetry만 오고 stats가 오지 않음 | 2000ms까지 WAITING, 2001ms에 STALE (TC-HMI-006-07과 같은 시험) | `hmiState.test.ts > REQ_HMI_006 WAITING before the first stats of a connection, for at most 2s` |
 | TC-HMI-006-15 | U | resync() 호출, 그 접속의 실패, 정지 뒤 호출. 배너 | 소켓을 닫고 기다리지 않고 새 소켓(CONNECTING cause resync), WAITING_RETRY 없음, 버린 소켓 이벤트 미전달, 그 접속이 실패하면 1s 재시도, 정지 뒤에는 아무것도 안 함. 재설정 중 배너는 warn "GW 데이터 지연 · 기준선 재설정 중" | `gwConnection.test.ts > REQ_HMI_006 resync() reconnects at once without counting a failure`, `view.test.ts > REQ_HMI_006 banner distinguishes first connect, disconnect with countdown, waiting, stale and ok` |
-| TC-HMI-006-16 | U | 가짜 소켓·타이머·벽시계·단조 시계(ms 단위)로 HmiController 구동(10Hz telemetry, 1Hz stats, 250ms tick, 화면은 `onChange`로 받은 View): FRESH 연결에서 HMI 시계 +3s 계단 변화. 위상 두 가지를 조합: 계단에서 다음 stats까지(4가지), stats 도착에서 tick까지(1·125·249·250ms). 빠른 재설정 접속. 정상 연결 60s | 재설정은 첫 늦은 stats부터 5000ms가 지난 뒤 첫 tick에 정확히 일어남(위상별 계산값과 같음), 계단부터 5000~6250ms. 경계는 코드 상수가 아니라 ICD 값. 배너 기록에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음. 새 연결 첫 stats로 FRESH, 궤적은 한 구간 그대로. 정상 연결에서는 재접속 0회 | `hmiController.test.ts > REQ_HMI_006 a clock step is recovered by resync 5s after the first late stats, at the next tick, and at most 6.25s after the step`, `hmiController.test.ts > REQ_HMI_006 after a quick resync the new baseline is FRESH and the track stays one segment`, `hmiController.test.ts > REQ_HMI_006 on-time data never triggers a resync` |
+| TC-HMI-006-16 | U | 가짜 소켓·타이머·벽시계·단조 시계(ms 단위)로 HmiController 구동(10Hz telemetry, 1Hz stats, 250ms tick, 화면은 `onChange`로 받은 View): FRESH 연결에서 HMI 시계 +3s 계단 변화. 위상 두 가지를 조합: 계단에서 다음 stats까지(4가지), stats 도착에서 tick까지(1·125·249·250ms). 빠른 재설정 접속. 정상 연결 60s | 첫 늦은 stats부터 5000ms 이상 5250ms 미만(판정 주기 하나 안), 계단부터 5000~6250ms에 재접속 1회(CONNECTING resync). 경계는 코드 상수가 아니라 ICD 값. 배너 기록에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음. 새 연결 첫 stats로 FRESH, 궤적은 한 구간 그대로. 정상 연결에서는 재접속 0회 | `hmiController.test.ts > REQ_HMI_006 a clock step is recovered by resync 5 to 5.25s after the first late stats and at most 6.25s after the step`, `hmiController.test.ts > REQ_HMI_006 after a quick resync the new baseline is FRESH and the track stays one segment`, `hmiController.test.ts > REQ_HMI_006 on-time data never triggers a resync` |
 | TC-HMI-006-17 | U | HMI 시계가 GW보다 약 5s 늦은 연결에서 GW 시각 변환, 연결 없음 | GW 시각 + 기준선, 연결이 없으면 null | `hmiState.test.ts > REQ_HMI_006 GW time converts to HMI time through the connection baseline` |
 | TC-HMI-006-18 | U | 첫 접속, 실패 뒤 재접속, 기준선 재설정 | CONNECTING의 cause가 first, retry(failures 1), resync | `gwConnection.test.ts > REQ_HMI_006 connect attempts say why: first, retry with the failure count, resync` |
 | TC-HMI-006-19 | U | 재접속 대기(1s) 중 벽시계 +3s, −60s, 단조 시계 0.6s·1.0s 진행 | 벽시계 변화와 무관하게 "1초 후 재접속", 단조 시계로만 줄어 "0초 후 재접속" | `hmiController.test.ts > REQ_HMI_006 retry countdown follows the monotonic clock, not wall clock changes` |
@@ -287,7 +289,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-HMI-007-02 | U | 정의 밖 필드가 붙은 telemetry | ICD 필드만 남김 | `if03.test.ts > REQ_HMI_007 keeps exactly the fields the ICD defines` |
 | TC-HMI-007-03 | U | 깨진 JSON, 모르는 type, 빠진 필드, 정의 밖 열거값(mode, flags, state, source, class), ICD 6장 범위 밖 값(배터리 101·50.5, 위도 91, 방향 −1·360, 속도 30.01·1e308, seq·frame_id 2^32, img_w 0·4097, 객체 33개, w 0, x = img_w, x+w > img_w, y+h > img_h, conf 1.01, 유실률 1.5), errors 키 누락·추가·음수. `capture_ts` 1e300·2^70, `last_rx_ts`가 null인데 state CONNECTED. 경계 안 값(방향 359.99, 속도 30, seq 2^32−1, 상자가 이미지 끝에 닿음, 객체 32개, `capture_ts` 2^53+2·2^64, `last_rx_ts` null인 LOST) | 범위 밖은 모두 null, 경계 안은 받아들임 | `if03.test.ts > REQ_HMI_007 rejects malformed JSON, unknown types and missing fields`, `if03.test.ts > REQ_HMI_007 rejects values outside the ICD ranges and enums` |
 | TC-HMI-007-04 | U | 텍스트가 아닌 프레임 | 텍스트만 전달 | `gwConnection.test.ts > REQ_HMI_007 passes text frames through and ignores binary` |
-| TC-HMI-007-05 | U | 받은 텍스트: 깨진 JSON, 다른 필드는 다 갖추고 위도만 91인 telemetry, 정상 stats | 폐기 수 2, 정상 메시지는 반영되고 폐기 수는 그대로 (상태 패널 `data-testid="discarded"`에 표시) | `hmiState.test.ts > REQ_HMI_007 text that is not IF-03 is discarded and counted` |
+| TC-HMI-007-05 | U | 받은 텍스트: 깨진 JSON, 다른 필드는 다 갖추고 위도만 91인 telemetry, 정상 stats. HmiController에 형식 오류 메시지 2개 | 폐기 수 2, 정상 메시지는 반영되고 폐기 수는 그대로. 화면 판정(`present().discarded`, 상태 패널 `data-testid="discarded"`가 그리는 값)도 2이고 범위 밖 위도는 반영되지 않음 | `hmiState.test.ts > REQ_HMI_007 text that is not IF-03 is discarded and counted`, `hmiController.test.ts > REQ_HMI_007 discarded IF-03 messages are counted for display in the status panel` |
 
 ---
 
