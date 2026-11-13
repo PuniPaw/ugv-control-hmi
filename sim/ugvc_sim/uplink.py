@@ -173,11 +173,11 @@ def serve(sock: socket.socket, gw_addr: tuple[str, int], drop_first: int = 0,
             outcome = responder.on_command(msg)
             ack_frame = encode_frame(MsgType.ACK, ack_seq, int(time.time() * 1000), outcome.ack.to_payload())
             ack_seq = (ack_seq + 1) & 0xFFFFFFFF
-            sock.sendto(ack_frame, gw_addr)
             print(json.dumps({
                 "type": "command", "cmd_id": msg.command.cmd_id, "cmd_type": msg.command.cmd_type,
                 "result": AckResult(outcome.ack.result).name, "executed": outcome.execute is not None,
             }), flush=True)
+            sock.sendto(ack_frame, gw_addr)
 
 
 def listen(host: str, port: int, gw_addr: tuple[str, int], drop_first: int = 0) -> None:
