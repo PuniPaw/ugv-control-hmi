@@ -55,6 +55,14 @@ json detection(const Detection& d, std::uint64_t rx_ts) {
                    {"objects", std::move(objects)}});
 }
 
+json cmd_result(const gateway::CommandResult& r, std::uint64_t ts) {
+  return envelope("cmd_result", ts,
+                  {{"req_id", r.req_id},
+                   {"cmd_id", r.cmd_id ? json(*r.cmd_id) : json(nullptr)},
+                   {"result", gateway::name_of(r.result)},
+                   {"attempts", r.attempts}});
+}
+
 json stats(ingress::Source source, const gateway::SourceStats& s, std::uint64_t ts) {
   json errors = json::object();
   for (const auto r : ingress::kAllRejectReasons) errors[ingress::to_string(r)] = s.errors[r];
