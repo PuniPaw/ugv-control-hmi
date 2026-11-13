@@ -14,10 +14,10 @@
 
 | 디렉터리 | 구성요소 | 상태 |
 |---|---|---|
-| `gateway/` | GW: 패킷 검증, 링크 상태 판정, HMI 중계, 명령 재전송 (C++17, CMake, GoogleTest) | 검증 규칙 ①~⑨, 링크 상태, 유실률, stats·HEARTBEAT 1Hz, IF-03 JSON Lines 출력 |
+| `gateway/` | GW: 패킷 검증, 링크 상태 판정, HMI 중계, 명령 재전송 (C++17, CMake, GoogleTest) | 검증 규칙 ①~⑨, 링크 상태, 유실률, stats·HEARTBEAT 1Hz, IF-03 WebSocket 중계 |
 | `sim/` | SIM: 경로점 주행 모사, 10Hz 텔레메트리, Failsafe (Python) | 직선 주행 TELEMETRY 10Hz 송신 |
 | `detector/` | DET: 영상 재생, 객체 탐지, 결과·영상 송신 (Python) | 예정 |
-| `hmi/` | HMI: 지도, 영상+박스, 상태 패널, 경고, 명령 (Vue 3 + TS) | 예정 |
+| `hmi/` | HMI: 지도, 영상+박스, 상태 패널, 경고, 명령 (Vue 3 + TS) | 뼈대: IF-03 수신·재접속, 지도(위치·궤적), 상태 패널. [hmi/README](hmi/README.md) |
 | `python/` | `ugvc_proto`: SIM·DET 공용 Python codec (ICD 메시지 직렬화) | 헤더·CRC·TELEMETRY |
 | `testdata/vectors/` | Python·C++가 함께 쓰는 바이트 테스트 벡터 | frame.json, telemetry.json |
 | `tools/` | 벡터 생성기 등 보조 스크립트 | |
@@ -30,6 +30,8 @@
 |---|---|
 | [SRS](docs/01_SRS.md) | 소프트웨어 요구사항 (REQ-*) |
 | [ICD](docs/02_ICD.md) | 인터페이스 정의 (메시지 형식, 검증 규칙) |
+| [SDD](docs/03_SDD.md) | 설계 (GW 모듈·스레드, HMI 구조) |
+| [STP](docs/04_STP.md) | 시험 계획 (TC-*) |
 | [ADR](docs/adr/) | 설계 결정 기록 |
 | [GLOSSARY](GLOSSARY.md) | 용어집 |
 

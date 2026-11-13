@@ -31,7 +31,7 @@
 - GW: C++17, CMake, Boost.Asio(UDP·타이머) + Boost.Beast(WebSocket, ADR-003), GoogleTest, cppcheck, libpq 또는 libpqxx
   - Boost는 시스템 패키지(`libboost-dev` 1.83+, 헤더 전용)를 `find_package(Boost CONFIG)`로 쓴다. 클라우드 환경 setup script가 설치한다
 - SIM/DET: Python 3, `struct.pack(">...")`로 직렬화
-- HMI: Vue 3 + TypeScript, Leaflet (고도화 단계에서 오프라인 타일)
+- HMI: Vue 3 + TypeScript, Vite, Leaflet (고도화 단계에서 오프라인 타일), vitest, 시연 점검은 Playwright(전역 설치 chromium)
 - 저장소: 모노레포 `sim/ detector/ gateway/ hmi/ docs/` + `python/`(ugvc_proto, SIM·DET 공용 codec), `testdata/vectors/`(C++·Python 공용 벡터), `tools/`
 - 테스트 벡터는 `tools/vectors/gen_vectors.py`가 표준 라이브러리만으로 생성한다 (우리 codec을 import하지 않음 → 독립 기준)
 - C++ 의존성(FetchContent, git): nlohmann/json v3.11.3(IF-03 JSON·벡터 로드), GoogleTest v1.15.2
@@ -65,9 +65,26 @@
   - 예: `feat(gateway): 통신 두절 감지 [REQ-COM-003]`
 - **테스트 이름**: 요구사항 ID 포함 → 추적표(RTM)를 grep 스크립트로 자동 생성할 예정
   - 예: `TEST(LinkMonitor, REQ_COM_003_lost_after_1s)`
+  - 예외: 검사 도구 자체 시험(`tools/tests/`)은 제품 요구사항의 증거가 아니므로 REQ ID를 달지 않는다 (STP 2.7)
 - **규격 변경 시**: ICD 표 → C++ 코드 → Python 코드를 함께 수정하고, 문서 맨 위 개정 이력에 기록. 결정이 바뀌면 ADR 추가
 - **시간 의존 로직**(링크 판정, 재전송)은 시계를 주입 가능하게 만들어 단위 시험에서 가짜 시계로 검증
 - 문서는 마크다운 + Mermaid. 문서 원본은 `docs/`에 두고 Git으로 형상관리
+- 문서 머리의 **작성일은 최초 작성일**이다(바꾸지 않음). 개정 날짜는 개정 이력에 적고, 개정 이력은 오래된 것부터(새 행은 맨 아래)
+- 규범 문구(요구사항·인터페이스·시험 기준)가 바뀌면 PR 병합 전이라도 **버전을 올리고 새 행**을 쓴다(기존 행에 덧붙이지 않음). 리뷰 차수마다 무엇이 바뀌었는지 이력에서 보이게 하기 위해서다
+
+### 병합 기준 (PR 독립 리뷰, `.claude/skills/review-pr/`)
+
+지적은 심각도와 구분(**제품 동작**: GW·SIM·HMI 동작, ICD 위반, 안전 관련 / **시험·도구·문서**: 시험 강도, 검사 도구, 문서 정밀도)으로 처리한다.
+
+| 지적 | 처리 |
+|---|---|
+| 높음 (전부) | 반드시 수정 후 재리뷰 |
+| 중간 · 제품 동작 | 반드시 수정 후 재리뷰 |
+| 중간 · 시험·도구·문서 | 이 PR에서 수정하되 재리뷰 없이 병합 가능 (크면 이슈로) |
+| 낮음 (전부) | 바로 고칠 수 있는 것만 수정, 나머지는 이슈로. 병합을 막지 않음 |
+
+- **재리뷰 범위·횟수**: 재리뷰는 직전 조치분(이전 리뷰 시점..HEAD)만 본다. PR당 최대 3차. 3차에도 제품 동작 중간 지적이 남으면 PR을 쪼개거나 사용자가 판단한다
+- **병합 조건**: 높음 0건, 제품 동작 중간 0건, 기준 시험 전부 통과(ctest, vitest, HMI 빌드, `tools/check_stp_tests.py`, pytest, smoke), 남긴 지적은 모두 PR 코멘트 "조치 결과" 칸에 반영 / 이슈 번호 / 미반영 사유 중 하나로 기록
 
 ---
 
@@ -76,10 +93,10 @@
 | 문서 | 상태 | 비고 |
 |---|---|---|
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
-| 01_SRS.md (UGVC-SRS-001) | **v0.3** | 요구사항 31개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계) |
-| 02_ICD.md (UGVC-ICD-001) | **v0.4** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열) |
-| 03_SDD.md (UGVC-SDD-001) | **v0.1.3 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열), 명령 재전송 설계안. HMI는 HMI 뼈대 작업에서 추가 |
-| 04_STP.md (UGVC-STP-001) | **v0.4 초안** | TC-COM-001~008, TC-QUAL-001. TC-COM-005-08·007-02는 실제 GW 통합 시험. `tools/check_stp_tests.py`가 STP 이름과 시험 이름의 REQ ID(SRS 존재 여부)를 검사. CMD·SAFE 등은 구현 주에 추가 |
+| 01_SRS.md (UGVC-SRS-001) | **v0.5** | 요구사항 33개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계). v0.4: REQ-HMI-006(IF-03 연결 감시·재접속·신선도), REQ-HMI-007(IF-03 수신 검증). v0.5: 기준선 재설정(연결 끊김 아님), stats 없는 연결 |
+| 02_ICD.md (UGVC-ICD-001) | **v0.10** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열). v0.5: HMI 신선도는 연결별 기준선 대비(시계 차 무관), 접속 5s·무수신 4s 제한. v0.6: 늦은 도착 5s면 기준선 재설정 재접속(실패로 세지 않음), capture_ts 정밀도. v0.7: 재설정 시점(5~6.25s)·궤적 유지, capture_ts u64 범위. v0.8: 재설정 시계는 stats에서만, 느린 재설정 접속은 궤적 분리, link_status null 규칙. v0.9: 궤적은 텔레메트리 seq 간격(위치 없이 10표본)으로 끊음(v0.8의 접속 시간 기준 대체). v0.10: seq 역행, 재설정 창 안의 차량 LOST 한계 |
+| 03_SDD.md (UGVC-SDD-001) | **v0.2.7 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열), 명령 재전송 설계안. v0.2: 8장 HMI 구조(`HmiController`, 경계 파서, 순수 `receiveText`·`apply`·`view`·`trackSync.planDraw`, 연결 범위 `session`, 재접속·신선도·기준선 재설정 `resync`(접속 이유 `cause`), 화면 판정 `present()`(상태 패널 행 포함), 궤적 조각 그리기, 궤적 끊김은 마지막 유효 위치와의 seq 간격 `lastFixSeq`) |
+| 04_STP.md (UGVC-STP-001) | **v0.12 초안** | TC-COM-001~008(GW), TC-HMI-001·002·006·007, TC-QUAL-001. 수준 U/I/R + D(시연 점검, `hmi/e2e/smoke.mjs`, 시계 차 ±로도 실행). `tools/check_stp_tests.py`가 STP 이름(C++ gtest 목록·`pytest --collect-only`·`vitest list --json`)과 시험 이름의 REQ ID(형식, SRS 존재 여부)를 검사하고 TC 표 "테스트" 열에서 해석하지 못한 항목이 있으면 실패(자체 시험 `tools/tests/`). HMI 시험은 describe 없이 it 제목 = 시험 이름. CMD·SAFE 등은 구현 주에 추가 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
 | 06_RTM.md | 미작성 | 스크립트로 생성 예정 |
 | adr/ADR-001 영상 전송 경로 분리 | **승인** | |
@@ -95,7 +112,7 @@
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)
 - TBD-02: class_id 목록 (부트캠프 모델 확정 시, 현재 PERSON/VEHICLE/ARMORED_VEHICLE/UNKNOWN)
 - TBD-03: 다중 경로점 일괄 전송 메시지 (고도화)
-- TBD-04: HMI 화면 처리 지연을 GW가 감지할 방법. 지금은 HMI가 IF-03 `ts`로 신선도를 감시 (ICD 7장, HMI 경고 체계에서 구현)
+- TBD-04: HMI 화면 처리 지연을 GW가 감지할 방법. 지금은 HMI가 IF-03 `ts`로 신선도를 감시 (ICD 7장, REQ-HMI-006 구현됨. 경고 체계에서 경고로 연결)
 
 ---
 
@@ -106,15 +123,16 @@
 | 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
 | 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 이어서 SRS·ICD v0.2, SDD 초안, ADR-003(PR #10), thermos·interrogate 검증과 출력 경로 수정·추적성 정리·구조 개편(PR #11~#13). 11/11 기준 일정보다 앞섬 |
-| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | WebSocket 중계 완료 (feat/ws-relay), HMI 뼈대 다음 |
+| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | WebSocket 중계 완료 (PR #16), HMI 뼈대 완료 (feat/hmi-skeleton) |
 | 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
 | 12월 4주 | README, 시연 영상, 포트폴리오 PDF, STR·RTM 정리 | |
 
 ## 6. 바로 다음 할 일
 
-1. HMI 뼈대: Vue 3 + TS + Leaflet, IF-03(`ws://127.0.0.1:8080/ws`) 수신, 지도(위치·궤적), 상태 패널(링크·유실률·배터리)
-2. SDD에 HMI 구조를 새 장으로 추가 (지금 8장은 미정 사항)
+1. 12월 1–2주 작업 당겨서 시작: COMMAND/ACK 재전송(SDD 6장 설계안), HEARTBEAT·Failsafe(SIM), REQ-CMD-006 REJECTED_INVALID
+2. HMI: 명령 패널, 경고 체계(REQ-HMI-003·004, 신선도 STALE를 경고 입력으로), 경로점 표시(REQ-HMI-001)
+3. 후속 이슈 #17, #18
 
 ---
 
@@ -134,4 +152,4 @@ Single-context: 루트 `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ### PR 리뷰
 
-PR 독립 리뷰는 새 세션에서 `/review-pr <PR 번호>`로 실행한다 (`.claude/skills/review-pr/`). 위험도 등급별 리뷰 조합과 PR 코멘트 양식이 들어 있다.
+PR 독립 리뷰는 새 세션에서 `/review-pr <PR 번호>`로 실행한다 (`.claude/skills/review-pr/`). 위험도 등급별 리뷰 조합, 지적 구분(제품 동작 / 시험·도구·문서)과 병합 판정(3장 "병합 기준"), PR 코멘트 양식이 들어 있다.

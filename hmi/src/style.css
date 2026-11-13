@@ -1,0 +1,15 @@
+:root {
+  --bg: #11161c;
+  --panel: #1a2129;
+  --line: #2b3540;
+  --text: #d8e0e8;
+  --muted: #8a97a5;
+  --ok: #2fb36b;
+  --warn: #e0a526;
+  --bad: #e0483e;
+  font-family: system-ui, "Noto Sans KR", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; height: 100%; }
