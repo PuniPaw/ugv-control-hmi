@@ -50,7 +50,11 @@ def sim_uplink(gateway):
 
 @pytest.fixture
 def restart_gateway(gateway):
-    """GW를 같은 포트로 다시 시작하는 함수. 처음 GW는 멈추고, 새 GW는 시험이 끝나면 멈춘다."""
+    """GW를 같은 포트로 다시 시작하는 함수. 처음 GW는 멈추고, 새 GW는 시험이 끝나면 멈춘다.
+
+    재시작 뒤에는 반환값만 쓴다: 처음 `gateway` 객체는 끝난 프로세스(이전 stderr)를 가리킨다.
+    `gateway` fixture teardown이 끝난 프로세스에 stop을 한 번 더 부르지만 해는 없다.
+    """
     started = []
 
     def restart():

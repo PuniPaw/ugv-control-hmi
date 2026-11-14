@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.3.2 (초안) |
+| 버전 | v0.3.3 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.6, UGVC-ICD-001 v0.12, UGVC-STP-001 v0.14, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-STP-001 v0.16, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -27,6 +27,7 @@
 | v0.3 | 2026-11-14 | 6장 명령 재전송을 설계안에서 구현으로(REQ-CMD-002·003·005·006): `CommandTracker`(대기 목록·이벤트 variant), IF-03 `command` 경계 파서, SIM `CommandResponder`. 2장 모듈 표에 반영 |
 | v0.3.1 | 2026-11-14 | 6장 PR #24 1차 리뷰 반영: cmd_id 시작값(시각), req_id 규칙(`recent_`, `reject`, `CommandIgnored`), 예정 시각 기준 재전송, ACK의 규칙 ⑨ 제외, `CommandRequest`를 gateway 소유로(if03 → gateway 한 방향) |
 | v0.3.2 | 2026-11-14 | 6.1 PR #24 2차 리뷰 반영: `reject`가 거절한 req_id를 `recent_`에 남김(`request` 없음), 판정이 1.0s 이상 늦으면 `due = now + 1.0s`, ACK는 유실 계산에서도 제외. 형식 오류 응답 주체(`app` → `CommandTracker`)와 유효 ACK 검증 범위(①~⑧) 문구 정정 |
+| v0.3.3 | 2026-11-14 | 6.1 PR #24 3차 리뷰 반영: 거절 기록을 `rejected_`로 분리(상한 따로), 늦은 판정 규칙 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`, `kJudgePeriod`를 tracker 헤더로. 관련 문서 버전 갱신 |
 
 ---
 
@@ -175,11 +176,11 @@ sequenceDiagram
 ### 6.1 GW
 
 - **경계 검증(`if03::parse_command`).** HMI 텍스트는 여기서만 검사하고 `std::variant<CommandRequest, CommandParseError>`로 돌려준다. 예외를 던지지 않는다(`allow_exceptions=false`, 4096바이트 상한). WAYPOINT 좌표는 도 단위 범위를 먼저 검사하고 `llround`로 1e-7 deg 정수로 바꾸므로 int32 넘침이 없다. 실패해도 req_id를 읽었으면 함께 돌려준다 → `app`이 `CommandTracker::reject`에 넘기고, 응답 여부는 tracker가 정한다.
-- **`CommandTracker`(순수 로직, `IClock` 주입).** 대기 목록 `pending_`의 원소는 `{CommandRequest, Command, sends, due}`이고, 결과가 나간 명령은 `recent_`(60초, 최근 256개)에 `{CommandRequest, CommandResult, at}`로 남는다. `CommandRequest`는 gateway가 가지고 `if03::parse_command`가 만든다(if03이 gateway를 쓰는 한 방향, 2장).
+- **`CommandTracker`(순수 로직, `IClock` 주입).** 대기 목록 `pending_`의 원소는 `{CommandRequest, Command, sends, due}`이고, 결과가 나간 송신 명령은 `recent_`에, 형식 오류 거절은 `rejected_`에 `{optional<CommandRequest>, CommandResult, at}`로 남는다(60초, 각 최근 256개. 거절은 `request`가 없음). 두 목록의 상한을 따로 두어 SIM에 가지 않는 입력이 실행된 명령의 기억을 밀어내지 않는다. `CommandRequest`는 gateway가 가지고 `if03::parse_command`가 만든다(if03이 gateway를 쓰는 한 방향, 2장).
   - cmd_id 시작값은 `initial_cmd_id(epoch_ms) = epoch_ms / 100`(하위 32비트, 0이면 1)이다. GW를 다시 시작해도 SIM이 기억하는 앞 GW의 번호를 다시 쓰지 않는다(ICD 7.3, PR #24 리뷰 #1).
   - `submit`: req_id가 대기 중이면 무시(`CommandIgnored`). `recent_`에 있으면 내용이 같을 때 같은 결과를 `repeated`로 다시 내고, 다르면 무시한다. 그 밖은 cmd_id를 발급하고 바로 보낼 `Command`를 돌려준다.
-  - `reject`: 형식 오류 명령의 req_id. 새 req_id면 REJECTED_INVALID(cmd_id 없음, attempts 0) 결과를 내고 `recent_`에 명령 내용 없이(`request` = `nullopt`) 남긴다. 최근에 형식 오류로 거절한 req_id면 같은 거절을 `repeated`로 다시 내고, 대기 중이거나 올바른 명령에 쓰인 req_id면 무시한다. `submit`도 거절한 req_id로 온 명령은 무시한다. 그래서 한 req_id의 결과는 하나뿐이다.
-  - `poll`(50ms 판정 주기): `due`(송신 예정 시각 + 1.0s)가 지난 원소를 송신 횟수 4 미만이면 다시 보내고 `due += 1.0s`, 4이면 TIMEOUT으로 확정한다. 예정 시각 기준이라 판정 주기의 늦음이 쌓이지 않는다. 판정이 1.0s 이상 늦었으면 `due = now + 1.0s`로 다시 잡아 밀린 재전송을 몰아 보내지 않는다. 소켓은 모르고 보낼 명령만 돌려준다.
+  - `reject`: 형식 오류 명령의 req_id. 새 req_id면 REJECTED_INVALID(cmd_id 없음, attempts 0) 결과를 내고 `recent_`에 명령 내용 없이(`request` = `nullopt`) 남긴다(`rejected_`). 최근에 형식 오류로 거절한 req_id면 같은 거절을 `repeated`로 다시 내고, 대기 중이거나 올바른 명령에 쓰인 req_id면 무시한다. `submit`도 거절한 req_id로 온 명령은 무시한다. 그래서 한 req_id의 결과는 하나뿐이다.
+  - `poll`(50ms 판정 주기): `due`(송신 예정 시각 + 1.0s)가 지난 원소를 송신 횟수 4 미만이면 다시 보내고 `due += 1.0s`, 4이면 TIMEOUT으로 확정한다. 예정 시각 기준이라 판정 주기의 늦음이 쌓이지 않는다. 다만 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`로 잡아 판정이 늦어 송신이 늦었을 때도 다음 판정을 실제 송신 0.95s 뒤보다 앞당기지 않는다. 판정 주기 `kJudgePeriod`(50ms)는 `command_tracker.hpp`에 두고 `app`의 타이머가 같은 값을 쓴다. 소켓은 모르고 보낼 명령만 돌려준다.
   - `on_ack`: 대기 중인 cmd_id면 표 6-5 result로 확정해 `recent_`로 옮긴다. 늦은 ACK, 모르는 cmd_id, 정의 밖 result는 `UnknownAck`만 낸다(대기 중 명령은 그대로).
   - 이벤트는 `std::variant<CommandSent, CommandResult, UnknownAck, CommandIgnored>`로 모아 `take_events()`로 꺼낸다. `app`은 `std::visit` + `core::overloaded`로 처리하므로 새 이벤트 종류를 처리하지 않으면 컴파일 오류가 난다(REQ-CMD-005).
 - **ACK와 규칙 ⑨.** `Gateway::on_datagram`은 ACK 스트림에 seq 순서 검사와 유실 계산을 하지 않는다(ICD 9장). SIM 수신부만 다시 시작하면 ACK seq가 0부터 시작하는데, 차량 링크는 텔레메트리 때문에 CONNECTED라 기준값 재설정이 일어나지 않아 ACK가 모두 order로 버려졌기 때문이다.

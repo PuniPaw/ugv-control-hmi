@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.15 (초안) |
+| 버전 | v0.16 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.6, UGVC-ICD-001 v0.12, UGVC-SDD-001 v0.3.1, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-SDD-001 v0.3.3, ADR-002 |
 
 ## 개정 이력
 
@@ -27,6 +27,7 @@
 | v0.13 | 2026-11-14 | 명령 중계 구현: TC-CMD-002-01~09(GW 재전송·IF-03 command·cmd_result), TC-CMD-003-01~05(SIM 중복 cmd_id), TC-CMD-005-01~03(명령 이벤트 기록), TC-CMD-006-01~04(SIM REJECTED_INVALID, xfail 해제). TC-COM-008-05·07 기대 결과를 명령 처리 구현에 맞춤(거절 사유와 함께 기록) |
 | v0.14 | 2026-11-14 | PR #24 1차 리뷰 반영: TC-CMD-002-05를 req_id 규칙(대기 중·최근 결과·형식 오류)으로 바꾸고 TC-CMD-002-10~13(재전송 예정 시각, ACK 스트림 ⑨ 제외, SIM 수신부 재시작, 같은 req_id 다른 HMI·결과 전체 전달·형식 오류), TC-CMD-003-06·07(GW 재시작 cmd_id, 결과를 놓친 HMI 재송신) 추가 |
 | v0.15 | 2026-11-14 | PR #24 2차 리뷰 반영: TC-COM-005-07을 ACK 스트림 유실 제외로 바꿈(ACK가 유실 계산에서 빠져 기존 "스트림 독립" 시험이 아무것도 증명하지 못하게 됨), TC-COM-006-06(ACK 스트림 ⑨ 제외) 추가, TC-CMD-002-11은 같은 시험을 가리킴. TC-CMD-003-07을 TC-CMD-002-14로 옮김(req_id 규칙은 GW 동작이라 SRS v0.7 REQ-CMD-002). TC-CMD-002-15~17(거절한 req_id 기억, 판정이 1s 넘게 늦은 재전송, 고친 명령을 거절한 req_id로) 추가 |
+| v0.16 | 2026-11-14 | PR #24 3차 리뷰 반영: TC-CMD-002-11 삭제(TC-COM-006-06과 같은 시험이라 REQ-CMD-002 추적에 REQ-COM-006 시험이 끼었음), TC-CMD-002-16 기대 시각을 새 규칙(실제 송신 + 0.95s)으로, TC-CMD-002-18(0.9s 늦은 판정)·19(거절 기록과 송신 기록의 상한 분리) 추가. 관련 문서 버전 갱신 |
 
 ---
 
@@ -312,13 +313,14 @@ U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`ugvc_sim.uplink`)과 WebSoc
 | TC-CMD-002-08 | I | SIM 정상 / 첫 COMMAND 유실(`--drop-first 1`) / SIM 없음 / WAYPOINT | ACCEPTED attempts 1(1s 안, stdout과 WS가 같은 결과) / 0.95~1.6s에 같은 cmd_id로 재전송해 attempts 2 / 3.95~4.6s에 TIMEOUT attempts 4 / WAYPOINT가 SIM에 cmd_type 3으로 한 번 실행 | `test_REQ_CMD_002_command_accepted_on_first_send`, `test_REQ_CMD_002_lost_first_send_is_retransmitted_after_1s`, `test_REQ_CMD_002_no_ack_times_out_after_three_retransmits`, `test_REQ_CMD_002_waypoint_is_relayed` |
 | TC-CMD-002-09 | I | HMI가 범위 밖 WAYPOINT(위도 91) 송신 | SIM에 보내지 않고 0.5s 안에 cmd_result REJECTED_INVALID(cmd_id null, attempts 0) | `test_REQ_CMD_002_invalid_hmi_command_is_rejected_without_sending` |
 | TC-CMD-002-10 | U | 판정이 40ms 늦은 재전송 뒤 이어지는 송신 | 다음 송신은 예정 시각(2000·3000ms)에, TIMEOUT은 4000ms에 (늦음이 쌓이지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_schedule_does_not_drift_with_late_polls` |
-| TC-CMD-002-11 | U | 텔레메트리로 CONNECTED인 차량 링크에서 ACK seq 42 다음 0, 0 | ACK는 모두 받음(규칙 ⑨ 제외), 텔레메트리 역순은 그대로 order | `GatewayFixture.REQ_COM_006_ack_stream_is_not_order_checked` (TC-COM-006-06과 같은 시험) |
 | TC-CMD-002-12 | I | 텔레메트리 10Hz 송신 중 SIM 수신부만 다시 시작한 뒤 명령 | ACCEPTED attempts 1 (ACK가 order로 버려지지 않음) | `test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted` |
 | TC-CMD-002-13 | I | (a) 대기 중인 req_id로 형식이 틀린 명령 (b) HMI A의 명령이 대기 중일 때 HMI B가 같은 req_id로 다른 명령 | (a) 그 req_id의 결과는 ACCEPTED 하나뿐, 무시 기록 (b) B의 명령은 SIM에 가지 않고 무시 기록, A·B 모두 같은 결과 하나를 받음(모든 HMI 전달) | `test_REQ_CMD_002_invalid_command_with_pending_req_id_does_not_give_a_second_result`, `test_REQ_CMD_002_same_req_id_from_another_hmi_is_not_sent_and_both_hmis_get_the_result` |
 | TC-CMD-002-14 | I | 결과를 받은 HMI가 다시 접속해 같은 req_id·같은 WAYPOINT를 다시 보냄 | 0.5s 안에 같은 cmd_result(같은 cmd_id)를 다시 받고, SIM 실행은 한 번 | `test_REQ_CMD_002_hmi_resending_after_missing_the_result_does_not_execute_twice` |
 | TC-CMD-002-15 | U | 형식 오류로 거절한 req_id로 올바른 명령, 같은 형식 오류 다시, 60초 뒤 | 올바른 명령은 보내지 않고 무시 기록, 같은 형식 오류에는 같은 거절을 다시(repeated), 60초 뒤에는 새 명령으로 보냄 | `CommandTrackerTest.REQ_CMD_002_rejected_req_id_is_remembered_so_it_has_one_result` |
-| TC-CMD-002-16 | U | 첫 판정이 3.5s 늦음(io 스레드 정지) | 그때 한 번만 재전송하고 4.5·5.5s에 다음 송신, 마지막 송신 1.0s 뒤(6.5s)에 TIMEOUT (밀린 재전송을 몰아 보내지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_after_a_poll_stall_still_waits_1s_for_ack` |
+| TC-CMD-002-16 | U | 첫 판정이 3.5s 늦음(io 스레드 정지) | 그때 한 번만 재전송하고 4.45·5.45s에 다음 송신(실제 송신 + 0.95s), 마지막 송신 1.0s 뒤(6.45s)에 TIMEOUT (밀린 재전송을 몰아 보내지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_after_a_poll_stall_still_waits_for_ack` |
 | TC-CMD-002-17 | I | HMI가 req_id `X`로 위도 91 WAYPOINT, 0.3s 뒤 같은 `X`로 고친 좌표, 다시 위도 91 | 결과는 REJECTED_INVALID 두 번(두 번째는 repeated)뿐, SIM에 COMMAND 없음, 고친 명령은 무시 기록 | `test_REQ_CMD_002_corrected_command_with_a_rejected_req_id_is_not_sent` |
+| TC-CMD-002-18 | U | 2번째 송신 판정이 0.9s 늦음(1.9s) | 3번째 송신은 2.0s가 아니라 2.85s(1.9 + 0.95), 4번째 3.85s, TIMEOUT 4.85s (ACK 대기가 줄지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_0_9s_late_does_not_shorten_the_next_wait` |
+| TC-CMD-002-19 | U | (a) ACCEPTED 뒤 서로 다른 req_id의 형식 오류 257개, 같은 명령 재제출 (b) 형식 오류 거절 뒤 송신 명령 257개, 거절한 req_id로 고친 명령 | (a) 다시 보내지 않고 같은 결과를 다시 알림 (b) 보내지 않고 무시 기록 (두 기억의 상한이 서로 밀어내지 않음) | `CommandTrackerTest.REQ_CMD_002_rejects_do_not_push_out_results_of_sent_commands`, `CommandTrackerTest.REQ_CMD_002_sent_commands_do_not_push_out_rejects` |
 
 ### 3.15 REQ-CMD-003 중복 cmd_id 재실행 금지 (SIM)
 
