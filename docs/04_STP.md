@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.13 (초안) |
+| 버전 | v0.14 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.5, UGVC-ICD-001 v0.11, UGVC-SDD-001 v0.3, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.6, UGVC-ICD-001 v0.12, UGVC-SDD-001 v0.3.1, ADR-002 |
 
 ## 개정 이력
 
@@ -25,6 +25,7 @@
 | v0.11 | 2026-11-12 | PR #19 7차 리뷰 반영: TC-HMI-001-09를 seq 간격 기준(느린 접속·버린 적체 두 경우)으로 바꾸고 TC-HMI-001-10(간격 경계 9·10, u32 순환) 추가, TC-HMI-006-16에 stats→tick 위상 4가지와 위상별 정확한 재설정 시각, TC-HMI-002-07에 폐기 수. 2.7에 도구 자체 시험 예외. `check_stp_tests.py`는 TC 행의 모든 칸에서 시험 이름을 모으고, "테스트" 열이 없는 표의 TC 행을 오류로, 대문자 REQ 후보는 REQUEST 등을 제외 |
 | v0.12 | 2026-11-12 | PR #19 8차 리뷰 반영: TC-HMI-001-09를 두 시험으로 나누고 (b)의 주장 범위를 실제 입력으로 좁힘, TC-HMI-001-10에 seq 역행·같은 seq, TC-HMI-006-16 기대 결과를 ICD 범위(5000 이상 5250 미만)로, 폐기 수 표시 확인을 REQ-HMI-007 시험으로(TC-HMI-007-05). 2.7에 REQ 모양 약어 금지·도구 커밋 규칙. `check_stp_tests.py`는 표 밖 줄·앞 공백 표 행도 수집, TC 행은 머리 행으로 보지 않음, 옵션만 있는 TC 행 오류, REQ 후보를 ID 모양으로 좁힘 |
 | v0.13 | 2026-11-14 | 명령 중계 구현: TC-CMD-002-01~09(GW 재전송·IF-03 command·cmd_result), TC-CMD-003-01~05(SIM 중복 cmd_id), TC-CMD-005-01~03(명령 이벤트 기록), TC-CMD-006-01~04(SIM REJECTED_INVALID, xfail 해제). TC-COM-008-05·07 기대 결과를 명령 처리 구현에 맞춤(거절 사유와 함께 기록) |
+| v0.14 | 2026-11-14 | PR #24 1차 리뷰 반영: TC-CMD-002-05를 req_id 규칙(대기 중·최근 결과·형식 오류)으로 바꾸고 TC-CMD-002-10~13(재전송 예정 시각, ACK 스트림 ⑨ 제외, SIM 수신부 재시작, 같은 req_id 다른 HMI·결과 전체 전달·형식 오류), TC-CMD-003-06·07(GW 재시작 cmd_id, 결과를 놓친 HMI 재송신) 추가 |
 
 ---
 
@@ -299,15 +300,19 @@ U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`ugvc_sim.uplink`)과 WebSoc
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-CMD-002-01 | U | 명령 접수 | 바로 송신(attempt 1), cmd_id는 1부터, u32 순환 시 0을 건너뜀 | `CommandTrackerTest.REQ_CMD_002_first_send_is_immediate_attempt_1`, `CommandTrackerTest.REQ_CMD_002_cmd_id_starts_at_1_and_skips_0_on_wrap` |
+| TC-CMD-002-01 | U | 명령 접수 | 바로 송신(attempt 1), u32 순환 시 0을 건너뜀, 시작값은 0.1초 단위 시각(1초 뒤 다시 시작한 GW는 10 뒤부터) | `CommandTrackerTest.REQ_CMD_002_first_send_is_immediate_attempt_1`, `CommandTrackerTest.REQ_CMD_002_cmd_id_starts_at_1_and_skips_0_on_wrap`, `CommandTrackerTest.REQ_CMD_002_cmd_id_start_follows_the_clock_so_a_restarted_gw_does_not_reuse_ids` |
 | TC-CMD-002-02 | U | ACK 없이 999ms·1000ms | 999ms에는 재전송 없음, 1000ms에 같은 cmd_id로 재전송 | `CommandTrackerTest.REQ_CMD_002_resend_at_1000ms_not_before_with_same_cmd_id` |
 | TC-CMD-002-03 | U | ACK가 끝내 없음 | 0·1·2·3s에 4번 송신, 3999ms에는 결과 없음, 4000ms에 TIMEOUT attempts 4, 다섯 번째 송신 없음 | `CommandTrackerTest.REQ_CMD_002_no_ack_sends_four_times_then_timeout_at_4s` |
 | TC-CMD-002-04 | U | 결과 확정 전 ACK, ACK result 3종 | 해당 result로 확정(attempts = 송신 횟수), 이후 재전송 없음 | `CommandTrackerTest.REQ_CMD_002_ack_before_timeout_gives_accepted_with_attempts_and_stops_resending`, `CommandTrackerTest.REQ_CMD_002_ack_results_are_mapped` |
-| TC-CMD-002-05 | U | TIMEOUT 뒤 늦은 ACK, 같은 req_id 재접수, 두 명령 동시 | 결과 바뀌지 않음, 결과 전 같은 req_id는 무시·결과 뒤 재사용 가능, 명령마다 타이머 독립 | `CommandTrackerTest.REQ_CMD_002_late_ack_after_timeout_is_unknown_and_gives_no_result`, `CommandTrackerTest.REQ_CMD_002_same_req_id_while_pending_is_ignored`, `CommandTrackerTest.REQ_CMD_002_req_id_can_be_reused_after_result`, `CommandTrackerTest.REQ_CMD_002_concurrent_commands_have_independent_timers` |
+| TC-CMD-002-05 | U | 같은 req_id 재제출(대기 중, 결과 후 60s 안·같은 내용, 다른 내용, 60s 뒤), 기억 상한, 형식 오류 거절, 두 명령 동시, TIMEOUT 뒤 늦은 ACK | 대기 중이면 보내지 않고 기록, 결과 후 같은 내용이면 같은 결과를 다시 알림(재송신 없음), 다른 내용은 무시·기록, 60s 뒤나 256개 넘은 오래된 것은 새 명령, 형식 오류는 req_id가 쓰이는 중이면 무시·아니면 REJECTED_INVALID(n=0), 명령마다 타이머 독립, 늦은 ACK는 결과를 바꾸지 않음 | `CommandTrackerTest.REQ_CMD_002_same_req_id_while_pending_is_ignored_and_logged`, `CommandTrackerTest.REQ_CMD_002_resubmitted_req_id_gets_the_same_result_without_resending`, `CommandTrackerTest.REQ_CMD_002_recent_results_are_bounded`, `CommandTrackerTest.REQ_CMD_002_invalid_command_is_rejected_unless_its_req_id_is_in_use`, `CommandTrackerTest.REQ_CMD_002_concurrent_commands_have_independent_timers`, `CommandTrackerTest.REQ_CMD_002_late_ack_after_timeout_is_unknown_and_gives_no_result` |
 | TC-CMD-002-06 | U | IF-03 command 파싱: STOP·RTB, ts 생략, WAYPOINT 도 → 1e-7 반올림·경계값, 범위 밖·누락·비유한 좌표, 정의 밖 cmd_type, req_id 누락·빈 값·65자, 깨진 입력 | 정상은 CommandRequest, 형식 오류는 거절(req_id를 읽었으면 함께 반환), 어떤 입력에도 예외 없음 | `If03Command.REQ_CMD_002_stop_and_rtb_ignore_coordinates`, `If03Command.REQ_CMD_002_ts_is_optional`, `If03Command.REQ_CMD_002_waypoint_converts_to_e7_with_rounding`, `If03Command.REQ_CMD_002_waypoint_accepts_range_limits_and_integers`, `If03Command.REQ_CMD_002_waypoint_out_of_range_or_missing_or_non_finite_is_rejected_with_req_id`, `If03Command.REQ_CMD_002_overflowing_or_nan_number_is_rejected`, `If03Command.REQ_CMD_002_unknown_or_non_string_cmd_type_is_rejected_with_req_id`, `If03Command.REQ_CMD_002_bad_req_id_is_rejected_without_req_id`, `If03Command.REQ_CMD_002_malformed_input_is_rejected_without_req_id` |
 | TC-CMD-002-07 | U | cmd_result JSON, COMMAND 인코딩, cmd_type 이름 | ICD 7.1 형식(cmd_id 없으면 null, result 이름 4종), 공용 벡터와 같은 바이트 | `If03Command.REQ_CMD_002_cmd_result_json_shape`, `If03Command.REQ_CMD_002_cmd_result_without_cmd_id_is_null`, `If03Command.REQ_CMD_002_cmd_result_names_all_results`, `Codec.REQ_QUAL_001_command_matches_vectors`, `Codec.REQ_CMD_002_cmd_type_names` |
 | TC-CMD-002-08 | I | SIM 정상 / 첫 COMMAND 유실(`--drop-first 1`) / SIM 없음 / WAYPOINT | ACCEPTED attempts 1(1s 안, stdout과 WS가 같은 결과) / 0.95~1.6s에 같은 cmd_id로 재전송해 attempts 2 / 3.95~4.6s에 TIMEOUT attempts 4 / WAYPOINT가 SIM에 cmd_type 3으로 한 번 실행 | `test_REQ_CMD_002_command_accepted_on_first_send`, `test_REQ_CMD_002_lost_first_send_is_retransmitted_after_1s`, `test_REQ_CMD_002_no_ack_times_out_after_three_retransmits`, `test_REQ_CMD_002_waypoint_is_relayed` |
 | TC-CMD-002-09 | I | HMI가 범위 밖 WAYPOINT(위도 91) 송신 | SIM에 보내지 않고 0.5s 안에 cmd_result REJECTED_INVALID(cmd_id null, attempts 0) | `test_REQ_CMD_002_invalid_hmi_command_is_rejected_without_sending` |
+| TC-CMD-002-10 | U | 판정이 40ms 늦은 재전송 뒤 이어지는 송신 | 다음 송신은 예정 시각(2000·3000ms)에, TIMEOUT은 4000ms에 (늦음이 쌓이지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_schedule_does_not_drift_with_late_polls` |
+| TC-CMD-002-11 | U | 텔레메트리로 CONNECTED인 차량 링크에서 ACK seq 42 다음 0, 0 | ACK는 모두 받음(규칙 ⑨ 제외), 텔레메트리 역순은 그대로 order | `GatewayFixture.REQ_CMD_002_ack_seq_restart_is_accepted_while_connected` |
+| TC-CMD-002-12 | I | 텔레메트리 10Hz 송신 중 SIM 수신부만 다시 시작한 뒤 명령 | ACCEPTED attempts 1 (ACK가 order로 버려지지 않음) | `test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted` |
+| TC-CMD-002-13 | I | (a) 대기 중인 req_id로 형식이 틀린 명령 (b) HMI A의 명령이 대기 중일 때 HMI B가 같은 req_id로 다른 명령 | (a) 그 req_id의 결과는 ACCEPTED 하나뿐, 무시 기록 (b) B의 명령은 SIM에 가지 않고 무시 기록, A·B 모두 같은 결과 하나를 받음(모든 HMI 전달) | `test_REQ_CMD_002_invalid_command_with_pending_req_id_does_not_give_a_second_result`, `test_REQ_CMD_002_same_req_id_from_another_hmi_is_not_sent_and_both_hmis_get_the_result` |
 
 ### 3.15 REQ-CMD-003 중복 cmd_id 재실행 금지 (SIM)
 
@@ -318,6 +323,8 @@ U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`ugvc_sim.uplink`)과 WebSoc
 | TC-CMD-003-03 | U | ACK 프레임 | ACK(5B)로 검증 통과, ACK 스트림 seq 0·1… | `test_REQ_CMD_003_ack_frame_is_valid_and_seq_increments` |
 | TC-CMD-003-04 | U | 실제 UDP로 SIM 수신부 구동: 중복 cmd_id, 첫 COMMAND 무시(`--drop-first 1`) | 같은 ACK 두 번·executed true→false, 무시한 뒤 재전송에 ACK | `test_REQ_CMD_003_listen_duplicate_gets_same_ack`, `test_REQ_CMD_003_drop_first_ignores_first_command_then_acks_retransmission` |
 | TC-CMD-003-05 | I | SIM의 ACK가 GW에 닿지 않음(다른 포트로 보냄) | GW는 같은 cmd_id로 4번 보내고 TIMEOUT, SIM은 4번 모두 같은 ACCEPTED ACK, 실행은 처음 한 번 | `test_REQ_CMD_003_retransmitted_command_executes_once` |
+| TC-CMD-003-06 | I | SIM을 띄운 채 GW를 다시 시작하고 새 명령 | 새 cmd_id가 앞 GW의 것과 다르고 SIM이 두 명령 모두 실행 | `test_REQ_CMD_003_restarted_gw_does_not_reuse_cmd_ids` |
+| TC-CMD-003-07 | I | 결과를 받은 HMI가 다시 접속해 같은 req_id·같은 WAYPOINT를 다시 보냄 | 0.5s 안에 같은 cmd_result(같은 cmd_id)를 다시 받고, SIM 실행은 한 번 | `test_REQ_CMD_003_hmi_resending_after_missing_the_result_does_not_execute_twice` |
 
 ### 3.16 REQ-CMD-005 명령 이벤트 기록 (GW)
 
