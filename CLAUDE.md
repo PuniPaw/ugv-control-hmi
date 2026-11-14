@@ -124,15 +124,15 @@
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
 | 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 이어서 SRS·ICD v0.2, SDD 초안, ADR-003(PR #10), thermos·interrogate 검증과 출력 경로 수정·추적성 정리·구조 개편(PR #11~#13). 11/11 기준 일정보다 앞섬 |
 | **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | 완료: WebSocket 중계 (PR #16), HMI 뼈대 (PR #19, 독립 리뷰 8차. 연결 감시·재접속·신선도 REQ-HMI-006, 수신 검증 REQ-HMI-007 신설). 이 과정에서 병합 기준을 정함(3장) |
-| **12월 1–2주 (당겨서 시작)** | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | COMMAND/ACK 재전송 구현 (feat/cmd-retransmit: GW `CommandTracker`, SIM ACK·중복 cmd_id·REJECTED_INVALID) |
+| **12월 1–2주 (당겨서 시작)** | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 완료: COMMAND/ACK 재전송 (PR #24, 독립 리뷰 3차. GW `CommandTracker`·req_id 규칙·시각 기반 cmd_id, SIM ACK·중복 cmd_id·REJECTED_INVALID. 3차에 남은 제품 동작 중간 1건은 사용자 판단으로 고치고 병합). 다음: HEARTBEAT·Failsafe (feat/heartbeat-failsafe) |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
 | 12월 4주 | README, 시연 영상, 포트폴리오 PDF, STR·RTM 정리 | |
 
 ## 6. 바로 다음 할 일
 
-1. COMMAND/ACK 재전송 PR 리뷰·병합 (feat/cmd-retransmit)
-2. HEARTBEAT·Failsafe(SIM, 한 프로세스로 합치며 명령 실행을 주행 모사에 반영), 이어서 HMI 명령 패널, 경고 체계(REQ-HMI-003·004, 신선도 STALE를 경고 입력으로), 경로점 표시(REQ-HMI-001)
-3. 후속 이슈 #17, #18, #22(REQ ID 여러 개 검사), #23(재설정 창 안 SIM 재시작 궤적)
+1. HEARTBEAT·Failsafe(SIM, 한 프로세스로 합치며 명령 실행을 주행 모사에 반영. REJECTED_STATE, ACK seq 처리 #28도 함께 검토)
+2. HMI 명령 패널(REQ-CMD-001, 새 연결 뒤 자동 재송신 금지·재시도는 새 req_id #27), 경고 체계(REQ-HMI-003·004, 신선도 STALE를 경고 입력으로), 경로점 표시(REQ-HMI-001)
+3. 후속 이슈 #17, #18, #22(REQ ID 여러 개 검사), #23(재설정 창 안 SIM 재시작 궤적), PR #24에서 나온 #25·#26·#29·#30·#31
 
 ---
 
