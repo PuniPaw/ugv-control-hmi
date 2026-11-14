@@ -14,7 +14,13 @@ from pathlib import Path
 import pytest
 import websockets
 
+from conftest import start_gateway, stop_gateway
+
 REPO = Path(__file__).resolve().parents[2]
+
+
+def _sim_env() -> dict:
+    return {"PYTHONPATH": f"{REPO / 'python'}:{REPO / 'sim'}", "PATH": "/usr/bin:/bin"}
 
 
 def _ws_url(gateway):
@@ -30,8 +36,7 @@ def sim_uplink(gateway):
         p = subprocess.Popen(
             [sys.executable, "-m", "ugvc_sim.uplink", "--port", str(gateway.sim_port),
              "--gw-port", str(gateway.vehicle_port if gw_port is None else gw_port), "--drop-first", str(drop_first)],
-            cwd=REPO / "sim", env={"PYTHONPATH": f"{REPO / 'python'}:{REPO / 'sim'}", "PATH": "/usr/bin:/bin"},
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            cwd=REPO / "sim", env=_sim_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         procs.append(p)
         time.sleep(0.3)  # 소켓 바인드
         assert p.poll() is None, p.stderr.read()
@@ -41,6 +46,21 @@ def sim_uplink(gateway):
     for p in procs:
         p.terminate()
         p.wait(timeout=5)
+
+
+@pytest.fixture
+def restart_gateway(gateway):
+    """GW를 같은 포트로 다시 시작하는 함수. 처음 GW는 멈추고, 새 GW는 시험이 끝나면 멈춘다."""
+    started = []
+
+    def restart():
+        stop_gateway(gateway)
+        started.append(start_gateway([gateway.vehicle_port, gateway.detector_port, gateway.sim_port]))
+        return started[-1]
+
+    yield restart
+    for gw in started:
+        stop_gateway(gw)
 
 
 async def _command_and_wait(gateway, command: dict, timeout_s: float):
@@ -186,19 +206,13 @@ async def _collect_results(ws, req_id: str, timeout_s: float) -> list[dict]:
     return out
 
 
-def test_REQ_CMD_003_restarted_gw_does_not_reuse_cmd_ids(gateway, sim_uplink):
+def test_REQ_CMD_003_restarted_gw_does_not_reuse_cmd_ids(gateway, sim_uplink, restart_gateway):
     """SIM을 띄운 채 GW를 다시 시작해도 새 명령의 cmd_id가 앞 GW의 것과 겹치지 않아 SIM이 실행한다 (ICD 7.3)."""
-    from conftest import start_gateway, stop_gateway
-
     sim = sim_uplink()
     first, _ = _run(gateway, {"req_id": "before", "cmd_type": "STOP"}, 3.0)
     assert first is not None and first["data"]["result"] == "ACCEPTED"
-    stop_gateway(gateway)
-    gw2 = start_gateway([gateway.vehicle_port, gateway.detector_port, gateway.sim_port])
-    try:
-        second, _ = _run(gw2, {"req_id": "after", "cmd_type": "WAYPOINT", "lat": 36.1, "lon": 127.7}, 3.0)
-    finally:
-        stop_gateway(gw2)
+    gw2 = restart_gateway()
+    second, _ = _run(gw2, {"req_id": "after", "cmd_type": "WAYPOINT", "lat": 36.1, "lon": 127.7}, 3.0)
     assert second is not None and second["data"]["result"] == "ACCEPTED"
     assert second["data"]["cmd_id"] != first["data"]["cmd_id"]
     assert [(c["cmd_id"], c["executed"]) for c in _sim_commands(sim)] == [
@@ -209,8 +223,7 @@ def test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted(gateway, sim_uplink)
     """텔레메트리로 차량 링크가 CONNECTED인 채 SIM 수신부만 다시 시작해 ACK seq가 0부터 시작해도 결과가 온다."""
     tel = subprocess.Popen(
         [sys.executable, "-m", "ugvc_sim.telemetry_sender", "--port", str(gateway.vehicle_port)],
-        cwd=REPO / "sim", env={"PYTHONPATH": f"{REPO / 'python'}:{REPO / 'sim'}", "PATH": "/usr/bin:/bin"},
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cwd=REPO / "sim", env=_sim_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         sim = sim_uplink()
         for i in range(3):
@@ -260,7 +273,7 @@ def test_REQ_CMD_002_same_req_id_from_another_hmi_is_not_sent_and_both_hmis_get_
     assert _stderr_lines(gateway, 'cmd ignored req="1" reason=req_id pending with different command', 1)
 
 
-def test_REQ_CMD_003_hmi_resending_after_missing_the_result_does_not_execute_twice(gateway, sim_uplink):
+def test_REQ_CMD_002_hmi_resending_after_missing_the_result_does_not_execute_twice(gateway, sim_uplink):
     """결과를 놓친 HMI가 다시 접속해 같은 req_id·같은 명령을 보내면 다시 실행하지 않고 같은 결과를 다시 받는다."""
     sim = sim_uplink()
     cmd = {"req_id": "wp-7", "cmd_type": "WAYPOINT", "lat": 36.124, "lon": 127.766}
@@ -271,3 +284,25 @@ def test_REQ_CMD_003_hmi_resending_after_missing_the_result_does_not_execute_twi
     assert elapsed < 0.5, elapsed
     assert [c["executed"] for c in _sim_commands(sim)] == [True]
     assert _stderr_lines(gateway, 'cmd result req="wp-7"', 2)[-1].rstrip().endswith("(repeated)")
+
+
+def test_REQ_CMD_002_corrected_command_with_a_rejected_req_id_is_not_sent(gateway, sim_uplink):
+    """형식 오류로 거절한 req_id로 고친 명령이 와도 보내지 않는다. 같은 형식 오류는 같은 거절을 다시 받는다.
+    req_id 하나의 결과는 하나뿐이다 (ICD 7.2)."""
+    sim = sim_uplink()
+    bad = {"req_id": "X", "cmd_type": "WAYPOINT", "lat": 91, "lon": 0}
+
+    async def run():
+        async with websockets.connect(_ws_url(gateway)) as ws:
+            await ws.send(json.dumps({"type": "command", "data": bad}))
+            await asyncio.sleep(0.3)
+            await ws.send(json.dumps({"type": "command", "data": dict(bad, lat=36.1)}))
+            await asyncio.sleep(0.3)
+            await ws.send(json.dumps({"type": "command", "data": bad}))
+            return await _collect_results(ws, "X", 1.5)
+
+    results = asyncio.run(run())
+    assert [(r["result"], r["cmd_id"]) for r in results] == [("REJECTED_INVALID", None)] * 2
+    assert _sim_commands(sim) == []
+    assert _stderr_lines(gateway, 'cmd ignored req="X" reason=req_id used by a recent invalid command', 1)
+    assert _stderr_lines(gateway, 'cmd result req="X"', 2)[-1].rstrip().endswith("(repeated)")
