@@ -214,7 +214,7 @@ def test_REQ_COM_008_hmi_text_cannot_forge_diagnostics(gateway):
     time.sleep(0.3)
     lines = [l.rstrip("\n") for l in gateway.stderr_lines]
     assert forged not in lines, "forged diagnostic line"
-    assert any("ws message ignored" in l and '"x\\nlink VEHICLE' in l for l in lines), lines[-3:]
+    assert any("ws message rejected" in l and '"x\\nlink VEHICLE' in l for l in lines), lines[-3:]
 
 
 def test_REQ_COM_008_path_with_query_accepted(gateway):
