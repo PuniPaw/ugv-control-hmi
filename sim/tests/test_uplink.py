@@ -93,7 +93,9 @@ def test_uplink_rejects_datagram_over_1200():
                          ids=[i[0] for i in INVALID] + ["cmd_id_0_no_ack"])
 def test_REQ_CMD_006_acks_rejected_invalid(name, command, expected):
     """범위 밖 명령은 실행하지 않고 REJECTED_INVALID로 ACK한다. cmd_id 0은 응답할 대상이 없어 ACK가 없다."""
-    assert uplink.ack_for_command(_frame(command)) == expected
+    msg = parse_uplink(_frame(command))
+    ack = CommandResponder().on_command(msg).ack if isinstance(msg, (ReceivedCommand, InvalidCommand)) else None
+    assert ack == expected
 
 
 def test_REQ_CMD_006_invalid_command_is_not_executed():

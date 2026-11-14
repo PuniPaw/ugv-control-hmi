@@ -112,14 +112,6 @@ class CommandResponder:
         return CommandOutcome(Ack(cmd.cmd_id, result), cmd if accepted else None)
 
 
-def ack_for_command(frame: bytes) -> Ack | None:
-    """한 COMMAND 프레임에 대한 첫 수신 ACK. COMMAND가 아니거나 폐기 대상(cmd_id 0 포함)이면 None. 상태 없음."""
-    msg = parse_uplink(frame)
-    if not isinstance(msg, (ReceivedCommand, InvalidCommand)):
-        return None
-    return CommandResponder().on_command(msg).ack
-
-
 class HeartbeatWatch:
     """마지막 HEARTBEAT 이후 경과 시간 (REQ-SAFE-001). 시각은 호출자가 넣는다 (time.monotonic 등).
 
