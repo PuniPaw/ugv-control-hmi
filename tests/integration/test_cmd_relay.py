@@ -165,3 +165,109 @@ def test_REQ_CMD_005_req_id_cannot_forge_diagnostic_lines(gateway):
     assert result is not None and result["data"]["req_id"] == forged
     assert not any(line.strip() == "link VEHICLE LOST -> CONNECTED" for line in gateway.stderr_lines)
     assert _stderr_lines(gateway, 'cmd sent req="x\\nlink VEHICLE LOST -> CONNECTED"', 1)
+
+
+def _sim_commands(sim) -> list[dict]:
+    """SIM 수신부를 끝내고 명령 처리 기록(JSON 줄)을 돌려준다."""
+    sim.terminate()
+    return [json.loads(line) for line in sim.communicate(timeout=5)[0].splitlines() if '"command"' in line]
+
+
+async def _collect_results(ws, req_id: str, timeout_s: float) -> list[dict]:
+    """timeout_s 동안 받은 그 req_id의 cmd_result 전부."""
+    out, deadline = [], time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            m = json.loads(await asyncio.wait_for(ws.recv(), deadline - time.monotonic()))
+        except asyncio.TimeoutError:
+            break
+        if m["type"] == "cmd_result" and m["data"]["req_id"] == req_id:
+            out.append(m["data"])
+    return out
+
+
+def test_REQ_CMD_003_restarted_gw_does_not_reuse_cmd_ids(gateway, sim_uplink):
+    """SIM을 띄운 채 GW를 다시 시작해도 새 명령의 cmd_id가 앞 GW의 것과 겹치지 않아 SIM이 실행한다 (ICD 7.3)."""
+    from conftest import start_gateway, stop_gateway
+
+    sim = sim_uplink()
+    first, _ = _run(gateway, {"req_id": "before", "cmd_type": "STOP"}, 3.0)
+    assert first is not None and first["data"]["result"] == "ACCEPTED"
+    stop_gateway(gateway)
+    gw2 = start_gateway([gateway.vehicle_port, gateway.detector_port, gateway.sim_port])
+    try:
+        second, _ = _run(gw2, {"req_id": "after", "cmd_type": "WAYPOINT", "lat": 36.1, "lon": 127.7}, 3.0)
+    finally:
+        stop_gateway(gw2)
+    assert second is not None and second["data"]["result"] == "ACCEPTED"
+    assert second["data"]["cmd_id"] != first["data"]["cmd_id"]
+    assert [(c["cmd_id"], c["executed"]) for c in _sim_commands(sim)] == [
+        (first["data"]["cmd_id"], True), (second["data"]["cmd_id"], True)]
+
+
+def test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted(gateway, sim_uplink):
+    """텔레메트리로 차량 링크가 CONNECTED인 채 SIM 수신부만 다시 시작해 ACK seq가 0부터 시작해도 결과가 온다."""
+    tel = subprocess.Popen(
+        [sys.executable, "-m", "ugvc_sim.telemetry_sender", "--port", str(gateway.vehicle_port)],
+        cwd=REPO / "sim", env={"PYTHONPATH": f"{REPO / 'python'}:{REPO / 'sim'}", "PATH": "/usr/bin:/bin"},
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        sim = sim_uplink()
+        for i in range(3):
+            r, _ = _run(gateway, {"req_id": f"a{i}", "cmd_type": "STOP"}, 3.0)
+            assert r is not None and r["data"]["result"] == "ACCEPTED"
+        _sim_commands(sim)
+        sim_uplink()  # 다시 시작: ACK seq 0부터
+        r, _ = _run(gateway, {"req_id": "after-restart", "cmd_type": "STOP"}, 3.0)
+        assert r is not None and r["data"]["result"] == "ACCEPTED" and r["data"]["attempts"] == 1
+    finally:
+        tel.terminate()
+        tel.wait(timeout=5)
+
+
+def test_REQ_CMD_002_invalid_command_with_pending_req_id_does_not_give_a_second_result(gateway, sim_uplink):
+    """대기 중인 req_id로 형식이 틀린 명령이 와도 그 req_id의 결과는 하나뿐이다 (ICD 7.2)."""
+    sim_uplink(drop_first=1)  # 첫 송신을 잃어 1초 동안 대기 중
+
+    async def run():
+        async with websockets.connect(_ws_url(gateway)) as ws:
+            await ws.send(json.dumps({"type": "command", "data": {"req_id": "op-2", "cmd_type": "RTB"}}))
+            await asyncio.sleep(0.3)
+            await ws.send(json.dumps({"type": "command", "data": {"req_id": "op-2", "cmd_type": "BOGUS"}}))
+            return await _collect_results(ws, "op-2", 2.5)
+
+    results = asyncio.run(run())
+    assert [(r["result"], r["attempts"]) for r in results] == [("ACCEPTED", 2)]
+    assert _stderr_lines(gateway, 'cmd ignored req="op-2" reason=invalid command with a req_id in use', 1)
+
+
+def test_REQ_CMD_002_same_req_id_from_another_hmi_is_not_sent_and_both_hmis_get_the_result(gateway, sim_uplink):
+    """HMI A의 명령이 대기 중일 때 HMI B가 같은 req_id로 다른 명령을 보내면 보내지 않고 기록한다.
+    결과는 모든 HMI에 간다 (ICD 7.1)."""
+    sim = sim_uplink(drop_first=1)
+
+    async def run():
+        async with websockets.connect(_ws_url(gateway)) as a, websockets.connect(_ws_url(gateway)) as b:
+            await a.send(json.dumps({"type": "command", "data": {"req_id": "1", "cmd_type": "STOP"}}))
+            await asyncio.sleep(0.3)
+            await b.send(json.dumps({"type": "command", "data": {"req_id": "1", "cmd_type": "WAYPOINT", "lat": 1, "lon": 1}}))
+            return await asyncio.gather(_collect_results(a, "1", 2.5), _collect_results(b, "1", 2.5))
+
+    got_a, got_b = asyncio.run(run())
+    assert [r["result"] for r in got_a] == ["ACCEPTED"]
+    assert got_b == got_a
+    assert [c["cmd_type"] for c in _sim_commands(sim)] == [1]  # WAYPOINT는 SIM에 가지 않았다
+    assert _stderr_lines(gateway, 'cmd ignored req="1" reason=req_id pending with different command', 1)
+
+
+def test_REQ_CMD_003_hmi_resending_after_missing_the_result_does_not_execute_twice(gateway, sim_uplink):
+    """결과를 놓친 HMI가 다시 접속해 같은 req_id·같은 명령을 보내면 다시 실행하지 않고 같은 결과를 다시 받는다."""
+    sim = sim_uplink()
+    cmd = {"req_id": "wp-7", "cmd_type": "WAYPOINT", "lat": 36.124, "lon": 127.766}
+    first, _ = _run(gateway, cmd, 3.0)
+    again, elapsed = _run(gateway, cmd, 3.0)
+    assert first is not None and again is not None
+    assert again["data"] == first["data"]
+    assert elapsed < 0.5, elapsed
+    assert [c["executed"] for c in _sim_commands(sim)] == [True]
+    assert _stderr_lines(gateway, 'cmd result req="wp-7"', 2)[-1].rstrip().endswith("(repeated)")
