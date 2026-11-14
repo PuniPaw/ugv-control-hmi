@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.12 (초안) |
+| 버전 | v0.16 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.5, UGVC-ICD-001 v0.10, UGVC-SDD-001 v0.2.7, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-SDD-001 v0.3.3, ADR-002 |
 
 ## 개정 이력
 
@@ -24,6 +24,10 @@
 | v0.10 | 2026-11-12 | PR #19 6차 리뷰 반영: TC-HMI-006-16을 ms 단위·계단 위상 4가지·ICD 값 기준으로(첫 늦은 stats부터 5~5.25초, 계단부터 ≤6.25초), TC-HMI-001-09(느린 재설정 접속은 궤적 분리), TC-HMI-006-20(재설정 시계는 stats에서만 시작), TC-HMI-002-07(상태 패널 행이 같은 판정에서 나옴) 추가. TC-HMI-001-03은 개발 서버 훅으로 레이어 점 수. TC-HMI-006-01 기대 문구에 "재접속 중" 포함. 표 순서 정리, 후속 범위(경로점·지연 시간) 명시. `check_stp_tests.py`는 표 머리의 "테스트" 열로 해석하고 REQ 형식 검사의 오탐·누락을 고침(자체 시험 `tools/tests/`) |
 | v0.11 | 2026-11-12 | PR #19 7차 리뷰 반영: TC-HMI-001-09를 seq 간격 기준(느린 접속·버린 적체 두 경우)으로 바꾸고 TC-HMI-001-10(간격 경계 9·10, u32 순환) 추가, TC-HMI-006-16에 stats→tick 위상 4가지와 위상별 정확한 재설정 시각, TC-HMI-002-07에 폐기 수. 2.7에 도구 자체 시험 예외. `check_stp_tests.py`는 TC 행의 모든 칸에서 시험 이름을 모으고, "테스트" 열이 없는 표의 TC 행을 오류로, 대문자 REQ 후보는 REQUEST 등을 제외 |
 | v0.12 | 2026-11-12 | PR #19 8차 리뷰 반영: TC-HMI-001-09를 두 시험으로 나누고 (b)의 주장 범위를 실제 입력으로 좁힘, TC-HMI-001-10에 seq 역행·같은 seq, TC-HMI-006-16 기대 결과를 ICD 범위(5000 이상 5250 미만)로, 폐기 수 표시 확인을 REQ-HMI-007 시험으로(TC-HMI-007-05). 2.7에 REQ 모양 약어 금지·도구 커밋 규칙. `check_stp_tests.py`는 표 밖 줄·앞 공백 표 행도 수집, TC 행은 머리 행으로 보지 않음, 옵션만 있는 TC 행 오류, REQ 후보를 ID 모양으로 좁힘 |
+| v0.13 | 2026-11-14 | 명령 중계 구현: TC-CMD-002-01~09(GW 재전송·IF-03 command·cmd_result), TC-CMD-003-01~05(SIM 중복 cmd_id), TC-CMD-005-01~03(명령 이벤트 기록), TC-CMD-006-01~04(SIM REJECTED_INVALID, xfail 해제). TC-COM-008-05·07 기대 결과를 명령 처리 구현에 맞춤(거절 사유와 함께 기록) |
+| v0.14 | 2026-11-14 | PR #24 1차 리뷰 반영: TC-CMD-002-05를 req_id 규칙(대기 중·최근 결과·형식 오류)으로 바꾸고 TC-CMD-002-10~13(재전송 예정 시각, ACK 스트림 ⑨ 제외, SIM 수신부 재시작, 같은 req_id 다른 HMI·결과 전체 전달·형식 오류), TC-CMD-003-06·07(GW 재시작 cmd_id, 결과를 놓친 HMI 재송신) 추가 |
+| v0.15 | 2026-11-14 | PR #24 2차 리뷰 반영: TC-COM-005-07을 ACK 스트림 유실 제외로 바꿈(ACK가 유실 계산에서 빠져 기존 "스트림 독립" 시험이 아무것도 증명하지 못하게 됨), TC-COM-006-06(ACK 스트림 ⑨ 제외) 추가, TC-CMD-002-11은 같은 시험을 가리킴. TC-CMD-003-07을 TC-CMD-002-14로 옮김(req_id 규칙은 GW 동작이라 SRS v0.7 REQ-CMD-002). TC-CMD-002-15~17(거절한 req_id 기억, 판정이 1s 넘게 늦은 재전송, 고친 명령을 거절한 req_id로) 추가 |
+| v0.16 | 2026-11-14 | PR #24 3차 리뷰 반영: TC-CMD-002-11 삭제(TC-COM-006-06과 같은 시험이라 REQ-CMD-002 추적에 REQ-COM-006 시험이 끼었음), TC-CMD-002-16 기대 시각을 새 규칙(실제 송신 + 0.95s)으로, TC-CMD-002-18(0.9s 늦은 판정)·19(거절 기록과 송신 기록의 상한 분리) 추가. 관련 문서 버전 갱신 |
 
 ---
 
@@ -38,7 +42,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 |---|---|---|
 | COM (REQ-COM-001~007) | ✅ | |
 | QUAL (REQ-QUAL-001) | ✅ | REQ-QUAL-002 (고도화) |
-| CMD, SAFE | | 12월 1–2주 (명령·Failsafe 구현 시) |
+| CMD (REQ-CMD-002·003·005·006) | v0.13 | REQ-CMD-001·004(HMI 명령 패널)는 HMI 명령 작업 시 |
+| SAFE | | 12월 1–2주 (Failsafe 구현 시) |
 | HMI (REQ-HMI-001·002 뼈대, 006, 007) | v0.5~0.6 | 경로점(REQ-HMI-001), 지연 시간(REQ-HMI-002)은 해당 기능 구현 시 |
 | HMI-003~005, AI, LOG, PERF | | 해당 기능 구현 시 |
 
@@ -164,7 +169,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-005-04 | U | 10초 안에 수신 90, 유실 10 | 유실률 0.1 | `LossRate.REQ_COM_005_formula` |
 | TC-COM-005-05 | U | 11초 전의 유실은 창에서 빠짐 | 해당 유실 제외 | `LossRate.REQ_COM_005_window_10s` |
 | TC-COM-005-06 | U | 창 안에 수신·유실 모두 없음 | `null` | `LossRate.REQ_COM_005_empty_is_null` |
-| TC-COM-005-07 | U | TELEMETRY 스트림 유실, ACK 스트림 연속 | ACK 스트림 유실 0 (스트림 독립) | `GatewayFixture.REQ_COM_005_streams_independent` |
+| TC-COM-005-07 | U | TELEMETRY seq 0, ACK seq 0·10, TELEMETRY seq 5 | 유실 4(TELEMETRY만), ACK seq 건너뜀은 유실 아님, order 0 (ICD 9장 ACK 제외) | `GatewayFixture.REQ_COM_005_ack_stream_is_not_counted_for_loss` |
 | TC-COM-005-08 | I | 실제 GW를 실행해 VEHICLE stats 4개 수신 | 봉투 `ts` 간격 모두 1000 ± 100ms (보조 단위 시험: `Periodic` 범용 주기 판정, 멈춘 뒤 몰아서 내지 않음·주기 밀림 없음) | `test_REQ_COM_005_stats_1hz` |
 | TC-COM-005-09 | U | LOST 후 첫 유효 패킷 seq가 크게 바뀜 (송신원 재시작) | 기준값으로 재설정, 유실·order 계수 변화 없음 | `GatewayFixture.REQ_COM_005_rebase_after_lost`, `SeqTracker.REQ_COM_005_rebase_accepts_any_seq` |
 
@@ -177,6 +182,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-006-03 | U | RFC 1982 경계: 차이 2^31 − 1 / 2^31 | 수락 / 폐기 | `SeqTracker.REQ_COM_006_rfc1982_boundary` |
 | TC-COM-006-04 | U | seq 10, 12(유실 1), 11(늦게 도착) | 11 폐기, order +1, 유실은 1 유지 | `SeqTracker.REQ_COM_006_late_arrival_keeps_loss` |
 | TC-COM-006-05 | U | 스트림의 첫 패킷 (seq 임의값) | 수락, 기준값으로 사용 | `SeqTracker.REQ_COM_006_first_packet_is_base` |
+| TC-COM-006-06 | U | 텔레메트리로 CONNECTED인 차량 링크에서 ACK seq 41, 42 다음 0, 0 | ACK는 모두 받음(ACK 스트림은 ⑨ 제외), order 0, 텔레메트리 역순은 그대로 폐기 | `GatewayFixture.REQ_COM_006_ack_stream_is_not_order_checked` |
 
 ### 3.7 REQ-COM-007 HEARTBEAT 1Hz 송신
 
@@ -196,9 +202,9 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-COM-008-02 | I | TELEMETRY 1개로 VEHICLE을 CONNECTED로 만든 뒤 새로 접속 | 0.3s 안에 link_status(VEHICLE CONNECTED, DETECTOR LOST)와 송신원별 stats를 받는다 | `test_REQ_COM_008_new_session_gets_current_link_status` |
 | TC-COM-008-03 | I | 클라이언트 2개 접속 후 TELEMETRY 3개 | 두 클라이언트가 같은 메시지를 같은 순서(seq 0·1·2)로 받는다 | `test_REQ_COM_008_all_sessions_receive` |
 | TC-COM-008-04 | I | `/other`로 접속 | HTTP 404, 연결 거절 | `test_REQ_COM_008_other_path_rejected` |
-| TC-COM-008-05 | I | IF-03 7.2 command 송신 | 세션이 유지되고 이후 stats를 계속 받는다 (명령 처리는 12월) | `test_REQ_COM_008_hmi_message_does_not_break_session` |
+| TC-COM-008-05 | I | IF-03 7.2 command 송신 | 세션이 유지되고 이후 stats를 계속 받는다 (명령 처리 결과는 TC-CMD-002) | `test_REQ_COM_008_hmi_message_does_not_break_session` |
 | TC-COM-008-06 | I | 핸드셰이크만 하고 읽지 않는 클라이언트가 있는 상태에서 DETECTION 6000개(그 클라이언트의 TCP 버퍼와 대기열 1000개를 넘김) 송신, 이후 새 클라이언트 접속. HEARTBEAT는 별도 스레드가 도착 시각으로 기록 | GW 계속 동작, HEARTBEAT 간격 < 1.2s, 새 클라이언트는 TELEMETRY 20개를 모두 받음, 멈춘 클라이언트는 GW가 연결을 끊음, stderr에 "ws close: queue full" 기록 | `test_REQ_COM_008_stalled_session_is_closed_without_blocking_others` |
-| TC-COM-008-07 | I | HMI가 개행이 든 텍스트(`"x\nlink VEHICLE LOST -> CONNECTED"`) 송신 | stderr에 위조된 링크 전이 줄이 없고, 받은 텍스트는 JSON 문자열(`"x\\nlink ..."`)로 기록 | `test_REQ_COM_008_hmi_text_cannot_forge_diagnostics` |
+| TC-COM-008-07 | I | HMI가 개행이 든 텍스트(`"x\nlink VEHICLE LOST -> CONNECTED"`) 송신 | stderr에 위조된 링크 전이 줄이 없고, 받은 텍스트는 거절 사유와 함께 JSON 문자열(`"x\\nlink ..."`)로 기록 | `test_REQ_COM_008_hmi_text_cannot_forge_diagnostics` |
 | TC-COM-008-08 | I | `/ws?client=hmi`로 접속 | 접속되고 link_status를 받는다 (경로만 비교) | `test_REQ_COM_008_path_with_query_accepted` |
 | TC-COM-008-09 | I | 8개 접속 후 9번째 접속. 16개 동시 접속 5회 | 9번째는 HTTP 503. 동시 접속에서도 열린 세션 ≤ 8(첫 회는 정확히 8), 나머지는 503 | `test_REQ_COM_008_session_limit`, `test_REQ_COM_008_session_limit_concurrent` |
 | TC-COM-008-10 | I | 파일 디스크립터 상한 20(GW 기본 약 12개 + 여유 8, 핸드셰이크 전 연결 상한 16보다 작게)으로 GW 실행, TCP 연결 60개로 accept 실패 유발 | GW CPU 30% 미만, stderr에 "ws accept error" 기록, HEARTBEAT 간격 < 1.2s | `test_REQ_COM_008_accept_error_backs_off` |
@@ -219,7 +225,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | 항목 | 대응 TC |
 |---|---|
 | 규칙 ① ~ ⑧ | TC-COM-002-03 ~ 12 |
-| 규칙 ⑨ | TC-COM-006-01 ~ 05 |
+| 규칙 ⑨ | TC-COM-006-01 ~ 06 |
 | CRC 알고리즘 | TC-COM-002-02 |
 | TELEMETRY | TC-COM-001-01 ~ 04 |
 | DETECTION, ACK | TC-COM-002-01, 09, 11, 12, `Codec.REQ_QUAL_001_detection_matches_vectors`, `Codec.REQ_QUAL_001_ack_matches_vectors` |
@@ -290,6 +296,61 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-HMI-007-03 | U | 깨진 JSON, 모르는 type, 빠진 필드, 정의 밖 열거값(mode, flags, state, source, class), ICD 6장 범위 밖 값(배터리 101·50.5, 위도 91, 방향 −1·360, 속도 30.01·1e308, seq·frame_id 2^32, img_w 0·4097, 객체 33개, w 0, x = img_w, x+w > img_w, y+h > img_h, conf 1.01, 유실률 1.5), errors 키 누락·추가·음수. `capture_ts` 1e300·2^70, `last_rx_ts`가 null인데 state CONNECTED. 경계 안 값(방향 359.99, 속도 30, seq 2^32−1, 상자가 이미지 끝에 닿음, 객체 32개, `capture_ts` 2^53+2·2^64, `last_rx_ts` null인 LOST) | 범위 밖은 모두 null, 경계 안은 받아들임 | `if03.test.ts > REQ_HMI_007 rejects malformed JSON, unknown types and missing fields`, `if03.test.ts > REQ_HMI_007 rejects values outside the ICD ranges and enums` |
 | TC-HMI-007-04 | U | 텍스트가 아닌 프레임 | 텍스트만 전달 | `gwConnection.test.ts > REQ_HMI_007 passes text frames through and ignores binary` |
 | TC-HMI-007-05 | U | 받은 텍스트: 깨진 JSON, 다른 필드는 다 갖추고 위도만 91인 telemetry, 정상 stats. HmiController에 형식 오류 메시지 2개 | 폐기 수 2, 정상 메시지는 반영되고 폐기 수는 그대로. 화면 판정(`present().discarded`, 상태 패널 `data-testid="discarded"`가 그리는 값)도 2이고 범위 밖 위도는 반영되지 않음 | `hmiState.test.ts > REQ_HMI_007 text that is not IF-03 is discarded and counted`, `hmiController.test.ts > REQ_HMI_007 discarded IF-03 messages are counted for display in the status panel` |
+
+### 3.14 REQ-CMD-002 명령 송신·재전송·결과 (GW)
+
+U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`ugvc_sim.uplink`)과 WebSocket HMI(`tests/integration/test_cmd_relay.py`).
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-CMD-002-01 | U | 명령 접수 | 바로 송신(attempt 1), u32 순환 시 0을 건너뜀, 시작값은 0.1초 단위 시각(1초 뒤 다시 시작한 GW는 10 뒤부터) | `CommandTrackerTest.REQ_CMD_002_first_send_is_immediate_attempt_1`, `CommandTrackerTest.REQ_CMD_002_cmd_id_skips_0_on_wrap`, `CommandTrackerTest.REQ_CMD_002_cmd_id_start_follows_the_clock_so_a_restarted_gw_does_not_reuse_ids` |
+| TC-CMD-002-02 | U | ACK 없이 999ms·1000ms | 999ms에는 재전송 없음, 1000ms에 같은 cmd_id로 재전송 | `CommandTrackerTest.REQ_CMD_002_resend_at_1000ms_not_before_with_same_cmd_id` |
+| TC-CMD-002-03 | U | ACK가 끝내 없음 | 0·1·2·3s에 4번 송신, 3999ms에는 결과 없음, 4000ms에 TIMEOUT attempts 4, 다섯 번째 송신 없음 | `CommandTrackerTest.REQ_CMD_002_no_ack_sends_four_times_then_timeout_at_4s` |
+| TC-CMD-002-04 | U | 결과 확정 전 ACK, ACK result 3종 | 해당 result로 확정(attempts = 송신 횟수), 이후 재전송 없음 | `CommandTrackerTest.REQ_CMD_002_ack_before_timeout_gives_accepted_with_attempts_and_stops_resending`, `CommandTrackerTest.REQ_CMD_002_ack_results_are_mapped` |
+| TC-CMD-002-05 | U | 같은 req_id 재제출(대기 중, 결과 후 60s 안·같은 내용, 다른 내용, 60s 뒤), 기억 상한, 형식 오류 거절, 두 명령 동시, TIMEOUT 뒤 늦은 ACK | 대기 중이면 보내지 않고 기록, 결과 후 같은 내용이면 같은 결과를 다시 알림(재송신 없음), 다른 내용은 무시·기록, 60s 뒤나 256개 넘은 오래된 것은 새 명령, 형식 오류는 req_id가 쓰이는 중이면 무시·아니면 REJECTED_INVALID(n=0), 명령마다 타이머 독립, 늦은 ACK는 결과를 바꾸지 않음 | `CommandTrackerTest.REQ_CMD_002_same_req_id_while_pending_is_ignored_and_logged`, `CommandTrackerTest.REQ_CMD_002_resubmitted_req_id_gets_the_same_result_without_resending`, `CommandTrackerTest.REQ_CMD_002_recent_results_are_bounded`, `CommandTrackerTest.REQ_CMD_002_invalid_command_is_rejected_unless_its_req_id_is_in_use`, `CommandTrackerTest.REQ_CMD_002_concurrent_commands_have_independent_timers`, `CommandTrackerTest.REQ_CMD_002_late_ack_after_timeout_is_unknown_and_gives_no_result` |
+| TC-CMD-002-06 | U | IF-03 command 파싱: STOP·RTB, ts 생략, WAYPOINT 도 → 1e-7 반올림·경계값, 범위 밖·누락·비유한 좌표, 정의 밖 cmd_type, req_id 누락·빈 값·65자, 깨진 입력 | 정상은 CommandRequest, 형식 오류는 거절(req_id를 읽었으면 함께 반환), 어떤 입력에도 예외 없음 | `If03Command.REQ_CMD_002_stop_and_rtb_ignore_coordinates`, `If03Command.REQ_CMD_002_ts_is_optional`, `If03Command.REQ_CMD_002_waypoint_converts_to_e7_with_rounding`, `If03Command.REQ_CMD_002_waypoint_accepts_range_limits_and_integers`, `If03Command.REQ_CMD_002_waypoint_out_of_range_or_missing_or_non_finite_is_rejected_with_req_id`, `If03Command.REQ_CMD_002_overflowing_or_nan_number_is_rejected`, `If03Command.REQ_CMD_002_unknown_or_non_string_cmd_type_is_rejected_with_req_id`, `If03Command.REQ_CMD_002_bad_req_id_is_rejected_without_req_id`, `If03Command.REQ_CMD_002_malformed_input_is_rejected_without_req_id` |
+| TC-CMD-002-07 | U | cmd_result JSON, COMMAND 인코딩, cmd_type 이름 | ICD 7.1 형식(cmd_id 없으면 null, result 이름 4종), 공용 벡터와 같은 바이트 | `If03Command.REQ_CMD_002_cmd_result_json_shape`, `If03Command.REQ_CMD_002_cmd_result_without_cmd_id_is_null`, `If03Command.REQ_CMD_002_cmd_result_names_all_results`, `Codec.REQ_QUAL_001_command_matches_vectors`, `Codec.REQ_CMD_002_cmd_type_names` |
+| TC-CMD-002-08 | I | SIM 정상 / 첫 COMMAND 유실(`--drop-first 1`) / SIM 없음 / WAYPOINT | ACCEPTED attempts 1(1s 안, stdout과 WS가 같은 결과) / 0.95~1.6s에 같은 cmd_id로 재전송해 attempts 2 / 3.95~4.6s에 TIMEOUT attempts 4 / WAYPOINT가 SIM에 cmd_type 3으로 한 번 실행 | `test_REQ_CMD_002_command_accepted_on_first_send`, `test_REQ_CMD_002_lost_first_send_is_retransmitted_after_1s`, `test_REQ_CMD_002_no_ack_times_out_after_three_retransmits`, `test_REQ_CMD_002_waypoint_is_relayed` |
+| TC-CMD-002-09 | I | HMI가 범위 밖 WAYPOINT(위도 91) 송신 | SIM에 보내지 않고 0.5s 안에 cmd_result REJECTED_INVALID(cmd_id null, attempts 0) | `test_REQ_CMD_002_invalid_hmi_command_is_rejected_without_sending` |
+| TC-CMD-002-10 | U | 판정이 40ms 늦은 재전송 뒤 이어지는 송신 | 다음 송신은 예정 시각(2000·3000ms)에, TIMEOUT은 4000ms에 (늦음이 쌓이지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_schedule_does_not_drift_with_late_polls` |
+| TC-CMD-002-12 | I | 텔레메트리 10Hz 송신 중 SIM 수신부만 다시 시작한 뒤 명령 | ACCEPTED attempts 1 (ACK가 order로 버려지지 않음) | `test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted` |
+| TC-CMD-002-13 | I | (a) 대기 중인 req_id로 형식이 틀린 명령 (b) HMI A의 명령이 대기 중일 때 HMI B가 같은 req_id로 다른 명령 | (a) 그 req_id의 결과는 ACCEPTED 하나뿐, 무시 기록 (b) B의 명령은 SIM에 가지 않고 무시 기록, A·B 모두 같은 결과 하나를 받음(모든 HMI 전달) | `test_REQ_CMD_002_invalid_command_with_pending_req_id_does_not_give_a_second_result`, `test_REQ_CMD_002_same_req_id_from_another_hmi_is_not_sent_and_both_hmis_get_the_result` |
+| TC-CMD-002-14 | I | 결과를 받은 HMI가 다시 접속해 같은 req_id·같은 WAYPOINT를 다시 보냄 | 0.5s 안에 같은 cmd_result(같은 cmd_id)를 다시 받고, SIM 실행은 한 번 | `test_REQ_CMD_002_hmi_resending_after_missing_the_result_does_not_execute_twice` |
+| TC-CMD-002-15 | U | 형식 오류로 거절한 req_id로 올바른 명령, 같은 형식 오류 다시, 60초 뒤 | 올바른 명령은 보내지 않고 무시 기록, 같은 형식 오류에는 같은 거절을 다시(repeated), 60초 뒤에는 새 명령으로 보냄 | `CommandTrackerTest.REQ_CMD_002_rejected_req_id_is_remembered_so_it_has_one_result` |
+| TC-CMD-002-16 | U | 첫 판정이 3.5s 늦음(io 스레드 정지) | 그때 한 번만 재전송하고 4.45·5.45s에 다음 송신(실제 송신 + 0.95s), 마지막 송신 1.0s 뒤(6.45s)에 TIMEOUT (밀린 재전송을 몰아 보내지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_after_a_poll_stall_still_waits_for_ack` |
+| TC-CMD-002-17 | I | HMI가 req_id `X`로 위도 91 WAYPOINT, 0.3s 뒤 같은 `X`로 고친 좌표, 다시 위도 91 | 결과는 REJECTED_INVALID 두 번(두 번째는 repeated)뿐, SIM에 COMMAND 없음, 고친 명령은 무시 기록 | `test_REQ_CMD_002_corrected_command_with_a_rejected_req_id_is_not_sent` |
+| TC-CMD-002-18 | U | 2번째 송신 판정이 0.9s 늦음(1.9s) | 3번째 송신은 2.0s가 아니라 2.85s(1.9 + 0.95), 4번째 3.85s, TIMEOUT 4.85s (ACK 대기가 줄지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_0_9s_late_does_not_shorten_the_next_wait` |
+| TC-CMD-002-19 | U | (a) ACCEPTED 뒤 서로 다른 req_id의 형식 오류 257개, 같은 명령 재제출 (b) 형식 오류 거절 뒤 송신 명령 257개, 거절한 req_id로 고친 명령 | (a) 다시 보내지 않고 같은 결과를 다시 알림 (b) 보내지 않고 무시 기록 (두 기억의 상한이 서로 밀어내지 않음) | `CommandTrackerTest.REQ_CMD_002_rejects_do_not_push_out_results_of_sent_commands`, `CommandTrackerTest.REQ_CMD_002_sent_commands_do_not_push_out_rejects` |
+
+### 3.15 REQ-CMD-003 중복 cmd_id 재실행 금지 (SIM)
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-CMD-003-01 | U | 같은 cmd_id 두 번(수락된 것, 거절된 것) | 두 번째는 같은 ACK, 실행하지 않음 | `test_REQ_CMD_003_duplicate_cmd_id_resends_same_ack_without_executing`, `test_REQ_CMD_003_duplicate_of_rejected_command_resends_rejection` |
+| TC-CMD-003-02 | U | 서로 다른 cmd_id, 기억 상한 넘김 | 서로 독립, 가장 오래된 cmd_id부터 잊음 | `test_REQ_CMD_003_different_cmd_ids_are_independent`, `test_REQ_CMD_003_memory_is_bounded_and_forgets_oldest` |
+| TC-CMD-003-03 | U | ACK 프레임 | ACK(5B)로 검증 통과, ACK 스트림 seq 0·1… | `test_REQ_CMD_003_ack_frame_is_valid_and_seq_increments` |
+| TC-CMD-003-04 | U | 실제 UDP로 SIM 수신부 구동: 중복 cmd_id, 첫 COMMAND 무시(`--drop-first 1`) | 같은 ACK 두 번·executed true→false, 무시한 뒤 재전송에 ACK | `test_REQ_CMD_003_listen_duplicate_gets_same_ack`, `test_REQ_CMD_003_drop_first_ignores_first_command_then_acks_retransmission` |
+| TC-CMD-003-05 | I | SIM의 ACK가 GW에 닿지 않음(다른 포트로 보냄) | GW는 같은 cmd_id로 4번 보내고 TIMEOUT, SIM은 4번 모두 같은 ACCEPTED ACK, 실행은 처음 한 번 | `test_REQ_CMD_003_retransmitted_command_executes_once` |
+| TC-CMD-003-06 | I | SIM을 띄운 채 GW를 다시 시작하고 새 명령 | 새 cmd_id가 앞 GW의 것과 다르고 SIM이 두 명령 모두 실행 | `test_REQ_CMD_003_restarted_gw_does_not_reuse_cmd_ids` |
+
+### 3.16 REQ-CMD-005 명령 이벤트 기록 (GW)
+
+PostgreSQL 저장(REQ-LOG)은 로그 작업 때 추가한다. 지금은 GW 진단 기록(stderr)에 남는 것을 확인한다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-CMD-005-01 | U | 송신 → 재전송 → 결과 | 이벤트가 일어난 순서대로 나오고, 꺼내면 비워짐 | `CommandTrackerTest.REQ_CMD_005_events_in_order_sent_resent_result` |
+| TC-CMD-005-02 | U | 중복 ACK, 발급하지 않은 cmd_id의 ACK, 정의 밖 result의 ACK | UnknownAck 이벤트만, 결과 없음, 대기 중 명령은 그대로 | `CommandTrackerTest.REQ_CMD_005_duplicate_ack_is_unknown`, `CommandTrackerTest.REQ_CMD_005_ack_with_unassigned_cmd_id_is_unknown_and_keeps_pending`, `CommandTrackerTest.REQ_CMD_005_ack_with_undefined_result_is_unknown_and_keeps_pending` |
+| TC-CMD-005-03 | I | 첫 송신 유실 뒤 재전송으로 수락. req_id에 개행을 넣은 명령 | stderr에 `cmd sent` attempt 1·2와 `cmd result` ACCEPTED attempts 2. req_id는 JSON 문자열로 기록되어 가짜 진단 줄이 생기지 않음 | `test_REQ_CMD_005_sends_retransmits_and_result_are_logged`, `test_REQ_CMD_005_req_id_cannot_forge_diagnostic_lines` |
+
+### 3.17 REQ-CMD-006 범위 밖 COMMAND (SIM)
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-CMD-006-01 | U | cmd_id 0 | 폐기(range), ACK 없음 | `test_REQ_CMD_006_cmd_id_0_is_dropped` |
+| TC-CMD-006-02 | U | 정의 밖 cmd_type, WAYPOINT 좌표 범위 밖 | 별도 형(InvalidCommand)으로 해석, REJECTED_INVALID ACK, 실행하지 않음 | `test_REQ_CMD_006_out_of_range_command_is_parsed_as_invalid`, `test_REQ_CMD_006_acks_rejected_invalid`, `test_REQ_CMD_006_invalid_command_is_not_executed` |
+| TC-CMD-006-03 | U | 좌표 경계(±90°, ±180°), 정상 명령 | 수락·실행 | `test_REQ_CMD_006_waypoint_bounds_accepted`, `test_REQ_CMD_006_valid_command_accepted_and_executed` |
+| TC-CMD-006-04 | U | 실제 UDP: 범위 밖 명령, cmd_id 0 | REJECTED_INVALID ACK / ACK 없음 | `test_REQ_CMD_006_listen_rejects_invalid_over_udp`, `test_REQ_CMD_006_listen_cmd_id_0_gets_no_ack` |
 
 ---
 

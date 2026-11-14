@@ -78,25 +78,33 @@ class GatewayProc:
             self._q.get_nowait()
 
 
-@pytest.fixture
-def gateway():
-    if not GATEWAY_BIN.exists():
-        pytest.skip(f"gateway not built: {GATEWAY_BIN}")
-    ports = [free_udp_port() for _ in range(3)]
+def start_gateway(ports: list[int]) -> GatewayProc:
+    """GW를 띄우고 stdout·stderr 수집을 시작한다. ports = [차량, 탐지, SIM]. GW 재시작 시험에서도 쓴다."""
     proc = subprocess.Popen(
         [str(GATEWAY_BIN), "--vehicle-port", str(ports[0]), "--detector-port", str(ports[1]),
          "--sim-port", str(ports[2]), *GW_TEST_ARGS],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     line = proc.stderr.readline()
     assert "ugvc_gateway" in line, line
-    ws_port = ws_port_from_banner(line)
-    gw = GatewayProc(proc, *ports, ws_port=ws_port)
+    gw = GatewayProc(proc, *ports, ws_port=ws_port_from_banner(line))
     # stderr도 계속 비운다: 쌓여서 파이프가 차면 GW의 stderr 쓰기가 블록된다. 시험이 볼 수 있게 모아 둔다
     threading.Thread(target=lambda: gw.stderr_lines.extend(proc.stderr), daemon=True).start()
     gw.start_pump()
-    yield gw
-    proc.terminate()
+    return gw
+
+
+def stop_gateway(gw: GatewayProc) -> None:
+    gw.proc.terminate()
     try:
-        proc.wait(timeout=5)
+        gw.proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        gw.proc.kill()
+
+
+@pytest.fixture
+def gateway():
+    if not GATEWAY_BIN.exists():
+        pytest.skip(f"gateway not built: {GATEWAY_BIN}")
+    gw = start_gateway([free_udp_port() for _ in range(3)])
+    yield gw
+    stop_gateway(gw)

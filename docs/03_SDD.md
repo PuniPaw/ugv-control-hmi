@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.2.7 (초안) |
+| 버전 | v0.3.3 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.5, UGVC-ICD-001 v0.10, UGVC-STP-001 v0.12, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-STP-001 v0.16, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -24,6 +24,10 @@
 | v0.2.5 | 2026-11-12 | 8장 PR #19 6차 리뷰 반영: 재설정 접속이 1초 넘게 걸리면 궤적을 끊음(`RESYNC_TRACK_GAP_MS`), 재설정 시계는 stats에서만 시작, 상태 패널 문구까지 `present()`에(`LinkRow`·`VehicleRows`), 컨트롤러가 `onChange(View)`로 넘김, 접속 이유 타입을 `model/connection.ts` 하나에, 지도 점 수는 개발 서버 전용 훅으로 |
 | v0.2.6 | 2026-11-12 | 8장 PR #19 7차 리뷰 반영: 궤적 끊김을 접속 시간(`RESYNC_TRACK_GAP_MS`, 삭제)이 아니라 텔레메트리 seq 간격으로 판정(`lastTelemetrySeq`), 상태 패널은 `Presented`만 받음(폐기 수 포함), 시연 점검 훅 정리 |
 | v0.2.7 | 2026-11-12 | 8장 PR #19 8차 리뷰 반영: 궤적 상태를 `lastFixSeq` 하나로(`samplesSinceFix`·`lastTelemetrySeq` 삭제, 상수 이름 `NO_FIX_GAP_SAMPLES`), 같은 seq 재수신 무시, seq 역행 설명 |
+| v0.3 | 2026-11-14 | 6장 명령 재전송을 설계안에서 구현으로(REQ-CMD-002·003·005·006): `CommandTracker`(대기 목록·이벤트 variant), IF-03 `command` 경계 파서, SIM `CommandResponder`. 2장 모듈 표에 반영 |
+| v0.3.1 | 2026-11-14 | 6장 PR #24 1차 리뷰 반영: cmd_id 시작값(시각), req_id 규칙(`recent_`, `reject`, `CommandIgnored`), 예정 시각 기준 재전송, ACK의 규칙 ⑨ 제외, `CommandRequest`를 gateway 소유로(if03 → gateway 한 방향) |
+| v0.3.2 | 2026-11-14 | 6.1 PR #24 2차 리뷰 반영: `reject`가 거절한 req_id를 `recent_`에 남김(`request` 없음), 판정이 1.0s 이상 늦으면 `due = now + 1.0s`, ACK는 유실 계산에서도 제외. 형식 오류 응답 주체(`app` → `CommandTracker`)와 유효 ACK 검증 범위(①~⑧) 문구 정정 |
+| v0.3.3 | 2026-11-14 | 6.1 PR #24 3차 리뷰 반영: 거절 기록을 `rejected_`로 분리(상한 따로), 늦은 판정 규칙 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`, `kJudgePeriod`를 tracker 헤더로. 관련 문서 버전 갱신 |
 
 ---
 
@@ -40,12 +44,12 @@ flowchart LR
         core["core<br/>IClock·Periodic"] --> link["link<br/>링크 상태·유실률"]
         ingress --> gw["gateway<br/>Gateway·HEARTBEAT"]
         link --> gw
-        gw --> if03["if03<br/>IF-03 JSON"]
+        gw --> if03["if03<br/>IF-03 JSON·command 파서"]
         if03 --> app["app<br/>소켓·타이머·출력"]
         gw --> app
     end
     subgraph PY["python/ · sim/"]
-        proto["ugvc_proto<br/>codec·check_frame"] --> sim["ugvc_sim<br/>송신·수신"]
+        proto["ugvc_proto<br/>codec·check_frame"] --> sim["ugvc_sim<br/>송신·수신·ACK"]
     end
     vectors[("testdata/vectors<br/>공용 바이트 벡터")] -.-> codec
     vectors -.-> proto
@@ -55,12 +59,12 @@ flowchart LR
 
 | 모듈 | 책임 | 주요 타입·함수 | 요구사항 |
 |---|---|---|---|
-| `codec` | big-endian 필드 직렬화, CRC-16, 헤더·메시지 encode/decode, 열거값 이름(`name_of`)과 범위 상수 | `encode_frame`, `decode_telemetry`, `Telemetry`, `Detection`, `Ack`, `kMsg*` | REQ-QUAL-001, ADR-002 |
+| `codec` | big-endian 필드 직렬화, CRC-16, 헤더·메시지 encode/decode, 열거값 이름(`name_of`)과 범위 상수 | `encode_frame`, `decode_telemetry`, `encode_command`, `Telemetry`, `Detection`, `Command`, `Ack`, `kMsg*` | REQ-QUAL-001, ADR-002 |
 | `ingress` | 검증 규칙 ①~⑧(상태 없음), ⑨ seq 순서·유실(스트림별 상태), 폐기 원인 계수 | `check_frame`, `CheckedFrame{header, Message}`, `SeqTracker`, `ErrorCounters` | REQ-COM-001·002·005·006 |
 | `core` | 시계 주입, 주기 작업 예정 시각 | `IClock`, `SystemClock`, `Periodic` | (시험 용이성) |
 | `link` | 링크 상태 기계(송신원 하나), 10초 유실률 창 | `LinkMonitor`, `LinkChange`, `LossWindow` | REQ-COM-003·004·005 |
-| `gateway` | 수신 처리 순서를 묶는 중심 객체, 송신원별 링크 전이 수집, HEARTBEAT 생성 | `Gateway::on_datagram`, `Gateway::poll`, `Gateway::take_transitions`, `HeartbeatSender` | REQ-COM-001~007 |
-| `if03` | 정수 LSB → 공학 단위, IF-03 JSON 메시지 생성 | `if03::telemetry`, `stats`, `link_status` | ICD 7.1 |
+| `gateway` | 수신 처리 순서를 묶는 중심 객체, 송신원별 링크 전이 수집, HEARTBEAT 생성, 명령 재전송 추적 | `Gateway::on_datagram`, `Gateway::poll`, `Gateway::take_transitions`, `HeartbeatSender`, `CommandTracker` | REQ-COM-001~007, REQ-CMD-002·005 |
+| `if03` | 정수 LSB → 공학 단위, IF-03 JSON 메시지 생성, HMI 명령 경계 검증 | `if03::telemetry`, `stats`, `link_status`, `cmd_result`, `parse_command` | ICD 7.1·7.2 |
 | `app` | UDP 수신·송신, 50ms 판정 타이머, stdout·stderr 출력(전용 스레드), 명령행 옵션 | `GatewayApp`, `UdpReceiver`, `LineSink` | REQ-COM-007, REQ-SAFE-001 |
 
 ## 3. 수신 처리 흐름
@@ -150,30 +154,45 @@ GW의 판정은 **단일 스레드 Boost.Asio `io_context` 하나**로 동작한
 - stdout을 읽던 쪽이 닫혀도 버린 줄 보고 (`test_dropped_lines_reported_after_stdout_reader_closes`)
 - `LineSink` 단위 시험: 막히지 않음, 쓴 줄 + 버린 줄 = 넣은 줄, EPIPE 계수, fd 플래그 불변
 
-## 6. 명령 재전송 (설계안, 12월 1–2주 구현)
-
-REQ-CMD-002·003·005·006을 위한 설계안이다. 구현할 때 이 절을 갱신한다.
+## 6. 명령 재전송 (REQ-CMD-002·003·005·006, ICD 6.3·6.4·7.2·7.3)
 
 ```mermaid
 sequenceDiagram
     participant HMI
     participant GW
     participant SIM
-    HMI->>GW: command {req_id, cmd_type}
-    GW->>GW: cmd_id 발급, 대기 목록에 추가
+    HMI->>GW: command {req_id, cmd_type, lat?, lon?}
+    GW->>GW: parse_command (경계 검증), 실패면 cmd_result REJECTED_INVALID (cmd_id null)
+    GW->>GW: CommandTracker.submit: cmd_id 발급, 대기 목록에 추가
     GW->>SIM: COMMAND(cmd_id) 1회차
-    Note over GW: 1.0s 안에 ACK 없음
+    Note over GW: 1.0s 안에 ACK 없음 (poll)
     GW->>SIM: COMMAND(같은 cmd_id) 2회차
-    SIM->>SIM: 처음 받은 cmd_id면 실행, 이미 받았으면 이전 결과만
-    SIM->>GW: ACK(cmd_id, result)
+    SIM->>SIM: CommandResponder: 처음 받은 cmd_id면 실행, 이미 받았으면 이전 결과만
+    SIM->>GW: ACK(cmd_id, result) → GW 차량 포트
     GW->>HMI: cmd_result {req_id, cmd_id, result, attempts: 2}
-    Note over GW: 최대 3회 재전송 후에도 ACK가 없으면 result TIMEOUT
+    Note over GW: 4회 송신 후 1.0s까지 ACK가 없으면 result TIMEOUT
 ```
 
-- `CommandTracker`(가칭)를 `gateway` 모듈에 둔다. `IClock`을 받아 재전송 시각을 판정하고, 50ms 판정 타이머의 `poll()`에서 재전송·TIMEOUT을 낸다. 가짜 시계로 1.0s 경계와 3회 상한을 시험한다.
-- ACK는 이미 검증 단계에서 `Message`의 `Ack`로 디코딩되어 나온다. `app`은 이를 `CommandTracker`에 넘기기만 한다. `Gateway::on_datagram`에 명령 로직을 섞지 않는다.
-- 명령 이벤트(송신, 재전송, 결과)도 링크 전이처럼 반환값으로 모아 `app`이 꺼낸다. 이벤트 종류가 둘 이상이 되면 `std::variant<LinkTransition, CommandEvent>`로 묶어 `std::visit`이 처리 누락을 컴파일 오류로 알리게 한다 (REQ-CMD-005, PostgreSQL 로그와 연결).
-- SIM은 받은 cmd_id와 결과를 기억해 중복 cmd_id를 재실행하지 않는다(REQ-CMD-003). 범위를 벗어난 명령은 실행하지 않고 `REJECTED_INVALID`로 ACK한다(REQ-CMD-006).
+### 6.1 GW
+
+- **경계 검증(`if03::parse_command`).** HMI 텍스트는 여기서만 검사하고 `std::variant<CommandRequest, CommandParseError>`로 돌려준다. 예외를 던지지 않는다(`allow_exceptions=false`, 4096바이트 상한). WAYPOINT 좌표는 도 단위 범위를 먼저 검사하고 `llround`로 1e-7 deg 정수로 바꾸므로 int32 넘침이 없다. 실패해도 req_id를 읽었으면 함께 돌려준다 → `app`이 `CommandTracker::reject`에 넘기고, 응답 여부는 tracker가 정한다.
+- **`CommandTracker`(순수 로직, `IClock` 주입).** 대기 목록 `pending_`의 원소는 `{CommandRequest, Command, sends, due}`이고, 결과가 나간 송신 명령은 `recent_`에, 형식 오류 거절은 `rejected_`에 `{optional<CommandRequest>, CommandResult, at}`로 남는다(60초, 각 최근 256개. 거절은 `request`가 없음). 두 목록의 상한을 따로 두어 SIM에 가지 않는 입력이 실행된 명령의 기억을 밀어내지 않는다. `CommandRequest`는 gateway가 가지고 `if03::parse_command`가 만든다(if03이 gateway를 쓰는 한 방향, 2장).
+  - cmd_id 시작값은 `initial_cmd_id(epoch_ms) = epoch_ms / 100`(하위 32비트, 0이면 1)이다. GW를 다시 시작해도 SIM이 기억하는 앞 GW의 번호를 다시 쓰지 않는다(ICD 7.3, PR #24 리뷰 #1).
+  - `submit`: req_id가 대기 중이면 무시(`CommandIgnored`). `recent_`에 있으면 내용이 같을 때 같은 결과를 `repeated`로 다시 내고, 다르면 무시한다. 그 밖은 cmd_id를 발급하고 바로 보낼 `Command`를 돌려준다.
+  - `reject`: 형식 오류 명령의 req_id. 새 req_id면 REJECTED_INVALID(cmd_id 없음, attempts 0) 결과를 내고 `recent_`에 명령 내용 없이(`request` = `nullopt`) 남긴다(`rejected_`). 최근에 형식 오류로 거절한 req_id면 같은 거절을 `repeated`로 다시 내고, 대기 중이거나 올바른 명령에 쓰인 req_id면 무시한다. `submit`도 거절한 req_id로 온 명령은 무시한다. 그래서 한 req_id의 결과는 하나뿐이다.
+  - `poll`(50ms 판정 주기): `due`(송신 예정 시각 + 1.0s)가 지난 원소를 송신 횟수 4 미만이면 다시 보내고 `due += 1.0s`, 4이면 TIMEOUT으로 확정한다. 예정 시각 기준이라 판정 주기의 늦음이 쌓이지 않는다. 다만 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`로 잡아 판정이 늦어 송신이 늦었을 때도 다음 판정을 실제 송신 0.95s 뒤보다 앞당기지 않는다. 판정 주기 `kJudgePeriod`(50ms)는 `command_tracker.hpp`에 두고 `app`의 타이머가 같은 값을 쓴다. 소켓은 모르고 보낼 명령만 돌려준다.
+  - `on_ack`: 대기 중인 cmd_id면 표 6-5 result로 확정해 `recent_`로 옮긴다. 늦은 ACK, 모르는 cmd_id, 정의 밖 result는 `UnknownAck`만 낸다(대기 중 명령은 그대로).
+  - 이벤트는 `std::variant<CommandSent, CommandResult, UnknownAck, CommandIgnored>`로 모아 `take_events()`로 꺼낸다. `app`은 `std::visit` + `core::overloaded`로 처리하므로 새 이벤트 종류를 처리하지 않으면 컴파일 오류가 난다(REQ-CMD-005).
+- **ACK와 규칙 ⑨.** `Gateway::on_datagram`은 ACK 스트림에 seq 순서 검사와 유실 계산을 하지 않는다(ICD 9장). SIM 수신부만 다시 시작하면 ACK seq가 0부터 시작하는데, 차량 링크는 텔레메트리 때문에 CONNECTED라 기준값 재설정이 일어나지 않아 ACK가 모두 order로 버려졌기 때문이다.
+- **`app`.** HMI 명령 → `parse_command` → `submit` → COMMAND 송신(COMMAND 전용 seq, HEARTBEAT와 같은 소켓). 유효 ACK(검증 ①~⑧을 통과한 `Message`의 `Ack`, ACK는 ⑨ 제외) → `on_ack`. 판정 주기 → `poll` 재전송. 매번 이벤트를 꺼내 진단 기록(stderr)에 쓰고, `CommandResult`는 `cmd_result`로 stdout과 모든 HMI에 보낸다. 진단에 쓰는 req_id와 명령 원문은 HMI가 보낸 텍스트이므로 JSON 문자열로 감싸 진단 줄 위조를 막는다.
+- **이벤트를 PostgreSQL에 남기는 것**은 로그 작업(REQ-LOG)에서 `drain_command_events`에 붙인다.
+
+### 6.2 SIM
+
+- `parse_uplink`는 COMMAND를 세 가지로 나눈다: cmd_id 0은 폐기(ACK 없음), 필드가 6.3 범위 밖이면 `InvalidCommand`, 그 밖은 `ReceivedCommand`. 별도 형으로 나눠 "범위 밖인데 실행"이 표현되지 않게 했다.
+- `CommandResponder`는 최근 1024개 cmd_id의 첫 결과를 `OrderedDict`로 기억한다. 처음이면 `ReceivedCommand`는 ACCEPTED(실행), `InvalidCommand`는 REJECTED_INVALID(실행 안 함). 다시 오면 같은 ACK만 다시 보내고 실행하지 않는다(REQ-CMD-003).
+- ACK는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 ACK 스트림 전용 seq를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
+- **아직 하지 않은 것:** 실행 결과(`CommandOutcome.execute`)를 주행 모사에 반영하는 일(STOP이면 정지 등). 지금은 텔레메트리 송신과 명령 수신이 별도 프로세스라서, SIM을 한 프로세스로 합치는 Failsafe 작업(REQ-SAFE-001·002)에서 함께 한다.
 
 ## 7. 시험 용이성을 위한 설계
 

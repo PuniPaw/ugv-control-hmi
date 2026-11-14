@@ -25,13 +25,18 @@
 #include <variant>
 #include <vector>
 
+#include "ugvc/codec/command.hpp"
 #include "ugvc/codec/detection.hpp"
+#include "ugvc/codec/frame.hpp"
+#include "ugvc/codec/msg_type.hpp"
 #include "ugvc/codec/telemetry.hpp"
 #include "ugvc/core/clock.hpp"
 #include "ugvc/core/overloaded.hpp"
 #include "ugvc/core/periodic.hpp"
+#include "ugvc/gateway/command_tracker.hpp"
 #include "ugvc/gateway/gateway.hpp"
 #include "ugvc/gateway/heartbeat.hpp"
+#include "ugvc/if03/command.hpp"
 #include "ugvc/if03/messages.hpp"
 #include "line_sink.hpp"
 #include "ws_server.hpp"
@@ -44,7 +49,7 @@ using asio::ip::udp;
 using namespace ugvc;
 using ingress::Source;
 
-constexpr auto kJudgePeriod = std::chrono::milliseconds(50);  // 링크 판정 주기 (SDD 가정값)
+constexpr auto kJudgePeriod = gateway::kJudgePeriod;  // 링크·명령 판정 주기 (SDD 가정값, CommandTracker와 공유)
 constexpr std::size_t kMaxStdoutLines = 1000;  // 약 1~2초 분량. 넘치면 표시용 줄만 잃는다
 constexpr std::size_t kMaxStderrLines = 200;   // 진단은 드물다. 이만큼 밀리면 읽는 쪽이 멈춘 것
 constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 넘치면 그 HMI를 끊는다 (메모리 상한)
@@ -111,6 +116,12 @@ void diag(app::LineSink& sink, const Parts&... parts) {
   sink.publish(os.str());
 }
 
+// HMI가 보낸 텍스트(명령 원문, req_id)를 진단에 쓸 때는 JSON 문자열로 감싼다: 개행 등 제어문자로 진단 줄
+// (링크 전이 등)을 위조할 수 없게 하고, 잘려서 깨진 UTF-8은 대체 문자로 바꾼다.
+std::string quoted(const std::string& untrusted, std::size_t max_len = 200) {
+  return nlohmann::json(untrusted.substr(0, max_len)).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
 // 포트 하나에서 datagram을 비동기로 계속 받아 handler에 넘긴다.
 class UdpReceiver {
  public:
@@ -148,6 +159,7 @@ class GatewayApp {
         log_(STDERR_FILENO, kMaxStderrLines),
         gateway_(clock_),
         heartbeat_(clock_),
+        commands_(clock_),
         stats_period_(clock_, std::chrono::seconds(1)),
         vehicle_(io, o.vehicle_port, log_, [this](auto* d, auto n) { on_datagram(Source::Vehicle, d, n); }),
         detector_(io, o.detector_port, log_, [this](auto* d, auto n) { on_datagram(Source::Detector, d, n); }),
@@ -172,7 +184,10 @@ class GatewayApp {
     std::visit(core::overloaded{
                    [&](const codec::Telemetry& t) { publish(if03::telemetry(frame.header, t, rx_ts)); },
                    [&](const codec::Detection& d) { publish(if03::detection(d, rx_ts)); },
-                   [](const codec::Ack&) {},  // 명령 재전송(REQ-CMD-002, 12월)에서 처리한다
+                   [&](const codec::Ack& a) {
+                     commands_.on_ack(a);
+                     drain_command_events();
+                   },
                },
                frame.message);
   }
@@ -188,11 +203,9 @@ class GatewayApp {
   void tick() {
     gateway_.poll();
     publish_transitions();
-    if (auto hb = heartbeat_.poll()) {
-      boost::system::error_code ec;
-      sim_socket_.send_to(asio::buffer(*hb), sim_endpoint_, 0, ec);
-      if (ec) diag(log_, "heartbeat send error: ", ec.message());
-    }
+    if (auto hb = heartbeat_.poll()) send_to_sim(*hb, "heartbeat");
+    for (const auto& cmd : commands_.poll()) send_command(cmd);
+    drain_command_events();
     if (stats_period_.due()) {
       for (const auto& msg : if03::snapshot(gateway_, clock_.epoch_ms())) publish(msg);
       report_drops();
@@ -220,12 +233,57 @@ class GatewayApp {
     return texts;
   }
 
-  // IF-03 7.2 명령(HMI → GW). 명령 송신·재전송은 12월(REQ-CMD-002) 작업이라 지금은 기록만 한다.
-  // 받은 텍스트는 JSON 문자열로 이스케이프해 기록한다: 개행 등 제어문자로 진단 줄(링크 전이 등)을
-  // 위조할 수 없게 하고, 200바이트에서 잘려 깨진 UTF-8은 대체 문자로 바꾼다.
+  // IF-03 7.2 명령(HMI → GW). 검증을 통과하면 추적기에 넘기고, 못 읽은 명령은 req_id가 있을 때만 거부 결과를 돌려준다.
   void on_hmi_message(const std::string& m) {
-    const auto quoted = nlohmann::json(m.substr(0, 200)).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-    diag(log_, "ws message ignored until command relay (REQ-CMD-002): ", quoted);
+    std::visit(core::overloaded{
+                   [&](const if03::CommandRequest& req) {
+                     if (const auto cmd = commands_.submit(req)) send_command(*cmd);
+                     drain_command_events();
+                   },
+                   [&](const if03::CommandParseError& e) {
+                     diag(log_, "ws message rejected (", e.reason, "): ", quoted(m));
+                     if (e.req_id) commands_.reject(*e.req_id);
+                     drain_command_events();
+                   },
+               },
+               if03::parse_command(m));
+  }
+
+  void send_to_sim(const codec::Bytes& frame, const char* what) {
+    boost::system::error_code ec;
+    sim_socket_.send_to(asio::buffer(frame), sim_endpoint_, 0, ec);
+    if (ec) diag(log_, what, " send error: ", ec.message());
+  }
+
+  void send_command(const codec::Command& cmd) {
+    const auto payload = codec::encode_command(cmd);
+    send_to_sim(codec::encode_frame(codec::kMsgCommand, command_seq_++, clock_.epoch_ms(), payload.data(), payload.size()),
+                "command");
+  }
+
+  // 추적기가 모은 사건을 기록(REQ-CMD-005)하고, 결과는 HMI에도 보낸다.
+  void drain_command_events() {
+    for (const auto& e : commands_.take_events()) {
+      std::visit(core::overloaded{
+                     [&](const gateway::CommandSent& s) {
+                       diag(log_, "cmd sent req=", quoted(s.req_id), " id=", s.cmd_id, " type=", codec::name_of(s.cmd_type),
+                            " attempt=", s.attempt);
+                     },
+                     [&](const gateway::CommandResult& r) {
+                       diag(log_, "cmd result req=", quoted(r.req_id), " id=", r.cmd_id ? std::to_string(*r.cmd_id) : "-",
+                            " result=", gateway::name_of(r.result), " attempts=", r.attempts,
+                            r.repeated ? " (repeated)" : "");
+                       publish(if03::cmd_result(r, clock_.epoch_ms()));
+                     },
+                     [&](const gateway::CommandIgnored& i) {
+                       diag(log_, "cmd ignored req=", quoted(i.req_id), " reason=", i.reason);
+                     },
+                     [&](const gateway::UnknownAck& u) {
+                       diag(log_, "cmd unknown ack id=", u.cmd_id, " result=", static_cast<int>(u.result));
+                     },
+                 },
+                 e);
+    }
   }
 
   // 버린 줄 수가 늘었으면 stderr에 알린다. stderr 자신이 버린 줄은 자리가 날 때 함께 알린다.
@@ -247,6 +305,8 @@ class GatewayApp {
   std::uint64_t reported_stderr_drops_ = 0;
   gateway::Gateway gateway_;
   gateway::HeartbeatSender heartbeat_;
+  gateway::CommandTracker commands_;
+  std::uint32_t command_seq_ = 0;  // COMMAND 스트림 전용 seq. HEARTBEAT와 따로 센다 (스트림 단위 seq, ICD 4장)
   core::Periodic stats_period_;
   UdpReceiver vehicle_;
   UdpReceiver detector_;

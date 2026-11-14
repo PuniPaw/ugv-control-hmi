@@ -22,6 +22,7 @@ add_library(ugvc_codec
   src/codec/telemetry.cpp
   src/codec/detection.cpp
   src/codec/ack.cpp
+  src/codec/command.cpp
 )
 target_include_directories(ugvc_codec PUBLIC include)
 target_link_libraries(ugvc_codec PRIVATE ugvc_warnings)
@@ -55,6 +56,8 @@ target_link_libraries(ugvc_ingress PUBLIC ugvc_codec PRIVATE ugvc_warnings)
 # gateway: 수신 처리 중심(Gateway), 링크 상태, 유실률, HEARTBEAT, IF-03 JSON. 소켓 없음 → 단위 시험 대상
 add_library(ugvc_gateway_core
   src/gateway/gateway.cpp
+  src/gateway/command_tracker.cpp
+  src/if03/command.cpp
   src/if03/messages.cpp
 )
 target_include_directories(ugvc_gateway_core PUBLIC include)
@@ -87,6 +90,7 @@ if(UGVC_BUILD_TESTS)
     tests/codec/frame_test.cpp
     tests/codec/telemetry_test.cpp
     tests/codec/detection_ack_test.cpp
+    tests/codec/command_test.cpp
     tests/ingress/validator_test.cpp
     tests/ingress/seq_tracker_test.cpp
     tests/link/link_monitor_test.cpp
@@ -95,6 +99,8 @@ if(UGVC_BUILD_TESTS)
     tests/gateway/heartbeat_test.cpp
     tests/core/periodic_test.cpp
     tests/if03/messages_test.cpp
+    tests/if03/command_test.cpp
+    tests/gateway/command_tracker_test.cpp
     tests/app/line_sink_test.cpp
   )
   target_include_directories(ugvc_tests PRIVATE tests)
