@@ -9,18 +9,15 @@
 #include <variant>
 
 #include "ugvc/codec/command.hpp"
+#include "ugvc/gateway/command_tracker.hpp"
 
 namespace ugvc::if03 {
 
-inline constexpr std::size_t kMaxReqIdLen = 64;
+inline constexpr std::size_t kMaxReqIdLen = 64;  // 바이트(UTF-8)
 inline constexpr std::size_t kMaxCommandTextLen = 4096;
 
-struct CommandRequest {
-  std::string req_id;
-  codec::CmdType type = codec::CmdType::Stop;
-  std::int32_t lat = 0;  // 1e-7 deg. STOP·RTB는 0
-  std::int32_t lon = 0;
-};
+// 명령 요청 타입은 gateway가 가진다 (if03이 gateway를 쓰고 그 반대는 아니다, SDD 2장)
+using CommandRequest = gateway::CommandRequest;
 
 struct CommandParseError {
   std::optional<std::string> req_id;  // 유효한 req_id를 읽었을 때만. 있으면 HMI에 REJECTED_INVALID를 돌려준다

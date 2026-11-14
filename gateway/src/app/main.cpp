@@ -242,10 +242,8 @@ class GatewayApp {
                    },
                    [&](const if03::CommandParseError& e) {
                      diag(log_, "ws message rejected (", e.reason, "): ", quoted(m));
-                     if (e.req_id) {
-                       publish(if03::cmd_result({*e.req_id, std::nullopt, gateway::CmdResult::RejectedInvalid, 0},
-                                                clock_.epoch_ms()));
-                     }
+                     if (e.req_id) commands_.reject(*e.req_id);
+                     drain_command_events();
                    },
                },
                if03::parse_command(m));
@@ -273,8 +271,12 @@ class GatewayApp {
                      },
                      [&](const gateway::CommandResult& r) {
                        diag(log_, "cmd result req=", quoted(r.req_id), " id=", r.cmd_id ? std::to_string(*r.cmd_id) : "-",
-                            " result=", gateway::name_of(r.result), " attempts=", r.attempts);
+                            " result=", gateway::name_of(r.result), " attempts=", r.attempts,
+                            r.repeated ? " (repeated)" : "");
                        publish(if03::cmd_result(r, clock_.epoch_ms()));
+                     },
+                     [&](const gateway::CommandIgnored& i) {
+                       diag(log_, "cmd ignored req=", quoted(i.req_id), " reason=", i.reason);
                      },
                      [&](const gateway::UnknownAck& u) {
                        diag(log_, "cmd unknown ack id=", u.cmd_id, " result=", static_cast<int>(u.result));

@@ -3,6 +3,8 @@
 #include <utility>
 #include <variant>
 
+#include "ugvc/codec/msg_type.hpp"
+
 namespace ugvc::gateway {
 
 using ingress::Source;
@@ -24,10 +26,15 @@ std::optional<Accepted> Gateway::on_datagram(Source source, const std::uint8_t* 
     for (auto& [type, tracker] : s.streams) tracker.rebase();
   }
 
-  const ingress::SeqTracker::Result seq = s.streams[frame.header.msg_type].observe(frame.header.seq);
-  if (!seq.in_order) {
-    s.errors.add(ingress::RejectReason::Order);
-    return std::nullopt;
+  // 규칙 ⑨는 ACK 스트림에 적용하지 않는다 (ICD 9장): ACK는 cmd_id로 짝을 찾고, 늦거나 중복된 ACK는
+  // CommandTracker가 처리한다. SIM 수신부만 다시 시작해 ACK seq가 0부터 시작해도 버리지 않기 위해서다.
+  ingress::SeqTracker::Result seq{true, 0};
+  if (frame.header.msg_type != codec::kMsgAck) {
+    seq = s.streams[frame.header.msg_type].observe(frame.header.seq);
+    if (!seq.in_order) {
+      s.errors.add(ingress::RejectReason::Order);
+      return std::nullopt;
+    }
   }
 
   ++s.rx_count;

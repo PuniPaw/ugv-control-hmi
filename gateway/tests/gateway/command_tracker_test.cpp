@@ -14,6 +14,7 @@ using namespace ugvc;
 using namespace std::chrono_literals;
 using gateway::CmdResult;
 using gateway::CommandEvent;
+using gateway::CommandIgnored;
 using gateway::CommandResult;
 using gateway::CommandSent;
 using gateway::CommandTracker;
@@ -21,7 +22,7 @@ using gateway::UnknownAck;
 
 namespace {
 
-if03::CommandRequest request(const char* req_id, codec::CmdType t = codec::CmdType::Stop) {
+gateway::CommandRequest request(const char* req_id, codec::CmdType t = codec::CmdType::Stop) {
   return {req_id, t, 0, 0};
 }
 
@@ -36,16 +37,18 @@ std::string show(const CommandEvent& e) {
                           return "sent " + s.req_id + " id=" + std::to_string(s.cmd_id) + " #" + std::to_string(s.attempt);
                         },
                         [](const CommandResult& r) {
-                          return "result " + r.req_id + " " + gateway::name_of(r.result) + " n=" + std::to_string(r.attempts);
+                          return std::string(r.repeated ? "again " : "result ") + r.req_id + " " +
+                                 gateway::name_of(r.result) + " n=" + std::to_string(r.attempts);
                         },
                         [](const UnknownAck& u) { return "unknown id=" + std::to_string(u.cmd_id); },
+                        [](const CommandIgnored& i) { return "ignored " + i.req_id + " (" + i.reason + ")"; },
                     },
                     e);
 }
 
 struct CommandTrackerTest : ::testing::Test {
   test::FakeClock clock;
-  CommandTracker tracker{clock};
+  CommandTracker tracker{clock, 1};  // cmd_id를 1부터 (기본은 시각 기반 시작값)
 
   // 쌓인 사건을 꺼내 한 줄씩 문자열로 (순서 비교용)
   std::vector<std::string> events() {
@@ -152,21 +155,68 @@ TEST_F(CommandTrackerTest, REQ_CMD_005_ack_with_unassigned_cmd_id_is_unknown_and
   EXPECT_EQ(tracker.poll().size(), 1u);
 }
 
-TEST_F(CommandTrackerTest, REQ_CMD_002_same_req_id_while_pending_is_ignored) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_same_req_id_while_pending_is_ignored_and_logged) {
   ASSERT_TRUE(tracker.submit(request("r1")).has_value());
   tracker.take_events();
+  EXPECT_FALSE(tracker.submit(request("r1")).has_value());
   EXPECT_FALSE(tracker.submit(request("r1", codec::CmdType::Rtb)).has_value());
-  EXPECT_TRUE(tracker.take_events().empty());
+  EXPECT_EQ(events(), (std::vector<std::string>{"ignored r1 (req_id pending)",
+                                                      "ignored r1 (req_id pending with different command)"}));
   clock.advance(1000ms);
   EXPECT_EQ(tracker.poll().size(), 1u);  // 대기 중인 명령은 하나뿐
 }
 
-TEST_F(CommandTrackerTest, REQ_CMD_002_req_id_can_be_reused_after_result) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_resubmitted_req_id_gets_the_same_result_without_resending) {
   const auto first = tracker.submit(request("r1"));
   tracker.on_ack(ack(first->cmd_id));
-  const auto second = tracker.submit(request("r1"));
-  ASSERT_TRUE(second.has_value());
-  EXPECT_NE(second->cmd_id, first->cmd_id);
+  tracker.take_events();
+  clock.advance(59s);
+  EXPECT_FALSE(tracker.submit(request("r1")).has_value());  // 결과를 놓친 HMI의 재송신: 다시 실행하지 않음
+  EXPECT_FALSE(tracker.submit(request("r1", codec::CmdType::Rtb)).has_value());
+  EXPECT_EQ(events(), (std::vector<std::string>{"again r1 ACCEPTED n=1",
+                                                      "ignored r1 (req_id used by a recent different command)"}));
+  clock.advance(1s);  // 결과 후 60s: 잊는다
+  const auto later = tracker.submit(request("r1"));
+  ASSERT_TRUE(later.has_value());
+  EXPECT_NE(later->cmd_id, first->cmd_id);
+}
+
+TEST_F(CommandTrackerTest, REQ_CMD_002_recent_results_are_bounded) {
+  for (std::size_t i = 0; i <= gateway::kMaxRecentResults; ++i) {
+    const auto id = "r" + std::to_string(i);
+    const auto cmd = tracker.submit({id, codec::CmdType::Stop, 0, 0});
+    tracker.on_ack(ack(cmd->cmd_id));
+  }
+  tracker.take_events();
+  EXPECT_TRUE(tracker.submit(request("r0")).has_value());  // 가장 오래된 것은 잊었다
+  EXPECT_FALSE(tracker.submit(request("r1")).has_value());
+}
+
+TEST_F(CommandTrackerTest, REQ_CMD_002_invalid_command_is_rejected_unless_its_req_id_is_in_use) {
+  tracker.reject("bad");
+  const auto cmd = tracker.submit(request("busy"));
+  tracker.reject("busy");  // 대기 중인 req_id: 결과를 두 번 내지 않는다
+  tracker.on_ack(ack(cmd->cmd_id));
+  tracker.reject("busy");  // 최근 결과가 있는 req_id
+  EXPECT_EQ(events(), (std::vector<std::string>{"result bad REJECTED_INVALID n=0", "sent busy id=1 #1",
+                                                      "ignored busy (invalid command with a req_id in use)",
+                                                      "result busy ACCEPTED n=1",
+                                                      "ignored busy (invalid command with a req_id in use)"}));
+}
+
+TEST_F(CommandTrackerTest, REQ_CMD_002_resend_schedule_does_not_drift_with_late_polls) {
+  tracker.submit(request("r1"));
+  tracker.take_events();
+  clock.advance(1040ms);  // 판정 주기 때문에 40ms 늦게 판정
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  clock.advance(960ms);  // 2000ms: 예정대로 3번째 송신 (늦음이 쌓이지 않는다)
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  clock.advance(1000ms);  // 3000ms
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  tracker.take_events();
+  clock.advance(1000ms);  // 4000ms: TIMEOUT
+  tracker.poll();
+  EXPECT_EQ(events(), std::vector<std::string>{"result r1 TIMEOUT n=4"});
 }
 
 TEST_F(CommandTrackerTest, REQ_CMD_002_concurrent_commands_have_independent_timers) {
@@ -207,11 +257,22 @@ TEST_F(CommandTrackerTest, REQ_CMD_002_cmd_id_starts_at_1_and_skips_0_on_wrap) {
   EXPECT_EQ(t.submit(request("a"))->cmd_id, std::numeric_limits<std::uint32_t>::max());
   EXPECT_EQ(t.submit(request("b"))->cmd_id, 1u);
 
-  CommandTracker fresh(clock);
-  EXPECT_EQ(fresh.submit(request("a"))->cmd_id, 1u);
-  EXPECT_EQ(fresh.submit(request("b"))->cmd_id, 2u);
   CommandTracker zero(clock, 0);
   EXPECT_EQ(zero.submit(request("a"))->cmd_id, 1u);
+}
+
+TEST_F(CommandTrackerTest, REQ_CMD_002_cmd_id_start_follows_the_clock_so_a_restarted_gw_does_not_reuse_ids) {
+  // 0.1초 단위 시각에서 시작: 1초 뒤 다시 시작한 GW는 10만큼 뒤의 번호부터 (ICD 7.3)
+  EXPECT_EQ(gateway::initial_cmd_id(1'794'729'600'000ULL), static_cast<std::uint32_t>(17'947'296'000ULL % (1ULL << 32)));
+  test::FakeClock first(1'794'729'600'000ULL);
+  test::FakeClock restarted(1'794'729'601'000ULL);
+  CommandTracker gw1(first);
+  CommandTracker gw2(restarted);
+  const auto a = gw1.submit(request("a"))->cmd_id;
+  for (int i = 0; i < 9; ++i) gw1.submit(request(("x" + std::to_string(i)).c_str()));
+  const auto b = gw2.submit(request("b"))->cmd_id;
+  EXPECT_EQ(b - a, 10u);  // 앞 GW가 1초 동안 명령 10개를 써도 겹치지 않는다
+  EXPECT_EQ(gateway::initial_cmd_id(0), 1u);  // 0은 쓰지 않는다
 }
 
 TEST_F(CommandTrackerTest, REQ_CMD_005_ack_with_undefined_result_is_unknown_and_keeps_pending) {

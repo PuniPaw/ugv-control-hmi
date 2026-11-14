@@ -120,6 +120,17 @@ TEST_F(GatewayFixture, REQ_COM_006_no_rebase_while_connected) {
   EXPECT_EQ(gw.stats(Source::Vehicle).errors[RejectReason::Order], 1U);
 }
 
+// ACK 스트림은 규칙 ⑨ 대상이 아니다: SIM 수신부가 다시 시작해 ACK seq가 0부터 시작해도 받는다 (ICD 9장)
+TEST_F(GatewayFixture, REQ_CMD_002_ack_seq_restart_is_accepted_while_connected) {
+  for (std::uint32_t seq = 0; seq < 10; ++seq) ASSERT_TRUE(send(telemetry_frame(seq)));
+  ASSERT_TRUE(send(ack_frame(41)));
+  ASSERT_TRUE(send(ack_frame(42)));
+  EXPECT_TRUE(send(ack_frame(0)));  // 차량 링크는 CONNECTED 그대로
+  EXPECT_TRUE(send(ack_frame(0)));  // 같은 seq도 받는다 (중복 ACK는 CommandTracker가 처리)
+  EXPECT_EQ(gw.stats(Source::Vehicle).errors[RejectReason::Order], 0U);
+  EXPECT_FALSE(send(telemetry_frame(3)));  // 텔레메트리 스트림은 여전히 ⑨ 대상
+}
+
 // 규칙 ⑨ 위반도 원인별 계수에 들어가고 rx_count는 늘지 않는다
 TEST_F(GatewayFixture, REQ_COM_006_order_counted) {
   ASSERT_TRUE(send(telemetry_frame(10)));
