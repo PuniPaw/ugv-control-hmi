@@ -43,7 +43,7 @@ std::string show(const CommandEvent& e) {
                     e);
 }
 
-struct Fixture : ::testing::Test {
+struct CommandTrackerTest : ::testing::Test {
   test::FakeClock clock;
   CommandTracker tracker{clock};
 
@@ -58,14 +58,14 @@ struct Fixture : ::testing::Test {
 
 }  // namespace
 
-TEST_F(Fixture, REQ_CMD_002_first_send_is_immediate_attempt_1) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_first_send_is_immediate_attempt_1) {
   const auto cmd = tracker.submit({"r1", codec::CmdType::Waypoint, 361240000, -1277660000});
   ASSERT_TRUE(cmd.has_value());
   EXPECT_EQ(*cmd, (codec::Command{1, 0x03, 361240000, -1277660000}));
   EXPECT_EQ(events(), std::vector<std::string>{"sent r1 id=1 #1"});
 }
 
-TEST_F(Fixture, REQ_CMD_002_resend_at_1000ms_not_before_with_same_cmd_id) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_resend_at_1000ms_not_before_with_same_cmd_id) {
   const auto first = tracker.submit(request("r1"));
   tracker.take_events();
   clock.advance(999ms);
@@ -77,7 +77,7 @@ TEST_F(Fixture, REQ_CMD_002_resend_at_1000ms_not_before_with_same_cmd_id) {
   EXPECT_EQ(events(), std::vector<std::string>{"sent r1 id=1 #2"});
 }
 
-TEST_F(Fixture, REQ_CMD_002_no_ack_sends_four_times_then_timeout_at_4s) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_no_ack_sends_four_times_then_timeout_at_4s) {
   tracker.submit(request("r1"));
   int resends = 0;
   for (int i = 0; i < 3; ++i) {
@@ -100,7 +100,7 @@ TEST_F(Fixture, REQ_CMD_002_no_ack_sends_four_times_then_timeout_at_4s) {
   EXPECT_TRUE(tracker.take_events().empty());
 }
 
-TEST_F(Fixture, REQ_CMD_002_ack_before_timeout_gives_accepted_with_attempts_and_stops_resending) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_ack_before_timeout_gives_accepted_with_attempts_and_stops_resending) {
   const auto cmd = tracker.submit(request("r1"));
   clock.advance(1000ms);
   tracker.poll();
@@ -112,7 +112,7 @@ TEST_F(Fixture, REQ_CMD_002_ack_before_timeout_gives_accepted_with_attempts_and_
   EXPECT_TRUE(tracker.take_events().empty());
 }
 
-TEST_F(Fixture, REQ_CMD_002_ack_results_are_mapped) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_ack_results_are_mapped) {
   const auto a = tracker.submit(request("a"));
   const auto b = tracker.submit(request("b"));
   const auto c = tracker.submit(request("c"));
@@ -124,7 +124,7 @@ TEST_F(Fixture, REQ_CMD_002_ack_results_are_mapped) {
                                                       "result c REJECTED_STATE n=1"}));
 }
 
-TEST_F(Fixture, REQ_CMD_002_late_ack_after_timeout_is_unknown_and_gives_no_result) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_late_ack_after_timeout_is_unknown_and_gives_no_result) {
   const auto cmd = tracker.submit(request("r1"));
   for (int i = 0; i < 4; ++i) {
     clock.advance(1s);
@@ -135,7 +135,7 @@ TEST_F(Fixture, REQ_CMD_002_late_ack_after_timeout_is_unknown_and_gives_no_resul
   EXPECT_EQ(events(), std::vector<std::string>{"unknown id=1"});
 }
 
-TEST_F(Fixture, REQ_CMD_005_duplicate_ack_is_unknown) {
+TEST_F(CommandTrackerTest, REQ_CMD_005_duplicate_ack_is_unknown) {
   const auto cmd = tracker.submit(request("r1"));
   tracker.on_ack(ack(cmd->cmd_id));
   tracker.take_events();
@@ -143,7 +143,7 @@ TEST_F(Fixture, REQ_CMD_005_duplicate_ack_is_unknown) {
   EXPECT_EQ(events(), std::vector<std::string>{"unknown id=1"});
 }
 
-TEST_F(Fixture, REQ_CMD_005_ack_with_unassigned_cmd_id_is_unknown_and_keeps_pending) {
+TEST_F(CommandTrackerTest, REQ_CMD_005_ack_with_unassigned_cmd_id_is_unknown_and_keeps_pending) {
   tracker.submit(request("r1"));
   tracker.take_events();
   tracker.on_ack(ack(777));
@@ -152,7 +152,7 @@ TEST_F(Fixture, REQ_CMD_005_ack_with_unassigned_cmd_id_is_unknown_and_keeps_pend
   EXPECT_EQ(tracker.poll().size(), 1u);
 }
 
-TEST_F(Fixture, REQ_CMD_002_same_req_id_while_pending_is_ignored) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_same_req_id_while_pending_is_ignored) {
   ASSERT_TRUE(tracker.submit(request("r1")).has_value());
   tracker.take_events();
   EXPECT_FALSE(tracker.submit(request("r1", codec::CmdType::Rtb)).has_value());
@@ -161,7 +161,7 @@ TEST_F(Fixture, REQ_CMD_002_same_req_id_while_pending_is_ignored) {
   EXPECT_EQ(tracker.poll().size(), 1u);  // 대기 중인 명령은 하나뿐
 }
 
-TEST_F(Fixture, REQ_CMD_002_req_id_can_be_reused_after_result) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_req_id_can_be_reused_after_result) {
   const auto first = tracker.submit(request("r1"));
   tracker.on_ack(ack(first->cmd_id));
   const auto second = tracker.submit(request("r1"));
@@ -169,7 +169,7 @@ TEST_F(Fixture, REQ_CMD_002_req_id_can_be_reused_after_result) {
   EXPECT_NE(second->cmd_id, first->cmd_id);
 }
 
-TEST_F(Fixture, REQ_CMD_002_concurrent_commands_have_independent_timers) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_concurrent_commands_have_independent_timers) {
   const auto a = tracker.submit(request("a"));
   clock.advance(600ms);
   const auto b = tracker.submit(request("b"));
@@ -189,7 +189,7 @@ TEST_F(Fixture, REQ_CMD_002_concurrent_commands_have_independent_timers) {
   EXPECT_EQ(events(), (std::vector<std::string>{"sent a id=1 #2", "result a ACCEPTED n=2", "sent b id=2 #2"}));
 }
 
-TEST_F(Fixture, REQ_CMD_005_events_in_order_sent_resent_result) {
+TEST_F(CommandTrackerTest, REQ_CMD_005_events_in_order_sent_resent_result) {
   const auto cmd = tracker.submit(request("r1"));
   clock.advance(1000ms);
   tracker.poll();
@@ -201,7 +201,7 @@ TEST_F(Fixture, REQ_CMD_005_events_in_order_sent_resent_result) {
   EXPECT_TRUE(tracker.take_events().empty());  // 꺼내면 비워진다
 }
 
-TEST(CommandTracker, REQ_CMD_002_cmd_id_starts_at_1_and_skips_0_on_wrap) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_cmd_id_starts_at_1_and_skips_0_on_wrap) {
   test::FakeClock clock;
   CommandTracker t(clock, std::numeric_limits<std::uint32_t>::max());
   EXPECT_EQ(t.submit(request("a"))->cmd_id, std::numeric_limits<std::uint32_t>::max());
@@ -214,7 +214,7 @@ TEST(CommandTracker, REQ_CMD_002_cmd_id_starts_at_1_and_skips_0_on_wrap) {
   EXPECT_EQ(zero.submit(request("a"))->cmd_id, 1u);
 }
 
-TEST_F(Fixture, REQ_CMD_005_ack_with_undefined_result_is_unknown_and_keeps_pending) {
+TEST_F(CommandTrackerTest, REQ_CMD_005_ack_with_undefined_result_is_unknown_and_keeps_pending) {
   const auto cmd = tracker.submit(request("r1"));
   tracker.take_events();
   tracker.on_ack({cmd->cmd_id, 9});

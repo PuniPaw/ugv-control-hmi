@@ -116,6 +116,12 @@ void diag(app::LineSink& sink, const Parts&... parts) {
   sink.publish(os.str());
 }
 
+// HMI가 보낸 텍스트(명령 원문, req_id)를 진단에 쓸 때는 JSON 문자열로 감싼다: 개행 등 제어문자로 진단 줄
+// (링크 전이 등)을 위조할 수 없게 하고, 잘려서 깨진 UTF-8은 대체 문자로 바꾼다.
+std::string quoted(const std::string& untrusted, std::size_t max_len = 200) {
+  return nlohmann::json(untrusted.substr(0, max_len)).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
 // 포트 하나에서 datagram을 비동기로 계속 받아 handler에 넘긴다.
 class UdpReceiver {
  public:
@@ -228,8 +234,6 @@ class GatewayApp {
   }
 
   // IF-03 7.2 명령(HMI → GW). 검증을 통과하면 추적기에 넘기고, 못 읽은 명령은 req_id가 있을 때만 거부 결과를 돌려준다.
-  // 받은 텍스트는 JSON 문자열로 이스케이프해 기록한다: 개행 등 제어문자로 진단 줄(링크 전이 등)을
-  // 위조할 수 없게 하고, 200바이트에서 잘려 깨진 UTF-8은 대체 문자로 바꾼다.
   void on_hmi_message(const std::string& m) {
     std::visit(core::overloaded{
                    [&](const if03::CommandRequest& req) {
@@ -237,9 +241,7 @@ class GatewayApp {
                      drain_command_events();
                    },
                    [&](const if03::CommandParseError& e) {
-                     const auto quoted =
-                         nlohmann::json(m.substr(0, 200)).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-                     diag(log_, "ws message rejected (", e.reason, "): ", quoted);
+                     diag(log_, "ws message rejected (", e.reason, "): ", quoted(m));
                      if (e.req_id) {
                        publish(if03::cmd_result({*e.req_id, std::nullopt, gateway::CmdResult::RejectedInvalid, 0},
                                                 clock_.epoch_ms()));
@@ -266,11 +268,11 @@ class GatewayApp {
     for (const auto& e : commands_.take_events()) {
       std::visit(core::overloaded{
                      [&](const gateway::CommandSent& s) {
-                       diag(log_, "cmd sent req=", s.req_id, " id=", s.cmd_id, " type=", codec::name_of(s.cmd_type),
+                       diag(log_, "cmd sent req=", quoted(s.req_id), " id=", s.cmd_id, " type=", codec::name_of(s.cmd_type),
                             " attempt=", s.attempt);
                      },
                      [&](const gateway::CommandResult& r) {
-                       diag(log_, "cmd result req=", r.req_id, " id=", r.cmd_id ? std::to_string(*r.cmd_id) : "-",
+                       diag(log_, "cmd result req=", quoted(r.req_id), " id=", r.cmd_id ? std::to_string(*r.cmd_id) : "-",
                             " result=", gateway::name_of(r.result), " attempts=", r.attempts);
                        publish(if03::cmd_result(r, clock_.epoch_ms()));
                      },
