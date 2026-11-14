@@ -20,7 +20,7 @@ inline constexpr std::size_t kMaxCommandTextLen = 4096;
 using CommandRequest = gateway::CommandRequest;
 
 struct CommandParseError {
-  std::optional<std::string> req_id;  // 유효한 req_id를 읽었을 때만. 있으면 HMI에 REJECTED_INVALID를 돌려준다
+  std::optional<std::string> req_id;  // 유효한 req_id를 읽었을 때만. 있으면 CommandTracker::reject로 넘긴다 (응답 여부는 tracker가 정함)
   std::string reason;                 // 진단용
 };
 

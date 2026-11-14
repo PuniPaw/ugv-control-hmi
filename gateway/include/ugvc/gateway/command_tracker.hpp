@@ -8,6 +8,7 @@
 //
 // req_id 규칙 (ICD 7.2): req_id는 GW 전체에서 한 명령을 가리킨다. 대기 중이거나 최근에 결과가 나간 req_id로
 // 다시 오면 다시 보내지 않는다. 내용이 같고 결과가 나갔으면 같은 결과를 다시 알리고, 그 밖은 무시하고 기록한다.
+// 형식 오류로 거절한 req_id도 기억한다: 다시 온 형식 오류에는 같은 거절을 다시 알리고, 올바른 명령은 무시한다.
 
 #include <chrono>
 #include <cstdint>
@@ -95,8 +96,9 @@ class CommandTracker {
   // 새 명령이면 지금 보낼 COMMAND(1번째 송신). 아니면 nullopt (req_id 규칙, 위 머리말)
   std::optional<codec::Command> submit(const CommandRequest& req);
 
-  // 형식 오류로 보내지 않는 명령 (req_id만 읽음). 그 req_id가 대기 중이거나 최근 결과가 있으면 무시만 하고,
-  // 아니면 REJECTED_INVALID 결과(cmd_id 없음, attempts 0)를 낸다
+  // 형식 오류로 보내지 않는 명령 (req_id만 읽음). 새 req_id면 REJECTED_INVALID 결과(cmd_id 없음, attempts 0)를
+  // 내고 기억한다. 최근에 형식 오류로 거절한 req_id면 그 결과를 다시 알리고, 대기 중이거나 올바른 명령에
+  // 쓰인 req_id면 무시만 한다
   void reject(const std::string& req_id);
 
   void on_ack(const codec::Ack& ack);
@@ -114,13 +116,15 @@ class CommandTracker {
     core::SteadyTime due;  // 다음 판정 시각 (마지막 송신 예정 시각 + 1.0s)
   };
   struct Recent {
-    CommandRequest request;
+    std::optional<CommandRequest> request;  // 없음 = 형식 오류로 거절 (명령 내용을 읽지 못함)
     CommandResult result;
     core::SteadyTime at;
   };
 
   std::uint32_t issue_id();
-  void finish(std::vector<Pending>::iterator it, CmdResult r);
+  std::vector<Pending>::iterator finish(std::vector<Pending>::iterator it, CmdResult r);
+  void remember(std::optional<CommandRequest> request, CommandResult result);
+  void repeat(const Recent& r);
   const Pending* pending_of(const std::string& req_id) const;
   const Recent* recent_of(const std::string& req_id);
 

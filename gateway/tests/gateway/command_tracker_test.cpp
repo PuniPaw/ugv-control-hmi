@@ -197,11 +197,22 @@ TEST_F(CommandTrackerTest, REQ_CMD_002_invalid_command_is_rejected_unless_its_re
   const auto cmd = tracker.submit(request("busy"));
   tracker.reject("busy");  // 대기 중인 req_id: 결과를 두 번 내지 않는다
   tracker.on_ack(ack(cmd->cmd_id));
-  tracker.reject("busy");  // 최근 결과가 있는 req_id
+  tracker.reject("busy");  // 올바른 명령의 최근 결과가 있는 req_id
   EXPECT_EQ(events(), (std::vector<std::string>{"result bad REJECTED_INVALID n=0", "sent busy id=1 #1",
                                                       "ignored busy (invalid command with a req_id in use)",
                                                       "result busy ACCEPTED n=1",
                                                       "ignored busy (invalid command with a req_id in use)"}));
+}
+
+TEST_F(CommandTrackerTest, REQ_CMD_002_rejected_req_id_is_remembered_so_it_has_one_result) {
+  tracker.reject("x");
+  EXPECT_FALSE(tracker.submit(request("x")).has_value());  // 고친 명령을 같은 req_id로: 보내지 않는다
+  tracker.reject("x");                                     // 같은 형식 오류를 다시: 같은 거절을 다시 알린다
+  EXPECT_EQ(events(), (std::vector<std::string>{"result x REJECTED_INVALID n=0",
+                                                      "ignored x (req_id used by a recent invalid command)",
+                                                      "again x REJECTED_INVALID n=0"}));
+  clock.advance(gateway::kRecentResultTtl);  // 60초가 지나면 잊는다
+  EXPECT_TRUE(tracker.submit(request("x")).has_value());
 }
 
 TEST_F(CommandTrackerTest, REQ_CMD_002_resend_schedule_does_not_drift_with_late_polls) {
@@ -215,6 +226,26 @@ TEST_F(CommandTrackerTest, REQ_CMD_002_resend_schedule_does_not_drift_with_late_
   EXPECT_EQ(tracker.poll().size(), 1u);
   tracker.take_events();
   clock.advance(1000ms);  // 4000ms: TIMEOUT
+  tracker.poll();
+  EXPECT_EQ(events(), std::vector<std::string>{"result r1 TIMEOUT n=4"});
+}
+
+TEST_F(CommandTrackerTest, REQ_CMD_002_resend_after_a_poll_stall_still_waits_1s_for_ack) {
+  tracker.submit(request("r1"));
+  tracker.take_events();
+  clock.advance(3500ms);  // io 스레드가 3.5s 멈춘 뒤 첫 판정: 밀린 재전송을 몰아 보내지 않는다
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  clock.advance(50ms);
+  EXPECT_TRUE(tracker.poll().empty());
+  clock.advance(950ms);  // 4.5s: 늦은 송신 후 1.0s
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  clock.advance(1000ms);  // 5.5s
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  tracker.take_events();
+  clock.advance(999ms);  // 마지막 송신 뒤 1.0s 전에는 TIMEOUT 아님
+  tracker.poll();
+  EXPECT_TRUE(tracker.take_events().empty());
+  clock.advance(1ms);
   tracker.poll();
   EXPECT_EQ(events(), std::vector<std::string>{"result r1 TIMEOUT n=4"});
 }
@@ -251,7 +282,7 @@ TEST_F(CommandTrackerTest, REQ_CMD_005_events_in_order_sent_resent_result) {
   EXPECT_TRUE(tracker.take_events().empty());  // 꺼내면 비워진다
 }
 
-TEST_F(CommandTrackerTest, REQ_CMD_002_cmd_id_starts_at_1_and_skips_0_on_wrap) {
+TEST_F(CommandTrackerTest, REQ_CMD_002_cmd_id_skips_0_on_wrap) {
   test::FakeClock clock;
   CommandTracker t(clock, std::numeric_limits<std::uint32_t>::max());
   EXPECT_EQ(t.submit(request("a"))->cmd_id, std::numeric_limits<std::uint32_t>::max());

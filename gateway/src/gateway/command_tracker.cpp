@@ -42,7 +42,7 @@ const CommandTracker::Recent* CommandTracker::recent_of(const std::string& req_i
                                [&](const Recent& r) { return now - r.at >= kRecentResultTtl; }),
                 recent_.end());
   const auto it = std::find_if(recent_.begin(), recent_.end(),
-                               [&](const Recent& r) { return r.request.req_id == req_id; });
+                               [&](const Recent& r) { return r.result.req_id == req_id; });
   return it == recent_.end() ? nullptr : &*it;
 }
 
@@ -53,10 +53,10 @@ std::optional<codec::Command> CommandTracker::submit(const CommandRequest& req) 
     return std::nullopt;
   }
   if (const Recent* r = recent_of(req.req_id)) {
-    if (r->request.same_command(req)) {
-      CommandResult again = r->result;
-      again.repeated = true;
-      events_.push_back(std::move(again));
+    if (!r->request) {
+      events_.push_back(CommandIgnored{req.req_id, "req_id used by a recent invalid command"});
+    } else if (r->request->same_command(req)) {
+      repeat(*r);
     } else {
       events_.push_back(CommandIgnored{req.req_id, "req_id used by a recent different command"});
     }
@@ -70,19 +70,37 @@ std::optional<codec::Command> CommandTracker::submit(const CommandRequest& req) 
 }
 
 void CommandTracker::reject(const std::string& req_id) {
-  if (pending_of(req_id) || recent_of(req_id)) {
+  if (pending_of(req_id)) {
     events_.push_back(CommandIgnored{req_id, "invalid command with a req_id in use"});
     return;
   }
-  events_.push_back(CommandResult{req_id, std::nullopt, CmdResult::RejectedInvalid, 0});
+  if (const Recent* r = recent_of(req_id)) {
+    if (r->request) {
+      events_.push_back(CommandIgnored{req_id, "invalid command with a req_id in use"});
+    } else {
+      repeat(*r);  // 같은 형식 오류를 다시 보낸 것: 결과를 놓친 HMI에 같은 거절을 다시 알린다
+    }
+    return;
+  }
+  remember(std::nullopt, CommandResult{req_id, std::nullopt, CmdResult::RejectedInvalid, 0});
 }
 
-void CommandTracker::finish(std::vector<Pending>::iterator it, CmdResult r) {
-  CommandResult result{it->request.req_id, it->command.cmd_id, r, it->sends};
+void CommandTracker::repeat(const Recent& r) {
+  CommandResult again = r.result;
+  again.repeated = true;
+  events_.push_back(std::move(again));
+}
+
+void CommandTracker::remember(std::optional<CommandRequest> request, CommandResult result) {
   events_.push_back(result);
-  recent_.push_back({std::move(it->request), std::move(result), clock_.now()});
+  recent_.push_back({std::move(request), std::move(result), clock_.now()});
   if (recent_.size() > kMaxRecentResults) recent_.erase(recent_.begin());
-  pending_.erase(it);
+}
+
+std::vector<CommandTracker::Pending>::iterator CommandTracker::finish(std::vector<Pending>::iterator it,
+                                                                      CmdResult r) {
+  remember(it->request, CommandResult{it->request.req_id, it->command.cmd_id, r, it->sends});
+  return pending_.erase(it);
 }
 
 void CommandTracker::on_ack(const codec::Ack& ack) {
@@ -103,16 +121,17 @@ std::vector<codec::Command> CommandTracker::poll() {
     if (now < it->due) {
       ++it;
     } else if (it->sends < kMaxSends) {
-      // 예정 시각 기준으로 다음 판정을 잡는다: 판정 주기(50ms)만큼의 늦음이 송신마다 쌓이지 않게
+      // 예정 시각 기준으로 다음 판정을 잡는다: 판정 주기(50ms)만큼의 늦음이 송신마다 쌓이지 않게.
+      // 판정이 송신 간격(1.0s) 이상 늦었으면(io 스레드 정지 등) 지금부터 1.0s를 기다린다: 밀린 재전송을
+      // 한꺼번에 보내고 ACK를 기다리지도 않은 채 TIMEOUT으로 끝내지 않기 위해서다
       ++it->sends;
-      it->due += kAckTimeout;
+      it->due = (now - it->due >= kAckTimeout) ? now + kAckTimeout : it->due + kAckTimeout;
       resend.push_back(it->command);
       events_.push_back(CommandSent{it->request.req_id, it->command.cmd_id,
                                     static_cast<codec::CmdType>(it->command.cmd_type), it->sends});
       ++it;
     } else {
-      finish(it, CmdResult::Timeout);
-      it = pending_.begin();  // finish가 지운 뒤 처음부터 다시 (순서 유지, 목록은 작다)
+      it = finish(it, CmdResult::Timeout);
     }
   }
   return resend;
