@@ -230,24 +230,66 @@ TEST_F(CommandTrackerTest, REQ_CMD_002_resend_schedule_does_not_drift_with_late_
   EXPECT_EQ(events(), std::vector<std::string>{"result r1 TIMEOUT n=4"});
 }
 
-TEST_F(CommandTrackerTest, REQ_CMD_002_resend_after_a_poll_stall_still_waits_1s_for_ack) {
+// 판정이 늦어 송신이 늦으면 다음 판정은 실제 송신 + (1.0s − 판정 주기) 뒤 (ICD 7.3)
+TEST_F(CommandTrackerTest, REQ_CMD_002_resend_after_a_poll_stall_still_waits_for_ack) {
   tracker.submit(request("r1"));
   tracker.take_events();
   clock.advance(3500ms);  // io 스레드가 3.5s 멈춘 뒤 첫 판정: 밀린 재전송을 몰아 보내지 않는다
   EXPECT_EQ(tracker.poll().size(), 1u);
-  clock.advance(50ms);
+  clock.advance(900ms);  // 4.40s
   EXPECT_TRUE(tracker.poll().empty());
-  clock.advance(950ms);  // 4.5s: 늦은 송신 후 1.0s
+  clock.advance(50ms);  // 4.45s = 3.5 + 0.95
   EXPECT_EQ(tracker.poll().size(), 1u);
-  clock.advance(1000ms);  // 5.5s
+  clock.advance(1000ms);  // 5.45s
   EXPECT_EQ(tracker.poll().size(), 1u);
   tracker.take_events();
-  clock.advance(999ms);  // 마지막 송신 뒤 1.0s 전에는 TIMEOUT 아님
+  clock.advance(999ms);
   tracker.poll();
   EXPECT_TRUE(tracker.take_events().empty());
-  clock.advance(1ms);
+  clock.advance(1ms);  // 6.45s: 마지막 송신 1.0s 뒤 TIMEOUT
   tracker.poll();
   EXPECT_EQ(events(), std::vector<std::string>{"result r1 TIMEOUT n=4"});
+}
+
+// 1.0s보다 덜 늦은 판정(0.9s)도 다음 송신과 TIMEOUT을 앞당기지 않는다 (예전에는 0.1s 뒤 재전송)
+TEST_F(CommandTrackerTest, REQ_CMD_002_resend_0_9s_late_does_not_shorten_the_next_wait) {
+  tracker.submit(request("r1"));
+  tracker.take_events();
+  clock.advance(1900ms);
+  EXPECT_EQ(tracker.poll().size(), 1u);  // 2번째 송신 1.9s
+  clock.advance(100ms);                  // 2.0s: 원래 예정 시각이지만 아직
+  EXPECT_TRUE(tracker.poll().empty());
+  clock.advance(850ms);  // 2.85s = 1.9 + 0.95
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  clock.advance(1000ms);  // 3.85s
+  EXPECT_EQ(tracker.poll().size(), 1u);
+  tracker.take_events();
+  clock.advance(950ms);  // 4.80s: TIMEOUT 전
+  tracker.poll();
+  EXPECT_TRUE(tracker.take_events().empty());
+  clock.advance(50ms);  // 4.85s
+  tracker.poll();
+  EXPECT_EQ(events(), std::vector<std::string>{"result r1 TIMEOUT n=4"});
+}
+
+// 형식 오류 거절은 상한을 따로 쓴다: 거절이 몰려도 실행된 명령의 기억이 60초 안에 밀려나지 않는다
+TEST_F(CommandTrackerTest, REQ_CMD_002_rejects_do_not_push_out_results_of_sent_commands) {
+  const gateway::CommandRequest wp{"wp-7", codec::CmdType::Waypoint, 361240000, 1277660000};
+  tracker.on_ack(ack(tracker.submit(wp)->cmd_id));
+  for (std::size_t i = 0; i < gateway::kMaxRecentResults + 1; ++i) tracker.reject("bad-" + std::to_string(i));
+  tracker.take_events();
+  EXPECT_FALSE(tracker.submit(wp).has_value());  // 다시 보내지 않고 같은 결과를 다시 알린다
+  EXPECT_EQ(events(), std::vector<std::string>{"again wp-7 ACCEPTED n=1"});
+}
+
+TEST_F(CommandTrackerTest, REQ_CMD_002_sent_commands_do_not_push_out_rejects) {
+  tracker.reject("x");
+  for (std::size_t i = 0; i < gateway::kMaxRecentResults + 1; ++i) {
+    tracker.on_ack(ack(tracker.submit(request(("ok-" + std::to_string(i)).c_str()))->cmd_id));
+  }
+  tracker.take_events();
+  EXPECT_FALSE(tracker.submit(request("x")).has_value());  // 거절한 req_id로 고친 명령: 여전히 보내지 않는다
+  EXPECT_EQ(events(), std::vector<std::string>{"ignored x (req_id used by a recent invalid command)"});
 }
 
 TEST_F(CommandTrackerTest, REQ_CMD_002_concurrent_commands_have_independent_timers) {

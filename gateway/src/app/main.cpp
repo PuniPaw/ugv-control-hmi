@@ -49,7 +49,7 @@ using asio::ip::udp;
 using namespace ugvc;
 using ingress::Source;
 
-constexpr auto kJudgePeriod = std::chrono::milliseconds(50);  // 링크 판정 주기 (SDD 가정값)
+constexpr auto kJudgePeriod = gateway::kJudgePeriod;  // 링크·명령 판정 주기 (SDD 가정값, CommandTracker와 공유)
 constexpr std::size_t kMaxStdoutLines = 1000;  // 약 1~2초 분량. 넘치면 표시용 줄만 잃는다
 constexpr std::size_t kMaxStderrLines = 200;   // 진단은 드물다. 이만큼 밀리면 읽는 쪽이 멈춘 것
 constexpr std::size_t kMaxWsQueued = 1000;     // HMI 세션마다. 넘치면 그 HMI를 끊는다 (메모리 상한)

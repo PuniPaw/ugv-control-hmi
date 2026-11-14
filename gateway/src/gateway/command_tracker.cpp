@@ -17,6 +17,13 @@ std::optional<CmdResult> from_ack(std::uint8_t r) {
   return std::nullopt;
 }
 
+// 오래된 것부터 버려 상한(kMaxRecentResults)을 지킨다
+template <class T>
+void push_bounded(std::vector<T>& list, T r) {
+  list.push_back(std::move(r));
+  if (list.size() > kMaxRecentResults) list.erase(list.begin());
+}
+
 }  // namespace
 
 std::uint32_t initial_cmd_id(std::uint64_t epoch_ms) {
@@ -38,12 +45,15 @@ const CommandTracker::Pending* CommandTracker::pending_of(const std::string& req
 
 const CommandTracker::Recent* CommandTracker::recent_of(const std::string& req_id) {
   const auto now = clock_.now();
-  recent_.erase(std::remove_if(recent_.begin(), recent_.end(),
+  for (auto* list : {&recent_, &rejected_}) {
+    list->erase(std::remove_if(list->begin(), list->end(),
                                [&](const Recent& r) { return now - r.at >= kRecentResultTtl; }),
-                recent_.end());
-  const auto it = std::find_if(recent_.begin(), recent_.end(),
-                               [&](const Recent& r) { return r.result.req_id == req_id; });
-  return it == recent_.end() ? nullptr : &*it;
+                list->end());
+    const auto it = std::find_if(list->begin(), list->end(),
+                                 [&](const Recent& r) { return r.result.req_id == req_id; });
+    if (it != list->end()) return &*it;
+  }
+  return nullptr;
 }
 
 std::optional<codec::Command> CommandTracker::submit(const CommandRequest& req) {
@@ -93,13 +103,13 @@ void CommandTracker::repeat(const Recent& r) {
 
 void CommandTracker::remember(std::optional<CommandRequest> request, CommandResult result) {
   events_.push_back(result);
-  recent_.push_back({std::move(request), std::move(result), clock_.now()});
-  if (recent_.size() > kMaxRecentResults) recent_.erase(recent_.begin());
+  push_bounded(request ? recent_ : rejected_, Recent{std::move(request), std::move(result), clock_.now()});
 }
 
 std::vector<CommandTracker::Pending>::iterator CommandTracker::finish(std::vector<Pending>::iterator it,
                                                                       CmdResult r) {
-  remember(it->request, CommandResult{it->request.req_id, it->command.cmd_id, r, it->sends});
+  CommandResult result{it->request.req_id, it->command.cmd_id, r, it->sends};
+  remember(std::move(it->request), std::move(result));
   return pending_.erase(it);
 }
 
@@ -122,10 +132,10 @@ std::vector<codec::Command> CommandTracker::poll() {
       ++it;
     } else if (it->sends < kMaxSends) {
       // 예정 시각 기준으로 다음 판정을 잡는다: 판정 주기(50ms)만큼의 늦음이 송신마다 쌓이지 않게.
-      // 판정이 송신 간격(1.0s) 이상 늦었으면(io 스레드 정지 등) 지금부터 1.0s를 기다린다: 밀린 재전송을
-      // 한꺼번에 보내고 ACK를 기다리지도 않은 채 TIMEOUT으로 끝내지 않기 위해서다
+      // 다만 실제 송신 뒤 (1.0s − 판정 주기)보다 일찍 판정하지 않는다: 판정이 늦어(io 스레드 정지 등)
+      // 송신이 늦었을 때 다음 재전송이나 TIMEOUT이 ACK를 기다리지도 않고 바로 오지 않게 한다
       ++it->sends;
-      it->due = (now - it->due >= kAckTimeout) ? now + kAckTimeout : it->due + kAckTimeout;
+      it->due = std::max(it->due + kAckTimeout, now + kAckTimeout - kJudgePeriod);
       resend.push_back(it->command);
       events_.push_back(CommandSent{it->request.req_id, it->command.cmd_id,
                                     static_cast<codec::CmdType>(it->command.cmd_type), it->sends});

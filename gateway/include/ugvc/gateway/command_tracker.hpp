@@ -4,11 +4,13 @@
 // 보낼 명령을 반환하고 ACK·시간 경과를 받아 결과를 확정한다. 실제 송신은 호출자(main)가 한다.
 //
 // 한 명령은 최대 4번(최초 1 + 재전송 3) 같은 cmd_id로 보낸다. 송신 예정 시각은 1.0s 간격(0·1·2·3s)이고
-// 4번째 송신 예정 시각 + 1.0s(4.0s)까지 ACK가 없으면 TIMEOUT (ICD 7.3).
+// 4번째 송신 예정 시각 + 1.0s(4.0s)까지 ACK가 없으면 TIMEOUT (ICD 7.3). 판정이 판정 주기보다 늦어 송신이
+// 늦었으면 다음 판정은 실제 송신 시각 + (1.0s − 판정 주기)보다 앞당기지 않는다(ACK 대기 보장).
 //
 // req_id 규칙 (ICD 7.2): req_id는 GW 전체에서 한 명령을 가리킨다. 대기 중이거나 최근에 결과가 나간 req_id로
 // 다시 오면 다시 보내지 않는다. 내용이 같고 결과가 나갔으면 같은 결과를 다시 알리고, 그 밖은 무시하고 기록한다.
 // 형식 오류로 거절한 req_id도 기억한다: 다시 온 형식 오류에는 같은 거절을 다시 알리고, 올바른 명령은 무시한다.
+// 거절 기록은 따로 센다(SIM에 가지 않는 입력이 실행된 명령의 기억을 밀어내지 않게).
 
 #include <chrono>
 #include <cstdint>
@@ -27,7 +29,8 @@ namespace ugvc::gateway {
 inline constexpr std::chrono::milliseconds kAckTimeout{1000};
 inline constexpr int kMaxRetransmits = 3;
 inline constexpr std::chrono::seconds kRecentResultTtl{60};  // 결과가 나간 req_id를 기억하는 시간
-inline constexpr std::size_t kMaxRecentResults = 256;          // 그 개수 상한
+inline constexpr std::size_t kMaxRecentResults = 256;          // 그 개수 상한 (송신한 명령, 형식 오류 거절 각각)
+inline constexpr std::chrono::milliseconds kJudgePeriod{50};    // GW 판정 주기 (main의 타이머가 이 값으로 poll)
 
 // HMI 명령 한 건 (IF-03 7.2를 if03::parse_command가 검증한 결과)
 struct CommandRequest {
@@ -113,7 +116,7 @@ class CommandTracker {
     CommandRequest request;
     codec::Command command;
     int sends;
-    core::SteadyTime due;  // 다음 판정 시각 (마지막 송신 예정 시각 + 1.0s)
+    core::SteadyTime due;  // 다음 판정 시각 (마지막 송신 예정 시각 + 1.0s, 늦은 송신이면 위 머리말 규칙)
   };
   struct Recent {
     std::optional<CommandRequest> request;  // 없음 = 형식 오류로 거절 (명령 내용을 읽지 못함)
@@ -131,7 +134,8 @@ class CommandTracker {
   const core::IClock& clock_;
   std::uint32_t next_id_;
   std::vector<Pending> pending_;  // 제출 순서. 사건도 이 순서로 나온다
-  std::vector<Recent> recent_;    // 결과가 나간 명령, 오래된 것부터 (kRecentResultTtl, kMaxRecentResults)
+  std::vector<Recent> recent_;    // 결과가 나간 송신 명령, 오래된 것부터 (kRecentResultTtl, kMaxRecentResults)
+  std::vector<Recent> rejected_;  // 형식 오류로 거절한 req_id (request 없음). 상한은 recent_와 따로
   std::vector<CommandEvent> events_;
 };
 
