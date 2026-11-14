@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-ICD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.10 |
+| 버전 | v0.11 |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, ADR-001 (영상 경로), ADR-002 (수치 표현·바이트 순서) |
 
@@ -22,6 +22,7 @@
 | v0.8 | 2026-11-12 | 7장 (PR #19 6차 리뷰): 재설정 시계는 늦은 `stats`에서만 시작(다른 메시지가 기준선을 낮춰도 시작하지 않음). 재설정 접속이 1초 넘게 걸리면 궤적을 끊음. 판정 주기는 화면이 보일 때 기준. 7.1 `link_status`의 `last_rx_ts`가 null이면 state는 LOST여야 하며 아니면 HMI가 폐기. `capture_ts` 폐기 기준은 double로 읽은 값이 2^64를 넘을 때 |
 | v0.9 | 2026-11-12 | 7장 (PR #19 7차 리뷰): 재설정 전후 궤적을 접속 시간이 아니라 텔레메트리 seq 간격으로 판정(위치 없이 지난 표본 = GPS 무효 + 건너뛴 seq, 10개 이상이면 끊음). 처리 적체를 버린 재설정도 같은 규칙으로 덮는다 |
 | v0.10 | 2026-11-12 | 7장 (PR #19 8차 리뷰): seq가 뒤로 가는 경우(차량 LOST 뒤 기준값 재설정, SIM 재시작)의 궤적 판정과, 재설정 창 안의 차량 LOST는 seq로만 추정한다는 한계를 적음 |
+| v0.11 | 2026-11-14 | 명령 중계 구현 (REQ-CMD-002·003·005·006): 7.2 `command` 필드 형식과 GW 검증·응답 규칙, 7.3 재전송 규약(1.0s, 같은 cmd_id 최대 3회 재전송, 4회 송신 1.0s 뒤 TIMEOUT, cmd_id 발급), 7.1 `cmd_result`의 `cmd_id`는 GW가 보내지 않고 거절한 명령에서 `null`, `attempts`는 송신 횟수(0~4). 6.4 SIM의 ACK 송신처(GW 차량 포트)와 중복 cmd_id 기억 |
 
 ---
 
@@ -164,7 +165,7 @@
 | 0x02 | RTB | 출발 지점으로 복귀 |
 | 0x03 | WAYPOINT | 경로점 추가 후 MISSION 진입 |
 
-SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전 result로 ACK만 다시 보낸다 (SRS REQ-CMD-003).
+SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전 result로 ACK만 다시 보낸다 (SRS REQ-CMD-003). SIM은 최근 1024개 cmd_id의 결과를 기억한다.
 
 ### 6.4 ACK (`0x11`, 5 바이트)
 
@@ -179,6 +180,8 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 |---|---|---|
 | 0 | ACCEPTED | 수락 |
 | 1 | REJECTED_INVALID | 필드 값 오류 (범위 밖 좌표 등). SIM은 cmd_id ≥ 1이고 cmd_type·좌표가 6.3 범위를 벗어난 COMMAND를 실행하지 않고 이 값으로 ACK한다. cmd_id가 0이면 응답할 대상이 없으므로 ACK 없이 폐기한다 |
+
+SIM은 ACK를 COMMAND를 보낸 주소가 아니라 GW의 차량 수신 포트(IF-01a, 기본 15001)로 보낸다. ACK는 SIM의 ACK 스트림으로 자기 seq(u32, 0부터)를 쓴다(3장, 스트림 단위 seq).
 | 2 | REJECTED_STATE | 현재 상태에서 수행 불가 (FAULT 등) |
 
 ### 6.5 HEARTBEAT (`0x20`, 0 바이트)
@@ -222,7 +225,7 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 | `detection` | 수신 즉시 | frame_id, capture_ts, img_w, img_h, objects[{class, conf, x, y, w, h}]. `capture_ts`는 u64 그대로의 정수다(0 ~ 2^64−1). JSON 수신 측이 double로 읽으면 2^53 이상에서 정밀도가 줄 수 있으며(2^64−1은 2^64가 됨), HMI는 이를 허용한다. HMI는 double로 읽은 값이 음수이거나 2^64를 넘으면 폐기한다(2^64 근처 수천 이내는 double로 구분할 수 없어 받아들인다) |
 | `link_status` | 상태 전이 시 + 1Hz | source(`VEHICLE`/`DETECTOR`), state(`CONNECTED`/`DEGRADED`/`LOST`, 첫 패킷 전은 `LOST`), last_rx_ts(첫 패킷 전 `null`). `last_rx_ts`가 `null`이면 state는 `LOST`여야 하며, 아니면 HMI는 메시지를 폐기한다 |
 | `stats` | 1Hz | source, loss_rate_10s(0~1, 창이 비면 `null`), rx_count(유효 패킷 누계), lost_count(유실 누계), errors{sync, version, length, crc, type, range, order} |
-| `cmd_result` | 결과 확정 시 | req_id, cmd_id, result(`ACCEPTED`/`REJECTED_INVALID`/`REJECTED_STATE`/`TIMEOUT`), attempts |
+| `cmd_result` | 결과 확정 시 | req_id(7.2 그대로), cmd_id(GW가 발급한 u32, GW가 형식 오류로 보내지 않고 거절한 명령은 `null`), result(`ACCEPTED`/`REJECTED_INVALID`/`REJECTED_STATE`/`TIMEOUT`), attempts(SIM에 보낸 횟수 0~4, 7.3). 모든 HMI에 보낸다 |
 
 예시:
 
@@ -244,9 +247,19 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 
 | type | data 필드 | 설명 |
 |---|---|---|
-| `command` | req_id(문자열, HMI 발급), cmd_type(`STOP`/`RTB`/`WAYPOINT`), lat?, lon? | 운용자 확인을 거친 뒤에만 송신 (REQ-CMD-001) |
+| `command` | req_id(문자열 1~64자, HMI 발급), cmd_type(`STOP`/`RTB`/`WAYPOINT`), lat·lon(도, WAYPOINT만 필수: 위도 −90~90, 경도 −180~180, 유한한 수) | 운용자 확인을 거친 뒤에만 송신 (REQ-CMD-001) |
 
-v0.4 시점의 GW는 7.2 메시지를 받아도 처리하지 않고 진단에 기록만 한다. 명령 송신·재전송·`cmd_result`는 12월 명령 중계 작업(REQ-CMD-002)에서 구현한다.
+- 봉투는 `{"type":"command","data":{...}}`이며 `ts`는 있어도 되고 없어도 된다.
+- GW는 이 메시지를 경계에서 한 번 검증한다. 형식이 틀리면(JSON이 아님, 필드 누락, 정의 밖 cmd_type, WAYPOINT 좌표 범위 밖) SIM에 보내지 않고, req_id를 읽을 수 있으면 `cmd_result` REJECTED_INVALID(cmd_id `null`, attempts 0)로 답한다. req_id를 읽을 수 없으면 답할 대상이 없으므로 진단에만 기록한다.
+- WAYPOINT 좌표는 1e-7 deg 정수로 반올림해 COMMAND lat·lon에 싣는다(6.3). STOP·RTB의 lat·lon은 무시하고 0을 싣는다.
+- 같은 req_id의 명령이 아직 결과 전이면 다시 받아도 새로 보내지 않는다(HMI 재송신에 대한 멱등성).
+
+### 7.3 명령 재전송 규약 (GW, SRS REQ-CMD-002·005)
+
+- GW는 명령마다 cmd_id를 1부터 차례로 발급한다(u32, 순환할 때 0은 건너뛴다). 재전송은 같은 cmd_id로 한다.
+- 첫 COMMAND를 바로 보내고, 마지막 송신 후 1.0초 안에 같은 cmd_id의 ACK가 없으면 다시 보낸다. 재전송은 최대 3회(송신 최대 4회, 0·1·2·3초)이고, 4번째 송신 후 1.0초까지 ACK가 없으면 TIMEOUT으로 확정한다(첫 송신 후 4.0초).
+- ACK가 오면 그 result(표 6-5)로 확정한다. 확정된 뒤 늦게 온 ACK와 모르는 cmd_id의 ACK는 결과를 바꾸지 않고 진단에만 기록한다.
+- 송신·재전송·결과·모르는 ACK를 모두 GW 진단 기록(stderr, 이후 PostgreSQL 로그)에 남긴다(REQ-CMD-005). 결과는 `cmd_result`로 모든 HMI와 stdout(JSON Lines)에 보낸다.
 
 ## 8. IF-04 DET → HMI 영상 (WebSocket 바이너리)
 
