@@ -20,7 +20,7 @@ ACK_MEMORY = 1024  # REQ-CMD-003: 중복 판정을 위해 기억하는 최근 cm
 @dataclass(frozen=True)
 class CommandOutcome:
     ack: Ack
-    execute: Command | None  # 이번에 수락해 처리한 명령. 중복·거절이면 None
+    execute: Command | None  # 이번에 차량 상태에 적용한 명령. 중복·거절, 두절 중 STOP(이미 정지)이면 None
 
 
 class Simulator:
@@ -61,7 +61,7 @@ class Simulator:
         if self._watch.expired(now):
             # 링크 두절 중: STOP은 이미 정지 상태라 수락만 하고 Failsafe는 유지. 이동 명령은 거절 (REQ-SAFE-002)
             if cmd.cmd_type == CmdType.STOP:
-                return CommandOutcome(Ack(cmd.cmd_id, AckResult.ACCEPTED), cmd)
+                return CommandOutcome(Ack(cmd.cmd_id, AckResult.ACCEPTED), None)
             return CommandOutcome(Ack(cmd.cmd_id, AckResult.REJECTED_STATE), None)
         self.state = apply_command(self.state, cmd)
         return CommandOutcome(Ack(cmd.cmd_id, AckResult.ACCEPTED), cmd)

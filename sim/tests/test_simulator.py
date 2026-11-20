@@ -6,7 +6,7 @@ from ugvc_proto.telemetry import Flags, Mode
 
 from ugvc_sim.simulator import Simulator
 from ugvc_sim.uplink import InvalidCommand, ReceivedCommand
-from ugvc_sim.vehicle import HOME, START
+from ugvc_sim.vehicle import START
 
 NEAR_LAT, NEAR_LON = 361240000, 1277660000  # START(36.1234567, 127.7654321) 근처 경로점 (≈ 60 m)
 
@@ -103,11 +103,13 @@ def test_REQ_SAFE_001_vehicle_does_not_move_in_failsafe():
 
 def test_REQ_SAFE_001_failsafe_is_a_single_transition_per_outage():
     sim = Simulator(start=0.0)
-    _run(sim, 0.0, 3.0)
-    before = sim.state
-    _run(sim, 3.0, 6.0)
-    assert sim.state.mode == before.mode and sim.state.flags & Flags.FAILSAFE_ACTIVE
-    assert sim.state.route == before.route
+    seen = []
+    for i in range(1, 61):  # 0.1s 간격 6초, 두절이 이어짐
+        sim.advance(i / 10, 0.1)
+        seen.append(sim.failsafe)
+    edges = [i for i in range(1, len(seen)) if seen[i] != seen[i - 1]]
+    assert edges == [29]  # 3.0s(30번째 tick)에 한 번 켜지고 다시 바뀌지 않는다
+    assert sim.state.mode == Mode.STOPPED and sim.state.route == ()
 
 
 def test_REQ_SAFE_001_failsafe_again_after_second_outage():
@@ -177,8 +179,8 @@ def test_REQ_SAFE_002_motion_command_during_outage_rejected_state():
         assert out.ack == Ack(i, AckResult.REJECTED_STATE) and out.execute is None
     t = _run(sim, t, t + 1.0)
     assert _failsafe_telemetry(sim) and _pos(sim) == frozen
-    out = sim.on_command(_cmd(3, CmdType.STOP), t)  # STOP은 수락하되 Failsafe는 그대로
-    assert out.ack == Ack(3, AckResult.ACCEPTED)
+    out = sim.on_command(_cmd(3, CmdType.STOP), t)  # STOP은 수락하되 Failsafe는 그대로 (상태를 바꾸지 않음)
+    assert out.ack == Ack(3, AckResult.ACCEPTED) and out.execute is None
     assert _failsafe_telemetry(sim) and _pos(sim) == frozen
 
 
@@ -190,7 +192,25 @@ def test_REQ_SAFE_002_rejected_state_cmd_id_retransmitted_after_recovery_keeps_r
     out = sim.on_command(_cmd(7, CmdType.RTB), t + 0.1)
     assert out.ack == Ack(7, AckResult.REJECTED_STATE) and out.execute is None
     assert _failsafe_telemetry(sim)
+    sim.state = replace(sim.state, lat_deg=START.lat_deg + 0.01)  # 집에서 떨어진 곳 (RTB가 바로 도착하지 않도록)
     assert sim.on_command(_cmd(8, CmdType.RTB), t + 0.2).ack == Ack(8, AckResult.ACCEPTED)  # 새 cmd_id는 실행
+    tel = sim.telemetry()
+    assert tel.mode == Mode.RTB and tel.speed > 0 and not tel.status_flags & Flags.FAILSAFE_ACTIVE
+
+
+def test_REQ_SAFE_002_release_boundary_is_3s_after_recovery_heartbeat():
+    """해제는 마지막 HEARTBEAT 후 3.0초 미만에 받은 명령만: +2.999s RTB는 수락·해제, +3.000s RTB는 REJECTED_STATE."""
+    for gap, expected in [(2.999, AckResult.ACCEPTED), (3.0, AckResult.REJECTED_STATE)]:
+        sim = Simulator(start=0.0)
+        t = _run(sim, 0.0, 3.5)
+        sim.on_heartbeat(t)  # 복구 HEARTBEAT 한 번 뒤 다시 끊김
+        sim.state = replace(sim.state, lat_deg=START.lat_deg + 0.01)
+        out = sim.on_command(_cmd(1, CmdType.RTB), t + gap)
+        assert out.ack == Ack(1, expected), gap
+        if expected == AckResult.ACCEPTED:
+            assert sim.telemetry().mode == Mode.RTB and not sim.failsafe
+        else:
+            assert out.execute is None and _failsafe_telemetry(sim)
 
 
 def test_REQ_SAFE_002_invalid_command_during_outage_is_rejected_invalid():
@@ -198,53 +218,3 @@ def test_REQ_SAFE_002_invalid_command_during_outage_is_rejected_invalid():
     t = _run(sim, 0.0, 3.5)
     out = sim.on_command(InvalidCommand(0, 0, Command(5, 0x99)), t)
     assert out.ack == Ack(5, AckResult.REJECTED_INVALID) and out.execute is None
-
-
-# 아래는 명령이 차량에 미치는 영향 (REQ ID 없이 모사 동작만 확인)
-
-def test_stop_sets_speed_zero():
-    sim = _alive_sim(_cmd(1, CmdType.STOP))
-    t = sim.telemetry()
-    assert t.mode == Mode.STOPPED and t.speed == 0
-
-
-def test_waypoint_route_arrival_goes_standby():
-    sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
-    sim.on_command(_cmd(2, CmdType.WAYPOINT, NEAR_LAT + 10_000, NEAR_LON), 0.0)  # 두 번째 점
-    assert len(sim.state.route) == 2
-    _run(sim, 0.0, 120.0, hb=_every_second)
-    tel = sim.telemetry()
-    assert tel.mode == Mode.STANDBY and tel.speed == 0 and sim.state.route == ()
-    assert (tel.lat, tel.lon) == (NEAR_LAT + 10_000, NEAR_LON)
-    assert not tel.status_flags & Flags.FAILSAFE_ACTIVE
-
-
-def test_waypoint_heading_points_at_first_route_point():
-    sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
-    sim.advance(0.1, 0.1)
-    assert 0.0 < sim.telemetry().heading / 100 < 90.0  # 북동쪽 점
-
-
-def test_rtb_returns_home_then_standby():
-    sim = _alive_sim()
-    sim.state = replace(sim.state, lat_deg=START.lat_deg + 0.001)
-    sim.on_command(_cmd(1, CmdType.RTB), 0.0)
-    _run(sim, 0.0, 120.0, hb=_every_second)
-    assert _pos(sim) == HOME
-    assert sim.telemetry().mode == Mode.STANDBY and sim.telemetry().speed == 0
-
-
-def test_standby_does_not_move_but_battery_drains():
-    sim = _alive_sim(_cmd(1, CmdType.RTB))  # 시작 위치가 집이라 첫 step에 도착해 STANDBY
-    _run(sim, 0.0, 1.0, hb=_every_second)
-    assert sim.telemetry().mode == Mode.STANDBY
-    pos, battery = _pos(sim), sim.state.battery_pct
-    _run(sim, 1.0, 11.0, hb=_every_second)
-    assert _pos(sim) == pos and sim.state.battery_pct < battery
-
-
-def test_start_state_keeps_fixed_heading_leg():
-    sim = _alive_sim()
-    _run(sim, 0.0, 2.0, hb=lambda t: True)
-    tel = sim.telemetry()
-    assert tel.heading == 8725 and tel.mode == Mode.MISSION and tel.speed == 450

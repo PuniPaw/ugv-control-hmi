@@ -79,10 +79,13 @@ async function startGateway(ports, wsPort) {
 
 function startSim(ports) {
   // SIM은 GW의 HEARTBEAT를 sim 포트로 받고 TELEMETRY를 vehicle 포트로 보낸다 (HEARTBEAT가 없으면 3초 뒤 Failsafe 정지)
-  return run("python3", ["-m", "ugvc_sim", "--port", String(ports.sim), "--gw-port", String(ports.vehicle)], {
+  const sim = run("python3", ["-m", "ugvc_sim", "--port", String(ports.sim), "--gw-port", String(ports.vehicle)], {
     cwd: resolve(REPO, "sim"),
     env: { ...process.env, PYTHONPATH: `${resolve(REPO, "python")}:.` },
   });
+  sim.stdout.resume(); // 사건 기록은 버린다 (파이프가 차서 SIM이 막히면 HEARTBEAT를 못 읽어 Failsafe로 오판)
+  sim.stderr.resume();
+  return sim;
 }
 
 async function startVite(port, gwUrl) {

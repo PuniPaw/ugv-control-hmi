@@ -4,7 +4,8 @@
     python3 -m ugvc_sim                    # UDP 15010 수신, TELEMETRY·ACK는 GW 127.0.0.1:15001로, 10Hz 무한
     python3 -m ugvc_sim --count 600 -v     # TELEMETRY 600개 뒤 종료, 보낸 프레임 hex 출력
 
-표준출력은 JSON 한 줄씩: command / heartbeat / reject / drop, 그리고 모드·Failsafe 전이(mode / failsafe).
+표준출력은 JSON 한 줄씩: command / heartbeat / reject / drop, 모드·Failsafe 전이(mode / failsafe),
+송수신 오류(send_error / send_ok / recv_error). 송신이 실패해도 SIM은 멈추지 않는다.
 """
 from __future__ import annotations
 
@@ -44,76 +45,123 @@ def _report_transitions(sim: Simulator, before: tuple[int, bool]) -> None:
         _emit({"type": "mode", "mode": Mode(mode).name})
 
 
+class _Sender:
+    """GW로 보내는 송신. 경로가 없는 등 OSError가 나도 기록만 하고 넘긴다 (리뷰 #1).
+
+    송신이 실패해도 수신·Failsafe 판정은 계속 돌아야 한다. 두절 상황에서 SIM이 죽으면 Failsafe가 사라진다.
+    기록은 실패가 시작될 때와 회복될 때만 한 줄씩 쓴다 (10Hz로 줄이 쏟아지지 않게).
+    """
+
+    def __init__(self, sock: socket.socket, gw_addr: tuple[str, int]):
+        self._sock, self._addr, self._failing = sock, gw_addr, False
+
+    def send(self, frame: bytes) -> None:
+        try:
+            self._sock.sendto(frame, self._addr)
+        except OSError as e:
+            if not self._failing:
+                self._failing = True
+                _emit({"type": "send_error", "errno": e.errno, "error": str(e)})
+            return
+        if self._failing:
+            self._failing = False
+            _emit({"type": "send_ok"})
+
+
 def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, count: int | None = None,
         drop_first: int = 0, verbose: bool = False, stop: threading.Event | None = None,
         clock: Callable[[], float] = time.monotonic) -> int:
     """바인드된 소켓으로 SIM을 돌린다. 보낸 TELEMETRY 개수를 돌려준다.
 
-    `stop`이 켜지거나 `count`개를 보내면 끝난다 (운영은 Ctrl-C).
+    `stop`이 켜지거나 `count`개를 보내거나 Ctrl-C면 끝난다. gw_addr는 해석된 (IP, 포트)다.
     drop_first: 처음 받은 유효 COMMAND N개를 무시한다 (ACK·실행 없음). GW 재전송 시험용이며 기본 0.
     """
     period = 1.0 / rate_hz
+    sender = _Sender(sock, gw_addr)
     t0 = clock()
     sim = Simulator(start=t0)
     tel_seq = ack_seq = sent = 0
+    due = last_tick = t0
     to_drop = drop_first
-    while (stop is None or not stop.is_set()) and (count is None or sent < count):
-        now = clock()
-        due = t0 + sent * period  # 절대 시각 스케줄: 지연이 누적되지 않는다
-        if now >= due:
+    try:
+        while (stop is None or not stop.is_set()) and (count is None or sent < count):
+            now = clock()
+            if now >= due:
+                before = (int(sim.state.mode), sim.failsafe)
+                sim.advance(now, now - last_tick)  # 실제 경과 시간만큼 (첫 TELEMETRY는 시작 상태 그대로)
+                last_tick = now
+                _report_transitions(sim, before)
+                frame = encode_frame(MsgType.TELEMETRY, tel_seq, _epoch_ms(), sim.telemetry().to_payload())
+                sender.send(frame)
+                if verbose:
+                    print(f"seq={tel_seq} {frame.hex()}", flush=True)
+                tel_seq = (tel_seq + 1) & 0xFFFFFFFF
+                sent += 1
+                # 예정 시각 기준이라 늦음이 쌓이지 않는다. 한 주기 넘게 늦었으면 몰아 보내지 않고 지금부터 다시 잰다
+                due += period
+                if due <= now:
+                    due = now + period
+                continue
+            sock.settimeout(max(0.001, min(due - now, _MAX_WAIT_S)))
+            try:
+                data, _ = sock.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError as e:  # 예: 연결하지 않은 UDP에 ICMP 오류가 올라온 경우. 수신 루프는 계속
+                _emit({"type": "recv_error", "errno": e.errno, "error": str(e)})
+                continue
+            now = clock()
             before = (int(sim.state.mode), sim.failsafe)
-            sim.advance(now, period if sent else 0.0)  # 첫 TELEMETRY는 시작 상태 그대로
+            msg = parse_uplink(data)
+            if isinstance(msg, Reject):
+                _emit({"type": "reject", "reason": msg.value, "len": len(data)})
+            elif isinstance(msg, Heartbeat):
+                sim.on_heartbeat(now)
+                _emit({"type": "heartbeat", **asdict(msg)})
+            elif to_drop > 0:
+                to_drop -= 1
+                _emit({"type": "drop", "cmd_id": msg.command.cmd_id})
+            else:
+                outcome = sim.on_command(msg, now)
+                sender.send(encode_frame(MsgType.ACK, ack_seq, _epoch_ms(), outcome.ack.to_payload()))
+                ack_seq = (ack_seq + 1) & 0xFFFFFFFF
+                _emit({"type": "command", "cmd_id": msg.command.cmd_id, "cmd_type": msg.command.cmd_type,
+                       "result": AckResult(outcome.ack.result).name, "executed": outcome.execute is not None})
             _report_transitions(sim, before)
-            frame = encode_frame(MsgType.TELEMETRY, tel_seq, _epoch_ms(), sim.telemetry().to_payload())
-            sock.sendto(frame, gw_addr)
-            if verbose:
-                print(f"seq={tel_seq} {frame.hex()}", flush=True)
-            tel_seq = (tel_seq + 1) & 0xFFFFFFFF
-            sent += 1
-            continue
-        sock.settimeout(max(0.001, min(due - now, _MAX_WAIT_S)))
-        try:
-            data, _ = sock.recvfrom(2048)
-        except socket.timeout:
-            continue
-        now = clock()
-        before = (int(sim.state.mode), sim.failsafe)
-        msg = parse_uplink(data)
-        if isinstance(msg, Reject):
-            _emit({"type": "reject", "reason": msg.value, "len": len(data)})
-        elif isinstance(msg, Heartbeat):
-            sim.on_heartbeat(now)
-            _emit({"type": "heartbeat", **asdict(msg)})
-        elif to_drop > 0:
-            to_drop -= 1
-            _emit({"type": "drop", "cmd_id": msg.command.cmd_id})
-        else:
-            outcome = sim.on_command(msg, now)
-            sock.sendto(encode_frame(MsgType.ACK, ack_seq, _epoch_ms(), outcome.ack.to_payload()), gw_addr)
-            ack_seq = (ack_seq + 1) & 0xFFFFFFFF
-            _emit({"type": "command", "cmd_id": msg.command.cmd_id, "cmd_type": msg.command.cmd_type,
-                   "result": AckResult(outcome.ack.result).name, "executed": outcome.execute is not None})
-        _report_transitions(sim, before)
+    except KeyboardInterrupt:
+        pass
     return sent
 
 
+def _positive(text: str) -> float:
+    v = float(text)
+    if not v > 0:
+        raise argparse.ArgumentTypeError("양수여야 한다")
+    return v
+
+
+def _resolve(host: str, port: int) -> tuple[str, int]:
+    """GW 주소를 시작 때 한 번 IPv4로 해석한다. 실행 중 이름 해석 실패로 송신이 죽지 않게 한다."""
+    return socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0][4][:2]
+
+
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
+    p = argparse.ArgumentParser(prog="python3 -m ugvc_sim", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--host", default="127.0.0.1", help="COMMAND·HEARTBEAT를 받을 주소")
     p.add_argument("--port", type=int, default=15010, help="수신 포트 (IF-01b)")
     p.add_argument("--gw-host", default="127.0.0.1", help="TELEMETRY·ACK를 보낼 GW 주소")
     p.add_argument("--gw-port", type=int, default=GW_VEHICLE_PORT, help="GW 차량 수신 포트 (IF-01a)")
-    p.add_argument("--rate", type=float, default=10.0, help="TELEMETRY Hz (기본 10)")
+    p.add_argument("--rate", type=_positive, default=10.0, help="TELEMETRY Hz (기본 10)")
     p.add_argument("--count", type=int, default=None, help="보낼 TELEMETRY 개수 (기본: 무한)")
     p.add_argument("--drop-first", type=int, default=0, metavar="N",
                    help="시험용: 처음 받은 COMMAND N개를 무시한다 (ACK 없음)")
     p.add_argument("-v", "--verbose", action="store_true", help="보낸 TELEMETRY 프레임 hex 출력")
     a = p.parse_args(argv)
-    sent = 0
+    try:
+        gw_addr = _resolve(a.gw_host, a.gw_port)
+    except OSError as e:
+        p.error(f"GW 주소 {a.gw_host}:{a.gw_port}를 해석할 수 없다: {e}")
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind((a.host, a.port))
-        try:
-            sent = run(sock, (a.gw_host, a.gw_port), a.rate, a.count, a.drop_first, a.verbose)
-        except KeyboardInterrupt:
-            pass
+        sent = run(sock, gw_addr, a.rate, a.count, a.drop_first, a.verbose)
     print(f"sent {sent} TELEMETRY to {a.gw_host}:{a.gw_port}", file=sys.stderr)

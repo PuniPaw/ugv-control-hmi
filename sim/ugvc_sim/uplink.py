@@ -6,6 +6,7 @@ COMMAND 필드 범위는 ICD 표 6-5에 따라 프레임 폐기가 아니라 REJ
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 from ugvc_proto.command import COMMAND_SIZE, CmdType, Command
@@ -92,3 +93,7 @@ class HeartbeatWatch:
     def expired(self, now: float) -> bool:
         """마지막 HEARTBEAT(없으면 시작) 후 3.0초 이상 지났는가."""
         return self.age(now) >= self.timeout_s
+
+
+if __name__ == "__main__":
+    sys.exit("ugvc_sim.uplink는 해석 모듈이다. SIM 실행은 python3 -m ugvc_sim (README 참고)")
