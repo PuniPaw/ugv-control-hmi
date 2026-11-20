@@ -18,8 +18,10 @@ gateway/build/ugvc_gateway
 ```
 
 ```bash
-cd sim && PYTHONPATH=../python:. python3 -m ugvc_sim.telemetry_sender
+cd sim && PYTHONPATH=../python:. python3 -m ugvc_sim
 ```
+
+SIM은 GW의 HEARTBEAT가 3초 넘게 끊기면 정지(Failsafe)하므로 GW를 먼저 띄운다.
 
 빌드 변수 (`.env.local` 또는 환경 변수):
 
