@@ -107,6 +107,7 @@ it("REQ_HMI_007 cmd_result is accepted only in the ICD 7.1 shape", () => {
     { req_id: "" }, { req_id: "가".repeat(22) /* 66바이트 */ }, { req_id: 1 },
     { result: "OK" }, { cmd_id: 0 }, { cmd_id: 2 ** 32 }, { cmd_id: 1.5 }, { cmd_id: "7" },
     { attempts: 0 }, { attempts: 5 }, { cmd_id: null, result: "TIMEOUT", attempts: 0 },
+    { result: "TIMEOUT", attempts: 1 }, { result: "TIMEOUT", attempts: 3 }, // TIMEOUT은 4번 보낸 뒤에만 (ICD 7.3)
     { cmd_id: null, result: "REJECTED_INVALID", attempts: 1 }, { result: undefined },
   ]) {
     expect(parseIf03(cmdResult(bad)), JSON.stringify(bad)).toBeNull();

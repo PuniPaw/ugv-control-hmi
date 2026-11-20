@@ -1,27 +1,9 @@
 // IF-03 재접속 상태 기계 (가짜 소켓·가짜 타이머). describe 없음: it 제목이 STP의 시험 이름이다.
 import { expect, it } from "vitest";
 import {
-  CONNECT_TIMEOUT_MS, GwConnection, IDLE_TIMEOUT_MS, defaultGwUrl, type ConnEvent, type SocketLike,
+  CONNECT_TIMEOUT_MS, GwConnection, IDLE_TIMEOUT_MS, defaultGwUrl, type ConnEvent,
 } from "../src/net/gwConnection";
-
-class FakeSocket implements SocketLike {
-  onopen: SocketLike["onopen"] = null;
-  onclose: SocketLike["onclose"] = null;
-  onmessage: SocketLike["onmessage"] = null;
-  onerror: SocketLike["onerror"] = null;
-  closed = false;
-  sent: string[] = [];
-  send(text: string) {
-    this.sent.push(text);
-  }
-  close() {
-    this.closed = true;
-  }
-  // 소켓 쪽 이벤트 (처리기가 떼어졌으면 전달되지 않는다)
-  open() { this.onopen?.({}); }
-  drop(code = 1006) { this.onclose?.({ code }); }
-  deliver(data: unknown) { this.onmessage?.({ data }); }
-}
+import { FakeSocket } from "./fakeSocket";
 
 interface Timer { fn: () => void; ms: number; cleared: boolean; fired: boolean }
 

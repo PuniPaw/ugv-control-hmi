@@ -76,8 +76,8 @@ async function startGateway(ports, wsPort) {
   let log = "";
   gw.stderr.on("data", (d) => (log += d));
   const m = await waitOutput(gw, "stderr", /ws:\/\/[^:]+:(\d+)\/ws/, "GW");
-  /** 이 GW가 SIM에 보낸 COMMAND의 req_id (송신·재전송마다 하나) */
-  const sentReqIds = () => [...log.matchAll(/cmd sent req="([^"]*)"/g)].map((x) => x[1]);
+  /** 이 GW가 SIM에 보낸 명령의 req_id, 처음 보낸 순서대로 (`cmd sent`는 재전송마다 찍히므로 같은 req_id는 하나로) */
+  const sentReqIds = () => [...new Set([...log.matchAll(/cmd sent req="([^"]*)"/g)].map((x) => x[1]))];
   return { proc: gw, wsPort: Number(m[1]), sentReqIds };
 }
 
@@ -280,15 +280,18 @@ async function scenario(browser) {
   await expectRow("UNCONFIRMED");
   await page.getByTestId("cmd-retry").first().click();
   await expectText(page, "cmd-confirm-text", "복귀 (RTB)");
+  await expectText(page, "cmd-confirm-warning", "다시 보내기 · 이전 명령이 이미 실행됐을 수 있음 (새 명령으로 보냄)");
   if (gw.sentReqIds().length !== 0) throw new Error("다시 보내기가 확인 없이 송신함");
   await page.getByTestId("cmd-send").click();
   await expectRow("TIMEOUT", 6000);
   await expectText(page, "cmd-row-text", "응답 없음 (송신 4회)");
-  const retried = new Set(gw.sentReqIds());
+  const retried = gw.sentReqIds();
   const retryReqId = await firstRow().getAttribute("data-req-id");
-  if (retried.size !== 1 || !retried.has(retryReqId) || retryReqId === lostReqId) {
-    throw new Error(`다시 보내기 req_id: 화면 ${retryReqId}, 이전 ${lostReqId}, GW 송신 ${[...retried]}`);
+  if (retried.length !== 1 || retried[0] !== retryReqId || retryReqId === lostReqId) {
+    throw new Error(`다시 보내기 req_id: 화면 ${retryReqId}, 이전 ${lostReqId}, GW 송신 ${retried}`);
   }
+  const lostRow = page.locator(`[data-testid="cmd-row"][data-req-id="${lostReqId}"]`);
+  if ((await lostRow.getByTestId("cmd-retry").count()) !== 0) throw new Error("이미 다시 보낸 명령에 다시 보내기가 남음");
   checkPageErrors();
 
   step("3. SIM 중지: 차량 링크 LOST, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok, 명령 버튼 비활성과 사유");

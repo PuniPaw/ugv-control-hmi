@@ -171,7 +171,11 @@ export function browserSocket(url: string): SocketLike {
     onclose: null,
     onmessage: null,
     onerror: null,
-    send: (text) => ws.send(text),
+    send: (text) => {
+      // CLOSING·CLOSED에서 브라우저는 예외 없이 버린다: 보내지 못했음을 호출자가 알도록 던진다
+      if (ws.readyState !== WebSocket.OPEN) throw new Error(`WebSocket not open (readyState ${ws.readyState})`);
+      ws.send(text);
+    },
     close: () => ws.close(),
   };
   ws.onopen = (ev) => s.onopen?.(ev);

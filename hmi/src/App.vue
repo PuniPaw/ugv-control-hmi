@@ -49,6 +49,7 @@ onBeforeUnmount(() => {
       <CommandPanel
         :view="view.command"
         @request="(spec) => controller.requestCommand(spec)"
+        @retry="(reqId) => controller.retryCommand(reqId)"
         @cancel="controller.cancelCommand()"
         @confirm="controller.confirmCommand()"
       />

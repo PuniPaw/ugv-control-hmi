@@ -4,7 +4,7 @@ import {
   SOURCES, type CmdResult, type CommandSpec, type LinkState, type Mode, type Source, type StatsData, type TelemetryData,
 } from "../if03/messages";
 import type { ConnectAttempt, ConnectCause } from "../model/connection";
-import type { SentCommand } from "./commands";
+import { canRetry, type CommandStatus, type SentCommand } from "./commands";
 import { freshness, gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
 
 export type Level = "ok" | "warn" | "bad";
@@ -109,9 +109,14 @@ export interface VehicleRows {
 /** 화면에 보이는 최근 명령 수 */
 export const COMMAND_ROWS_SHOWN = 5;
 
-/** 명령을 보낼 수 없는 사유 (REQ-CMD-004). null이면 보낼 수 있다. 버튼과 확인 단계의 "보내기"가 같은 판정을 쓴다 */
+/**
+ * 명령을 보낼 수 없는 사유 (REQ-CMD-004). null이면 보낼 수 있다. 버튼, 다시 보내기, 확인 단계의 "보내기"가
+ * 같은 판정을 쓴다. 차량 링크는 이 연결에서 받은 link_status로만 판정한다(재접속 직후의 값은 이전 연결의 것).
+ * GW와 연결되지 않았으면 명령을 전달할 길이 없으므로 같이 막는다
+ */
 export function commandBlock(s: HmiState, conn: ConnView): string | null {
-  if (conn.state !== "OPEN") return "GW와 연결되지 않아 명령을 보낼 수 없음";
+  if (conn.state !== "OPEN" || s.session === null) return "GW와 연결되지 않아 명령을 보낼 수 없음";
+  if (!s.session.vehicleLinkSeen) return "차량 링크 상태 수신 전 · 명령을 보낼 수 없음";
   if (s.link.VEHICLE.state === "LOST") return "차량 링크 LOST · 명령을 보낼 수 없음";
   return null;
 }
@@ -131,46 +136,50 @@ export function commandLabel(spec: CommandSpec): string {
 export type CommandRowStatus = "PENDING" | "UNCONFIRMED" | CmdResult;
 
 export interface CommandRow {
-  reqId: string;
-  spec: CommandSpec; // 다시 보내기 = 같은 내용으로 확인 절차를 다시 시작 (새 req_id)
+  reqId: string; // 다시 보내기는 이 req_id로 요청한다 (HmiController.retryCommand → 새 req_id로 송신)
   label: string;
   status: CommandRowStatus;
   text: string;
   level: Level;
-  retryable: boolean; // 결과 미확인·응답 없음·상태 거절이면 운용자가 다시 확인하고 보낼 수 있다
+  retryable: boolean; // canRetry (state/commands.ts)
 }
 
 function commandRow(c: SentCommand): CommandRow {
-  const base = { reqId: c.reqId, spec: c.spec, label: commandLabel(c.spec) };
-  const st = c.status;
+  return { reqId: c.reqId, label: commandLabel(c.spec), retryable: canRetry(c), ...statusText(c.status) };
+}
+
+function statusText(st: CommandStatus): Pick<CommandRow, "status" | "text" | "level"> {
   switch (st.kind) {
     case "PENDING":
-      return { ...base, status: "PENDING", text: "결과 대기 중", level: "warn", retryable: false };
+      return { status: "PENDING", text: "결과 대기 중", level: "warn" };
     case "UNCONFIRMED":
-      return {
-        ...base, status: "UNCONFIRMED", level: "bad", retryable: true,
-        text: "결과 미확인 · 결과 전에 GW 연결이 끊김 (자동으로 다시 보내지 않음)",
-      };
+      return { status: "UNCONFIRMED", text: "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)", level: "bad" };
     case "DONE": {
       const r = st.result;
       switch (r.result) {
         case "ACCEPTED":
-          return { ...base, status: r.result, text: `수락 (송신 ${r.attempts}회)`, level: "ok", retryable: false };
+          return { status: r.result, text: `수락 (송신 ${r.attempts}회)`, level: "ok" };
         case "REJECTED_INVALID":
-          return { ...base, status: r.result, text: "거절 · 필드 값 오류", level: "bad", retryable: false };
+          return { status: r.result, text: "거절 · 필드 값 오류", level: "bad" };
         case "REJECTED_STATE":
-          return { ...base, status: r.result, text: "거절 · 현재 상태에서 수행 불가", level: "bad", retryable: true };
+          return { status: r.result, text: "거절 · 현재 상태에서 수행 불가", level: "bad" };
         case "TIMEOUT":
-          return { ...base, status: r.result, text: `응답 없음 (송신 ${r.attempts}회)`, level: "bad", retryable: true };
+          return { status: r.result, text: `응답 없음 (송신 ${r.attempts}회)`, level: "bad" };
       }
     }
   }
 }
 
+/** 확인 단계: 명령 문구와, 다시 보내기면 두 번 실행될 수 있다는 경고 (ICD 7.2 한계) */
+export interface Confirm {
+  text: string;
+  warning: string | null;
+}
+
 /** 명령 패널 (REQ-CMD-001·004) */
 export interface CommandView {
   blocked: string | null; // 보낼 수 없는 사유
-  confirm: string | null; // 확인을 기다리는 명령의 문구 (확인 단계가 아니면 null)
+  confirm: Confirm | null; // 확인 단계가 아니면 null
   rows: CommandRow[]; // 최근 것부터 COMMAND_ROWS_SHOWN개
 }
 
@@ -178,7 +187,10 @@ export function commandView(s: HmiState, conn: ConnView): CommandView {
   const draft = s.commands.draft;
   return {
     blocked: commandBlock(s, conn),
-    confirm: draft && commandLabel(draft),
+    confirm: draft && {
+      text: commandLabel(draft.spec),
+      warning: draft.retryOf === null ? null : "다시 보내기 · 이전 명령이 이미 실행됐을 수 있음 (새 명령으로 보냄)",
+    },
     rows: s.commands.sent.slice(0, COMMAND_ROWS_SHOWN).map(commandRow),
   };
 }

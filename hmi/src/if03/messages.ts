@@ -13,7 +13,6 @@ export const MODES = ["STANDBY", "MISSION", "STOPPED", "RTB", "FAULT"] as const;
 export const FLAGS = ["GPS_VALID", "CAMERA_OK", "BATTERY_LOW", "FAILSAFE_ACTIVE"] as const; // ICD 표 6-2
 export const ERROR_KEYS = ["sync", "version", "length", "crc", "type", "range", "order"] as const; // ICD 7.1
 export const CLASSES = ["PERSON", "VEHICLE", "ARMORED_VEHICLE", "UNKNOWN"] as const; // ICD 표 6-3 (TBD-02)
-export const CMD_TYPES = ["STOP", "RTB", "WAYPOINT"] as const; // ICD 7.2, 표 6-4
 export const CMD_RESULTS = ["ACCEPTED", "REJECTED_INVALID", "REJECTED_STATE", "TIMEOUT"] as const; // ICD 7.1, 표 6-5
 export const MAX_OBJECTS = 32; // ICD 6.2 count
 const MAX_ATTEMPTS = 4; // ICD 7.3: 송신 최대 4회
@@ -27,7 +26,6 @@ export type Mode = (typeof MODES)[number];
 export type Flag = (typeof FLAGS)[number];
 export type ErrorKey = (typeof ERROR_KEYS)[number];
 export type DetectionClass = (typeof CLASSES)[number];
-export type CmdType = (typeof CMD_TYPES)[number];
 export type CmdResult = (typeof CMD_RESULTS)[number];
 
 /** HMI가 보내는 명령 하나의 내용 (ICD 7.2). 좌표는 WAYPOINT만 가진다 */
@@ -203,6 +201,8 @@ function cmdResult(d: Obj): CmdResultData | null {
   if (cmd_id === null) {
     return result === "REJECTED_INVALID" && attempts === 0 ? { req_id, cmd_id: null, result, attempts: 0 } : null;
   }
+  // TIMEOUT은 4번 보낸 뒤에만 나온다 (ICD 7.3)
+  if (result === "TIMEOUT" && attempts !== MAX_ATTEMPTS) return null;
   return isInt(cmd_id, 1, U32_MAX) && isInt(attempts, 1, MAX_ATTEMPTS) ? { req_id, cmd_id, result, attempts } : null;
 }
 

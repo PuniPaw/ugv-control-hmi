@@ -7,7 +7,7 @@ import { waypointFromInput } from "../state/commands";
 import type { CommandView } from "../state/view";
 
 const props = defineProps<{ view: CommandView }>();
-const emit = defineEmits<{ request: [spec: CommandSpec]; cancel: []; confirm: [] }>();
+const emit = defineEmits<{ request: [spec: CommandSpec]; retry: [reqId: string]; cancel: []; confirm: [] }>();
 
 const lat = ref("");
 const lon = ref("");
@@ -33,7 +33,8 @@ const disabled = () => props.view.blocked !== null;
 
     <div v-if="view.confirm" class="confirm" data-testid="cmd-confirm">
       <p>다음 명령을 보낼까요?</p>
-      <p class="what" data-testid="cmd-confirm-text">{{ view.confirm }}</p>
+      <p class="what" data-testid="cmd-confirm-text">{{ view.confirm.text }}</p>
+      <p v-if="view.confirm.warning" class="blocked" data-testid="cmd-confirm-warning">{{ view.confirm.warning }}</p>
       <div class="buttons">
         <button class="send" data-testid="cmd-send" :disabled="disabled()" @click="emit('confirm')">보내기</button>
         <button data-testid="cmd-cancel" @click="emit('cancel')">취소</button>
@@ -60,7 +61,7 @@ const disabled = () => props.view.blocked !== null;
           v-if="row.retryable && !view.confirm"
           data-testid="cmd-retry"
           :disabled="disabled()"
-          @click="emit('request', row.spec)"
+          @click="emit('retry', row.reqId)"
         >다시 보내기</button>
       </li>
     </ul>

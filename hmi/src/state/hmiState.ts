@@ -2,7 +2,7 @@
 // 연결 이벤트를 어느 함수로 반영할지는 app/hmiController.ts가 정한다: 열림 connectionOpened(),
 // IF-03 연결 끊김 connectionLost(), 기준선 재설정 resyncStarted(). 이 층은 전송 층(net/)을 모른다.
 
-import { connectionEnded, emptyCommandLog, resultReceived, type CommandLog } from "./commands";
+import { connectionLost as commandsOnLost, emptyCommandLog, resultReceived, type CommandLog } from "./commands";
 import { parseIf03, type If03Message, type LinkState, type Source, type StatsData, type TelemetryData } from "../if03/messages";
 
 export const TRACK_MAX_POINTS = 3000; // 10Hz 기준 약 5분
@@ -39,6 +39,9 @@ export interface Session {
   baseline: number | null;
   lastStats: { receivedAt: number; gwTs: number } | null;
   lateSince: number | null; // stats가 기준선보다 2초 넘게 늦게 오기 시작한 시각 (제때 오면 null)
+  // 이 연결에서 VEHICLE link_status를 받았는지. 받기 전의 link.VEHICLE은 이전 연결의 값이라
+  // 명령 송신 판정에 쓰지 않는다 (REQ-CMD-004, GW는 접속 직후 link_status를 보낸다: ICD 7장)
+  vehicleLinkSeen: boolean;
 }
 
 export interface HmiState {
@@ -96,25 +99,27 @@ function appendPoint(track: LatLon[][], open: boolean, p: LatLon): LatLon[][] {
 
 /** IF-03 연결이 열렸을 때 (at: HMI 시계) */
 export function connectionOpened(s: HmiState, at: number): HmiState {
-  return { ...s, session: { openedAt: at, baseline: null, lastStats: null, lateSince: null } };
+  return { ...s, session: { openedAt: at, baseline: null, lastStats: null, lateSince: null, vehicleLinkSeen: false } };
 }
 
 /**
  * IF-03 연결이 끊겼을 때. 링크·차량·궤적 값은 "이전 값"으로 남기고, 연결 범위 값(session)은 버린다
- * → 재접속 후에는 기준선을 새로 잡는다. 결과를 기다리던 명령은 결과 미확인이 된다(다시 보내지 않음).
+ * → 재접속 후에는 기준선을 새로 잡는다. 결과를 기다리던 명령은 결과 미확인이 되고(다시 보내지 않음),
+ * 확인 단계는 닫는다 (state/commands.ts).
  */
 export function connectionLost(s: HmiState): HmiState {
-  return { ...s, session: null, lastFixSeq: null, commands: connectionEnded(s.commands) };
+  return { ...s, session: null, lastFixSeq: null, commands: commandsOnLost(s.commands) };
 }
 
 /**
  * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
  * 여기서는 궤적을 끊지 않는다. 재설정 동안 버린 적체·접속 시간만큼 텔레메트리 seq가 건너뛰므로,
  * 그 간격이 NO_FIX_GAP_SAMPLES 이상이면 다음 유효 위치에서 apply()가 끊는다.
- * 명령 결과는 재접속 사이에 GW가 보냈다면 놓치므로, 끊김과 같이 결과 미확인으로 둔다.
+ * 명령도 끊김으로 다루지 않는다: GW는 살아 있고 명령은 진행 중이다. 재접속 사이에 결과를 놓쳤으면
+ * 결과 기한이 지나 결과 미확인이 된다 (state/commands.ts resultDeadlinePassed).
  */
 export function resyncStarted(s: HmiState): HmiState {
-  return { ...s, session: null, commands: connectionEnded(s.commands) };
+  return { ...s, session: null };
 }
 
 /** 마지막 stats가 지금 기준선보다 2초 넘게 늦게 도착했는지 (늦음 판정은 여기 하나) */
@@ -157,8 +162,9 @@ export function apply(s0: HmiState, m: If03Message, receivedAt: number): HmiStat
     }
     case "link_status": {
       const link = { ...s.link, [m.data.source]: { state: m.data.state, lastRxTs: m.data.last_rx_ts } };
-      const vehicleLost = m.data.source === "VEHICLE" && m.data.state === "LOST";
-      return { ...s, link, lastFixSeq: vehicleLost ? null : s.lastFixSeq };
+      const vehicle = m.data.source === "VEHICLE";
+      const session = vehicle && s.session ? { ...s.session, vehicleLinkSeen: true } : s.session;
+      return { ...s, link, session, lastFixSeq: vehicle && m.data.state === "LOST" ? null : s.lastFixSeq };
     }
     case "stats":
       return { ...s, stats: { ...s.stats, [m.data.source]: m.data } };
