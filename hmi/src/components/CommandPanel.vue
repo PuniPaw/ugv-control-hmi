@@ -7,7 +7,7 @@ import { waypointFromInput } from "../state/commands";
 import type { CommandView } from "../state/view";
 
 const props = defineProps<{ view: CommandView }>();
-const emit = defineEmits<{ request: [spec: CommandSpec]; retry: [reqId: string]; cancel: []; confirm: [] }>();
+const emit = defineEmits<{ request: [spec: CommandSpec]; cancel: []; confirm: [] }>();
 
 const lat = ref("");
 const lon = ref("");
@@ -57,12 +57,6 @@ const disabled = () => props.view.blocked !== null;
       <li v-for="row in view.rows" :key="row.reqId" data-testid="cmd-row" :data-status="row.status" :data-req-id="row.reqId">
         <span class="label">{{ row.label }}</span>
         <span :class="row.level" data-testid="cmd-row-text">{{ row.text }}</span>
-        <button
-          v-if="row.retryable && !view.confirm"
-          data-testid="cmd-retry"
-          :disabled="disabled()"
-          @click="emit('retry', row.reqId)"
-        >다시 보내기</button>
       </li>
     </ul>
   </section>

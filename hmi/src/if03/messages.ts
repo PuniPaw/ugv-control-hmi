@@ -15,6 +15,8 @@ export const ERROR_KEYS = ["sync", "version", "length", "crc", "type", "range", 
 export const CLASSES = ["PERSON", "VEHICLE", "ARMORED_VEHICLE", "UNKNOWN"] as const; // ICD 표 6-3 (TBD-02)
 export const CMD_RESULTS = ["ACCEPTED", "REJECTED_INVALID", "REJECTED_STATE", "TIMEOUT"] as const; // ICD 7.1, 표 6-5
 export const MAX_OBJECTS = 32; // ICD 6.2 count
+export const LAT_LIMIT = 90; // deg, ICD 6.1 (telemetry 검사와 HMI 경로점 입력이 같이 쓴다)
+export const LON_LIMIT = 180;
 const MAX_ATTEMPTS = 4; // ICD 7.3: 송신 최대 4회
 const REQ_ID_MAX_BYTES = 64; // ICD 7.2
 const U32_MAX = 0xffffffff;
@@ -127,7 +129,7 @@ const isReqId = (v: unknown): v is string => isStr(v) && v.length > 0 && utf8Byt
 function telemetry(d: Obj): TelemetryData | null {
   const { lat, lon, heading_deg, speed_mps, battery_pct, mode, flags, seq, rx_ts } = d;
   if (
-    inRange(lat, -90, 90) && inRange(lon, -180, 180) && inRange(heading_deg, 0, 359.99) &&
+    inRange(lat, -LAT_LIMIT, LAT_LIMIT) && inRange(lon, -LON_LIMIT, LON_LIMIT) && inRange(heading_deg, 0, 359.99) &&
     inRange(speed_mps, 0, 30) && isInt(battery_pct, 0, 100) && isMode(mode) &&
     Array.isArray(flags) && flags.every(isFlag) && isInt(seq, 0, U32_MAX) && isCount(rx_ts)
   ) {

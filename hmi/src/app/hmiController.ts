@@ -5,7 +5,7 @@
 
 import { GwConnection, type ConnEvent, type Deps } from "../net/gwConnection";
 import { commandText, type CommandSpec } from "../if03/messages";
-import { canRetry, cancelDraft, commandSent, draftCommand, resultDeadlinePassed } from "../state/commands";
+import { cancelDraft, commandSent, draftCommand } from "../state/commands";
 import {
   connectionLost, connectionOpened, initialState, needsResync, receiveText, resyncStarted, type HmiState,
 } from "../state/hmiState";
@@ -13,7 +13,7 @@ import { commandBlock, present, type ConnView, type Presented } from "../state/v
 
 export interface ControllerDeps extends Deps {
   now(): number; // HMI 벽시계 (ms): 메시지 수신 시각, 신선도
-  monotonic(): number; // 단조 시계 (ms): 재접속 카운트다운, 명령 결과 기한
+  monotonic(): number; // 단조 시계 (ms): 재접속 카운트다운, 명령 결과 대기 경과
   newReqId(): string; // 명령마다 유일한 req_id (ICD 7.2). 보낼 때마다 새로 발급
 }
 
@@ -51,9 +51,8 @@ export class HmiController {
     this.connection.stop();
   }
 
-  /** 주기 판정 (App.vue가 250ms마다 부른다): 늦음이 이어지면 기준선 재설정 (ICD 7장), 명령 결과 기한. 화면도 다시 판정 */
+  /** 주기 판정 (App.vue가 250ms마다 부른다): 늦음이 이어지면 기준선 재설정 (ICD 7장). 화면도 다시 판정 */
   tick(): void {
-    this.state = { ...this.state, commands: resultDeadlinePassed(this.state.commands, this.deps.monotonic()) };
     if (needsResync(this.state, this.deps.now())) {
       this.log("IF-03 데이터 지연이 이어져 기준선 재설정 (재접속)");
       this.connection.resync();
@@ -61,18 +60,9 @@ export class HmiController {
     this.onChange(this.view());
   }
 
-  /** 명령 버튼: 확인 절차를 시작한다. 아직 보내지 않는다 (REQ-CMD-001) */
+  /** 명령 버튼: 확인 절차를 시작한다. 아직 보내지 않는다 (REQ-CMD-001). 다시 시도도 새 명령으로 이 경로다 */
   requestCommand(spec: CommandSpec): void {
     this.update({ ...this.state, commands: draftCommand(this.state.commands, spec) });
-  }
-
-  /**
-   * 다시 보내기: 보낸 명령과 같은 내용으로 확인 절차를 다시 연다. 확인하면 새 req_id로 보낸다 (이슈 #27).
-   * 다시 보낼 수 없는 명령(결과 대기 중 등, canRetry)이면 아무것도 하지 않는다
-   */
-  retryCommand(reqId: string): void {
-    const c = this.state.commands.sent.find((x) => x.reqId === reqId);
-    if (c && canRetry(c)) this.update({ ...this.state, commands: draftCommand(this.state.commands, c.spec, reqId) });
   }
 
   cancelCommand(): void {
@@ -87,7 +77,7 @@ export class HmiController {
     const draft = this.state.commands.draft;
     if (draft === null || commandBlock(this.state, this.conn) !== null) return;
     const reqId = this.deps.newReqId();
-    if (!this.connection.send(commandText(reqId, draft.spec))) return;
+    if (!this.connection.send(commandText(reqId, draft))) return;
     this.update({ ...this.state, commands: commandSent(this.state.commands, reqId, this.deps.monotonic()) });
   }
 

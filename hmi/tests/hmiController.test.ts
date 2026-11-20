@@ -226,8 +226,6 @@ it("REQ_HMI_007 discarded IF-03 messages are counted for display in the status p
 
 // ---- 명령 패널 (REQ-CMD-001·004, 이슈 #27) ----
 
-// ICD 7.3: GW TIMEOUT은 첫 송신 4.0초 뒤. HMI 결과 기한은 여기에 여유 1초 (SDD 8.6)
-const RESULT_DEADLINE_MS = 5000;
 const vehicleLink = (state: "CONNECTED" | "LOST") =>
   JSON.stringify({ type: "link_status", ts: 5_000_000, data: { source: "VEHICLE", state, last_rx_ts: 5_000_000 } });
 const resultText = (req_id: string, result: string, attempts: number) =>
@@ -235,7 +233,8 @@ const resultText = (req_id: string, result: string, attempts: number) =>
 /** 모든 소켓으로 HMI가 보낸 command (보낸 순서) */
 const sentCommands = (h: ReturnType<typeof harness>) =>
   h.sockets.flatMap((s) => s.sent.map((t) => JSON.parse(t) as { type: string; data: { req_id: string; cmd_type: string } }));
-const rows = (h: ReturnType<typeof harness>) => h.view().command.rows.map((r) => [r.reqId, r.status, r.retryable]);
+const rows = (h: ReturnType<typeof harness>) => h.view().command.rows.map((r) => [r.reqId, r.status]);
+const RTB_WARNING = "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음";
 
 /** 열린 연결, 차량 링크 CONNECTED */
 function readyHarness() {
@@ -293,7 +292,7 @@ it("REQ_CMD_001 a command button only opens confirmation, cancel sends nothing, 
   h.c.confirmCommand(); // 두 번 눌러도 한 번만 (확인 단계가 끝남)
   expect(sentCommands(h)).toEqual([{ type: "command", data: { req_id: "r1", cmd_type: "WAYPOINT", lat: 36.5, lon: 127.25 } }]);
   expect(h.view().command.confirm).toBeNull();
-  expect(rows(h)).toEqual([["r1", "PENDING", false]]);
+  expect(rows(h)).toEqual([["r1", "PENDING"]]);
 });
 
 it("REQ_CMD_001 each confirmed command has its own req_id and shows its cmd_result", () => {
@@ -304,16 +303,16 @@ it("REQ_CMD_001 each confirmed command has its own req_id and shows its cmd_resu
   };
   send("STOP");
   send("RTB");
-  send("RTB");
+  send("STOP");
   expect(sentCommands(h).map((m) => m.data.req_id)).toEqual(["r1", "r2", "r3"]);
   h.live().onmessage?.({ data: resultText("r1", "ACCEPTED", 2) });
   h.live().onmessage?.({ data: resultText("r2", "TIMEOUT", 4) });
   h.live().onmessage?.({ data: resultText("someone-else", "ACCEPTED", 1) }); // 다른 HMI의 명령
   h.live().onmessage?.({ data: JSON.stringify({ type: "cmd_result", ts: 1, data: { req_id: "r3", cmd_id: null, result: "REJECTED_INVALID", attempts: 0 } }) });
-  expect(h.view().command.rows.map((r) => [r.reqId, r.status, r.text, r.level, r.retryable])).toEqual([
-    ["r3", "REJECTED_INVALID", "거절 · 필드 값 오류", "bad", false],
-    ["r2", "TIMEOUT", "응답 없음 (송신 4회)", "bad", true],
-    ["r1", "ACCEPTED", "수락 (송신 2회)", "ok", false],
+  expect(h.view().command.rows.map((r) => [r.reqId, r.status, r.text, r.level])).toEqual([
+    ["r3", "REJECTED_INVALID", "거절 · 필드 값 오류", "bad"],
+    ["r2", "TIMEOUT", "응답 없음 (송신 4회)", "bad"],
+    ["r1", "ACCEPTED", "수락 (송신 2회)", "ok"],
   ]);
   expect(h.view().discarded).toBe(0);
 });
@@ -327,57 +326,83 @@ it("REQ_CMD_001 a command whose result was not received is never resent automati
   for (let i = 0; i < 40; i++) h.step(); // 새 연결에서 10초
   expect(sentCommands(h)).toHaveLength(1); // 처음 한 번뿐
   expect(h.sockets[1]!.sent).toEqual([]);
-  expect(rows(h)).toEqual([["r1", "UNCONFIRMED", true]]);
-  expect(h.view().command.rows[0]!.text).toBe("결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)");
+  expect(h.view().command.rows.map((r) => [r.status, r.text])).toEqual([
+    ["UNCONFIRMED", "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)"],
+  ]);
+  h.live().onmessage?.({ data: resultText("r1", "ACCEPTED", 1) }); // GW가 살아 있었으면 새 연결로 결과가 온다
+  expect(rows(h)).toEqual([["r1", "ACCEPTED"]]);
 });
 
-it("REQ_CMD_001 a baseline resync keeps waiting for the result and offers no retry until the result deadline", () => {
-  // (a) 재설정 뒤 새 연결에서 결과가 옴: 다시 보내기 없이 결과로
+it("REQ_CMD_001 a command keeps waiting for its result however late it comes, also across a baseline resync", () => {
+  // (a) 같은 연결, 결과가 GW 늦은 판정·IF-03 전달 지연으로 첫 송신 30s 뒤에 옴: 그때까지 결과 대기, 시간으로 상태가 바뀌지 않음
+  const g = readyHarness();
+  g.c.requestCommand({ cmd_type: "RTB" });
+  g.c.confirmCommand();
+  for (let i = 0; i < 120; i++) g.step(); // 30초, 데이터는 계속 옴(FRESH)
+  expect(g.view().command.rows.map((r) => [r.status, r.text])).toEqual([["PENDING", "결과 대기 중 · 30초"]]);
+  g.live().onmessage?.({ data: resultText("r1", "ACCEPTED", 4) });
+  expect(rows(g)).toEqual([["r1", "ACCEPTED"]]);
+  expect(sentCommands(g)).toHaveLength(1);
+
+  // (b) 재설정 직전에 송신, 재설정 뒤 새 연결에서 결과: 재설정은 끊김이 아니므로 결과 대기 그대로
   const h = readyHarness();
   resyncByClockStep(h, () => {
     h.c.requestCommand({ cmd_type: "RTB" });
     h.c.confirmCommand();
   });
-  expect(rows(h)).toEqual([["r1", "PENDING", false]]); // GW는 살아 있고 명령은 진행 중 (끊김이 아님)
-  h.c.retryCommand("r1"); // 결과 대기 중인 명령은 다시 보낼 수 없다 (화면에도 버튼 없음)
+  expect(rows(h)).toEqual([["r1", "PENDING"]]);
   h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
-  h.c.confirmCommand();
-  expect(sentCommands(h)).toHaveLength(1);
+  for (let i = 0; i < 40; i++) h.step();
+  expect(rows(h)).toEqual([["r1", "PENDING"]]);
   h.live().onmessage?.({ data: resultText("r1", "ACCEPTED", 1) });
-  expect(rows(h)).toEqual([["r1", "ACCEPTED", false]]);
-
-  // (b) 결과를 재접속 사이에 놓침: 첫 송신부터 결과 기한(5s)까지는 대기, 그 뒤 결과 미확인
-  const g = readyHarness();
-  g.c.requestCommand({ cmd_type: "STOP" });
-  const sentAt = g.mono();
-  g.c.confirmCommand();
-  g.pause(true); // 이 뒤로 GW가 보낸 것은 HMI에 닿지 않는다(결과 포함)
-  while (g.mono() - sentAt < RESULT_DEADLINE_MS - QUARTER_MS) g.step();
-  expect(rows(g)).toEqual([["r1", "PENDING", false]]);
-  while (g.mono() - sentAt < RESULT_DEADLINE_MS) g.step();
-  expect(rows(g)).toEqual([["r1", "UNCONFIRMED", true]]);
-  expect(sentCommands(g)).toHaveLength(1);
+  expect(rows(h)).toEqual([["r1", "ACCEPTED"]]);
+  expect(sentCommands(h)).toHaveLength(1);
 });
 
-it("REQ_CMD_001 retrying after a lost result or TIMEOUT asks for confirmation again with a warning and uses a new req_id", () => {
+it("REQ_CMD_001 trying again is a new confirmed command with a new req_id, warned while the earlier one has no result", () => {
   const h = readyHarness();
-  h.c.requestCommand({ cmd_type: "WAYPOINT", lat: 1, lon: 2 });
+  h.c.requestCommand({ cmd_type: "RTB" });
+  h.c.confirmCommand();
+  h.c.requestCommand({ cmd_type: "RTB" }); // 결과 대기 중에 같은 종류
+  expect(h.view().command.confirm).toEqual({ text: "복귀 (RTB)", warning: RTB_WARNING });
+  h.c.cancelCommand();
+  reconnect(h);
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  h.c.requestCommand({ cmd_type: "RTB" }); // 결과 미확인인 같은 종류
+  expect(h.view().command.confirm?.warning).toBe(RTB_WARNING);
+  expect(h.sockets[1]!.sent).toEqual([]);
+  h.c.confirmCommand(); // 운용자가 경고를 보고 확인: 새 req_id로 보낸다
+  h.live().onmessage?.({ data: resultText("r2", "TIMEOUT", 4) });
+  h.c.requestCommand({ cmd_type: "WAYPOINT", lat: 1, lon: 2 }); // 다른 종류에는 경고 없음
+  expect(h.view().command.confirm?.warning).toBeNull();
+  h.c.confirmCommand();
+  h.c.requestCommand({ cmd_type: "STOP" }); // 정지는 경고 없음
+  expect(h.view().command.confirm?.warning).toBeNull();
+  h.c.cancelCommand();
+  expect(sentCommands(h).map((m) => [m.data.req_id, m.data.cmd_type])).toEqual([["r1", "RTB"], ["r2", "RTB"], ["r3", "WAYPOINT"]]);
+  expect(rows(h)).toEqual([["r3", "PENDING"], ["r2", "TIMEOUT"], ["r1", "UNCONFIRMED"]]);
+});
+
+it("REQ_CMD_001 a late result of the warned command closes the open confirmation so nothing is sent on it", () => {
+  // 리뷰 2차 #1 경로: 결과 미확인 → 같은 종류 확인 단계(경고) → 원래 명령의 늦은 ACCEPTED → 보내기
+  const h = readyHarness();
+  h.c.requestCommand({ cmd_type: "RTB" });
   h.c.confirmCommand();
   reconnect(h);
   h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
-  h.c.retryCommand("r1"); // "다시 보내기": 같은 내용으로 확인 절차부터
-  expect(h.sockets[1]!.sent).toEqual([]);
-  expect(h.view().command.confirm).toEqual({
-    text: "경로점 이동 (WAYPOINT) 1.0000000, 2.0000000",
-    warning: "다시 보내기 · 이전 명령이 이미 실행됐을 수 있음 (새 명령으로 보냄)",
-  });
+  h.c.requestCommand({ cmd_type: "RTB" });
+  expect(h.view().command.confirm?.warning).toBe(RTB_WARNING);
+  h.live().onmessage?.({ data: resultText("r1", "ACCEPTED", 2) });
+  expect(h.view().command.confirm).toBeNull(); // 바뀐 결과를 보고 다시 판단하도록 닫힘
   h.c.confirmCommand();
-  h.live().onmessage?.({ data: resultText("r2", "TIMEOUT", 4) });
-  h.c.retryCommand("r2");
-  h.c.confirmCommand();
-  expect(sentCommands(h).map((m) => [m.data.req_id, m.data.cmd_type])).toEqual([["r1", "WAYPOINT"], ["r2", "WAYPOINT"], ["r3", "WAYPOINT"]]);
-  // 이미 다시 보낸 명령에는 다시 보내기가 더 없다
-  expect(rows(h)).toEqual([["r3", "PENDING", false], ["r2", "TIMEOUT", false], ["r1", "UNCONFIRMED", false]]);
+  expect(sentCommands(h)).toHaveLength(1);
+  expect(rows(h)).toEqual([["r1", "ACCEPTED"]]);
+  // 경고와 무관한 결과(다른 종류)는 열린 확인 단계를 닫지 않는다
+  h.c.requestCommand({ cmd_type: "STOP" });
+  h.c.confirmCommand(); // r2 STOP
+  h.c.requestCommand({ cmd_type: "RTB" });
+  h.live().onmessage?.({ data: resultText("r2", "ACCEPTED", 1) });
+  expect(h.view().command.confirm).toEqual({ text: "복귀 (RTB)", warning: null });
 });
 
 it("REQ_CMD_004 vehicle link LOST or no GW connection disables commands with the reason and confirm sends nothing", () => {

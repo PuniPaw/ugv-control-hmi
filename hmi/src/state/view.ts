@@ -4,7 +4,7 @@ import {
   SOURCES, type CmdResult, type CommandSpec, type LinkState, type Mode, type Source, type StatsData, type TelemetryData,
 } from "../if03/messages";
 import type { ConnectAttempt, ConnectCause } from "../model/connection";
-import { canRetry, type CommandStatus, type SentCommand } from "./commands";
+import { sameKindUnresolved, type SentCommand } from "./commands";
 import { freshness, gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
 
 export type Level = "ok" | "warn" | "bad";
@@ -136,41 +136,41 @@ export function commandLabel(spec: CommandSpec): string {
 export type CommandRowStatus = "PENDING" | "UNCONFIRMED" | CmdResult;
 
 export interface CommandRow {
-  reqId: string; // 다시 보내기는 이 req_id로 요청한다 (HmiController.retryCommand → 새 req_id로 송신)
+  reqId: string;
   label: string;
   status: CommandRowStatus;
   text: string;
   level: Level;
-  retryable: boolean; // canRetry (state/commands.ts)
 }
 
-function commandRow(c: SentCommand): CommandRow {
-  return { reqId: c.reqId, label: commandLabel(c.spec), retryable: canRetry(c), ...statusText(c.status) };
-}
-
-function statusText(st: CommandStatus): Pick<CommandRow, "status" | "text" | "level"> {
+function commandRow(c: SentCommand, monoNow: number): CommandRow {
+  const base = { reqId: c.reqId, label: commandLabel(c.spec) };
+  const st = c.status;
   switch (st.kind) {
-    case "PENDING":
-      return { status: "PENDING", text: "결과 대기 중", level: "warn" };
+    case "PENDING": {
+      // 결과까지의 시간은 정해져 있지 않다(ICD 7.3 늦은 판정, IF-03 전달 지연): 판정하지 않고 경과만 보인다
+      const sec = Math.max(0, Math.floor((monoNow - c.sentAtMono) / 1000));
+      return { ...base, status: "PENDING", text: `결과 대기 중 · ${sec}초`, level: "warn" };
+    }
     case "UNCONFIRMED":
-      return { status: "UNCONFIRMED", text: "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)", level: "bad" };
+      return { ...base, status: "UNCONFIRMED", text: "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)", level: "bad" };
     case "DONE": {
       const r = st.result;
       switch (r.result) {
         case "ACCEPTED":
-          return { status: r.result, text: `수락 (송신 ${r.attempts}회)`, level: "ok" };
+          return { ...base, status: r.result, text: `수락 (송신 ${r.attempts}회)`, level: "ok" };
         case "REJECTED_INVALID":
-          return { status: r.result, text: "거절 · 필드 값 오류", level: "bad" };
+          return { ...base, status: r.result, text: "거절 · 필드 값 오류", level: "bad" };
         case "REJECTED_STATE":
-          return { status: r.result, text: "거절 · 현재 상태에서 수행 불가", level: "bad" };
+          return { ...base, status: r.result, text: "거절 · 현재 상태에서 수행 불가", level: "bad" };
         case "TIMEOUT":
-          return { status: r.result, text: `응답 없음 (송신 ${r.attempts}회)`, level: "bad" };
+          return { ...base, status: r.result, text: `응답 없음 (송신 ${r.attempts}회)`, level: "bad" };
       }
     }
   }
 }
 
-/** 확인 단계: 명령 문구와, 다시 보내기면 두 번 실행될 수 있다는 경고 (ICD 7.2 한계) */
+/** 확인 단계: 명령 문구와, 같은 종류의 명령이 결과를 아직 받지 못했으면 두 번 실행될 수 있다는 경고 */
 export interface Confirm {
   text: string;
   warning: string | null;
@@ -183,15 +183,16 @@ export interface CommandView {
   rows: CommandRow[]; // 최근 것부터 COMMAND_ROWS_SHOWN개
 }
 
-export function commandView(s: HmiState, conn: ConnView): CommandView {
+export function commandView(s: HmiState, conn: ConnView, monoNow: number): CommandView {
   const draft = s.commands.draft;
+  const prior = draft && sameKindUnresolved(s.commands, draft);
   return {
     blocked: commandBlock(s, conn),
     confirm: draft && {
-      text: commandLabel(draft.spec),
-      warning: draft.retryOf === null ? null : "다시 보내기 · 이전 명령이 이미 실행됐을 수 있음 (새 명령으로 보냄)",
+      text: commandLabel(draft),
+      warning: prior && `앞서 보낸 ${commandLabel(prior.spec)}의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음`,
     },
-    rows: s.commands.sent.slice(0, COMMAND_ROWS_SHOWN).map(commandRow),
+    rows: s.commands.sent.slice(0, COMMAND_ROWS_SHOWN).map((c) => commandRow(c, monoNow)),
   };
 }
 
@@ -231,6 +232,6 @@ export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented 
       flags: v.flags.join(" · ") || "—",
     },
     discarded: s.discarded,
-    command: commandView(s, conn),
+    command: commandView(s, conn, clocks.mono),
   };
 }

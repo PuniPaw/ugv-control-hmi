@@ -264,11 +264,12 @@ async function scenario(browser) {
   if (screenshot) await page.screenshot({ path: screenshot });
   checkPageErrors();
 
-  step("2d. 결과 전에 GW 끊김: '결과 미확인', 새 GW에 자동 재송신 없음, 다시 보내기는 확인 후 새 req_id, ACK가 없으면 TIMEOUT");
+  step("2d. 결과 전에 GW 끊김: '결과 미확인', 새 GW에 자동 재송신 없음, 다시 시도는 경고가 붙은 새 확인 절차로 새 req_id, ACK가 없으면 TIMEOUT");
   await stop(uplink); // ACK 없음 → 결과는 4초 뒤에야 나온다
   await page.getByTestId("cmd-RTB").click();
   await page.getByTestId("cmd-send").click();
   await expectRow("PENDING", 1000);
+  await expectText(page, "cmd-row-text", /^결과 대기 중 · \d+초$/);
   const lostReqId = await firstRow().getAttribute("data-req-id");
   await stop(gw.proc);
   await expectRow("UNCONFIRMED");
@@ -278,20 +279,19 @@ async function scenario(browser) {
   await page.waitForTimeout(2000);
   if (gw.sentReqIds().length !== 0) throw new Error(`새 GW에 자동 재송신함: ${gw.sentReqIds()}`);
   await expectRow("UNCONFIRMED");
-  await page.getByTestId("cmd-retry").first().click();
+  if ((await page.getByTestId("cmd-retry").count()) !== 0) throw new Error("행별 다시 보내기 버튼이 있음");
+  await page.getByTestId("cmd-RTB").click(); // 다시 시도: 새 명령
   await expectText(page, "cmd-confirm-text", "복귀 (RTB)");
-  await expectText(page, "cmd-confirm-warning", "다시 보내기 · 이전 명령이 이미 실행됐을 수 있음 (새 명령으로 보냄)");
-  if (gw.sentReqIds().length !== 0) throw new Error("다시 보내기가 확인 없이 송신함");
+  await expectText(page, "cmd-confirm-warning", "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음");
+  if (gw.sentReqIds().length !== 0) throw new Error("확인 없이 송신함");
   await page.getByTestId("cmd-send").click();
   await expectRow("TIMEOUT", 6000);
   await expectText(page, "cmd-row-text", "응답 없음 (송신 4회)");
-  const retried = gw.sentReqIds();
-  const retryReqId = await firstRow().getAttribute("data-req-id");
-  if (retried.length !== 1 || retried[0] !== retryReqId || retryReqId === lostReqId) {
-    throw new Error(`다시 보내기 req_id: 화면 ${retryReqId}, 이전 ${lostReqId}, GW 송신 ${retried}`);
+  const resent = gw.sentReqIds();
+  const newReqId = await firstRow().getAttribute("data-req-id");
+  if (resent.length !== 1 || resent[0] !== newReqId || newReqId === lostReqId) {
+    throw new Error(`다시 시도 req_id: 화면 ${newReqId}, 이전 ${lostReqId}, GW 송신 ${resent}`);
   }
-  const lostRow = page.locator(`[data-testid="cmd-row"][data-req-id="${lostReqId}"]`);
-  if ((await lostRow.getByTestId("cmd-retry").count()) !== 0) throw new Error("이미 다시 보낸 명령에 다시 보내기가 남음");
   checkPageErrors();
 
   step("3. SIM 중지: 차량 링크 LOST, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok, 명령 버튼 비활성과 사유");
