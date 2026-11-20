@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.16 (초안) |
+| 버전 | v0.17 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-SDD-001 v0.3.3, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.4, ADR-002 |
 
 ## 개정 이력
 
@@ -28,6 +28,7 @@
 | v0.14 | 2026-11-14 | PR #24 1차 리뷰 반영: TC-CMD-002-05를 req_id 규칙(대기 중·최근 결과·형식 오류)으로 바꾸고 TC-CMD-002-10~13(재전송 예정 시각, ACK 스트림 ⑨ 제외, SIM 수신부 재시작, 같은 req_id 다른 HMI·결과 전체 전달·형식 오류), TC-CMD-003-06·07(GW 재시작 cmd_id, 결과를 놓친 HMI 재송신) 추가 |
 | v0.15 | 2026-11-14 | PR #24 2차 리뷰 반영: TC-COM-005-07을 ACK 스트림 유실 제외로 바꿈(ACK가 유실 계산에서 빠져 기존 "스트림 독립" 시험이 아무것도 증명하지 못하게 됨), TC-COM-006-06(ACK 스트림 ⑨ 제외) 추가, TC-CMD-002-11은 같은 시험을 가리킴. TC-CMD-003-07을 TC-CMD-002-14로 옮김(req_id 규칙은 GW 동작이라 SRS v0.7 REQ-CMD-002). TC-CMD-002-15~17(거절한 req_id 기억, 판정이 1s 넘게 늦은 재전송, 고친 명령을 거절한 req_id로) 추가 |
 | v0.16 | 2026-11-14 | PR #24 3차 리뷰 반영: TC-CMD-002-11 삭제(TC-COM-006-06과 같은 시험이라 REQ-CMD-002 추적에 REQ-COM-006 시험이 끼었음), TC-CMD-002-16 기대 시각을 새 규칙(실제 송신 + 0.95s)으로, TC-CMD-002-18(0.9s 늦은 판정)·19(거절 기록과 송신 기록의 상한 분리) 추가. 관련 문서 버전 갱신 |
+| v0.17 | 2026-11-20 | Failsafe 구현: TC-SAFE-001-01~05(HEARTBEAT 3.0s 두절 정지), TC-SAFE-002-01~07(복구 뒤 재개 금지, 해제 명령, 두절 중 REJECTED_STATE, GW 두절 통합). 2.2에 SIM 시각 주입. SIM이 한 프로세스가 되어 TC-CMD-003-04·006-04의 실제 UDP 시험은 `python -m ugvc_sim` 본체(`app.run`)를 구동 |
 
 ---
 
@@ -43,7 +44,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | COM (REQ-COM-001~007) | ✅ | |
 | QUAL (REQ-QUAL-001) | ✅ | REQ-QUAL-002 (고도화) |
 | CMD (REQ-CMD-002·003·005·006) | v0.13 | REQ-CMD-001·004(HMI 명령 패널)는 HMI 명령 작업 시 |
-| SAFE | | 12월 1–2주 (Failsafe 구현 시) |
+| SAFE (REQ-SAFE-001·002) | v0.17 | |
 | HMI (REQ-HMI-001·002 뼈대, 006, 007) | v0.5~0.6 | 경로점(REQ-HMI-001), 지연 시간(REQ-HMI-002)은 해당 기능 구현 시 |
 | HMI-003~005, AI, LOG, PERF | | 해당 기능 구현 시 |
 
@@ -68,6 +69,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
   - `now()`: `std::chrono::steady_clock::time_point`, 경과 시간 판정용 (시스템 시각이 바뀌어도 흔들리지 않음)
   - `epoch_ms()`: Unix epoch ms, 패킷 `timestamp`·`rx_ts`·기록용
 - 단위 시험은 `FakeClock::advance(d)`로 시간을 진행한다. 실제 `sleep`을 쓰지 않는다.
+- SIM의 `Simulator`(SDD 6.2)는 시계 객체 대신 모든 메서드가 시각 `now`(단조 시계 초)를 인자로 받는다. 단위 시험은 시각 값을 직접 넣어 3.0s 경계를 시험한다.
 - 링크 판정 주기는 SDD에서 50ms로 정하는 것을 가정한다. 통합 수준에서는 판정 지연 ≤ 판정 주기를 허용한다.
 
 ### 2.3 이벤트 확인
@@ -329,7 +331,7 @@ U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`ugvc_sim.uplink`)과 WebSoc
 | TC-CMD-003-01 | U | 같은 cmd_id 두 번(수락된 것, 거절된 것) | 두 번째는 같은 ACK, 실행하지 않음 | `test_REQ_CMD_003_duplicate_cmd_id_resends_same_ack_without_executing`, `test_REQ_CMD_003_duplicate_of_rejected_command_resends_rejection` |
 | TC-CMD-003-02 | U | 서로 다른 cmd_id, 기억 상한 넘김 | 서로 독립, 가장 오래된 cmd_id부터 잊음 | `test_REQ_CMD_003_different_cmd_ids_are_independent`, `test_REQ_CMD_003_memory_is_bounded_and_forgets_oldest` |
 | TC-CMD-003-03 | U | ACK 프레임 | ACK(5B)로 검증 통과, ACK 스트림 seq 0·1… | `test_REQ_CMD_003_ack_frame_is_valid_and_seq_increments` |
-| TC-CMD-003-04 | U | 실제 UDP로 SIM 수신부 구동: 중복 cmd_id, 첫 COMMAND 무시(`--drop-first 1`) | 같은 ACK 두 번·executed true→false, 무시한 뒤 재전송에 ACK | `test_REQ_CMD_003_listen_duplicate_gets_same_ack`, `test_REQ_CMD_003_drop_first_ignores_first_command_then_acks_retransmission` |
+| TC-CMD-003-04 | U | 실제 UDP로 SIM 본체(`app.run`) 구동: 중복 cmd_id, 첫 COMMAND 무시(`--drop-first 1`) | 같은 ACK 두 번·executed true→false, 무시한 뒤 재전송에 ACK | `test_REQ_CMD_003_listen_duplicate_gets_same_ack`, `test_REQ_CMD_003_drop_first_ignores_first_command_then_acks_retransmission` |
 | TC-CMD-003-05 | I | SIM의 ACK가 GW에 닿지 않음(다른 포트로 보냄) | GW는 같은 cmd_id로 4번 보내고 TIMEOUT, SIM은 4번 모두 같은 ACCEPTED ACK, 실행은 처음 한 번 | `test_REQ_CMD_003_retransmitted_command_executes_once` |
 | TC-CMD-003-06 | I | SIM을 띄운 채 GW를 다시 시작하고 새 명령 | 새 cmd_id가 앞 GW의 것과 다르고 SIM이 두 명령 모두 실행 | `test_REQ_CMD_003_restarted_gw_does_not_reuse_cmd_ids` |
 
@@ -351,6 +353,33 @@ PostgreSQL 저장(REQ-LOG)은 로그 작업 때 추가한다. 지금은 GW 진�
 | TC-CMD-006-02 | U | 정의 밖 cmd_type, WAYPOINT 좌표 범위 밖 | 별도 형(InvalidCommand)으로 해석, REJECTED_INVALID ACK, 실행하지 않음 | `test_REQ_CMD_006_out_of_range_command_is_parsed_as_invalid`, `test_REQ_CMD_006_acks_rejected_invalid`, `test_REQ_CMD_006_invalid_command_is_not_executed` |
 | TC-CMD-006-03 | U | 좌표 경계(±90°, ±180°), 정상 명령 | 수락·실행 | `test_REQ_CMD_006_waypoint_bounds_accepted`, `test_REQ_CMD_006_valid_command_accepted_and_executed` |
 | TC-CMD-006-04 | U | 실제 UDP: 범위 밖 명령, cmd_id 0 | REJECTED_INVALID ACK / ACK 없음 | `test_REQ_CMD_006_listen_rejects_invalid_over_udp`, `test_REQ_CMD_006_listen_cmd_id_0_gets_no_ack` |
+
+### 3.18 REQ-SAFE-001 HEARTBEAT 3.0s 두절 시 Failsafe 정지 (SIM)
+
+U 수준은 `Simulator`에 시각을 직접 넣는다(2.2). 판정 경계는 "3.0초 이상"이다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-SAFE-001-01 | U | 시작 후 HEARTBEAT 없음, 2.999s와 3.000s | 2.999s는 MISSION·플래그 없음, 3.000s에 STOPPED, speed 0, FAILSAFE_ACTIVE (시작 시각부터 잼) | `test_REQ_SAFE_001_no_heartbeat_since_start_failsafe_at_3s` |
+| TC-SAFE-001-02 | U | 마지막 HEARTBEAT 뒤 +2.999s, +3.000s | +3.000s에 Failsafe (마지막 HEARTBEAT부터 잼) | `test_REQ_SAFE_001_failsafe_3s_after_last_heartbeat` |
+| TC-SAFE-001-03 | U | 두절 직전 mode가 MISSION(경로 있음·없음), RTB, STOPPED, STANDBY | 모두 STOPPED + FAILSAFE_ACTIVE | `test_REQ_SAFE_001_failsafe_from_any_mode` |
+| TC-SAFE-001-04 | U | Failsafe 중 주기 진행, 두절이 이어짐 | 위치 고정, 전이는 두절 한 번에 한 번 | `test_REQ_SAFE_001_vehicle_does_not_move_in_failsafe`, `test_REQ_SAFE_001_failsafe_is_a_single_transition_per_outage` |
+| TC-SAFE-001-05 | U | 명령으로 재개한 뒤 두 번째 두절 | 다시 Failsafe | `test_REQ_SAFE_001_failsafe_again_after_second_outage` |
+| TC-SAFE-001-06 | U | 실제 SIM 본체(`app.run`)(실제 UDP·시계), HEARTBEAT 없음 | 첫 Failsafe TELEMETRY가 시작 후 3.0~3.35s, 그 전은 MISSION·플래그 없음, 뒤로는 위치 고정 | `test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe` |
+
+### 3.19 REQ-SAFE-002 링크 복구 뒤 운용자 명령 없이 재개 금지 (SIM)
+
+해제 규칙은 ICD 6.5 표를 따른다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-SAFE-002-01 | U | Failsafe 뒤 HEARTBEAT가 10s 동안 다시 옴. 3s 넘게 끊긴 뒤 처음 온 HEARTBEAT | STOPPED + FAILSAFE_ACTIVE 유지, 위치 고정. 처음 온 HEARTBEAT도 먼저 Failsafe로 들어감 | `test_REQ_SAFE_002_heartbeat_recovery_does_not_resume`, `test_REQ_SAFE_002_heartbeat_arriving_after_3s_gap_still_enters_failsafe` |
+| TC-SAFE-002-02 | U | 복구 뒤 RTB, WAYPOINT | ACCEPTED, 플래그 해제, RTB·MISSION으로 주행 | `test_REQ_SAFE_002_motion_command_after_recovery_resumes_and_clears_flag` |
+| TC-SAFE-002-03 | U | 복구 뒤 STOP | ACCEPTED, 플래그 해제, STOPPED 유지 | `test_REQ_SAFE_002_stop_after_recovery_clears_flag_stays_stopped` |
+| TC-SAFE-002-04 | U | 두절 중 RTB, WAYPOINT, STOP, 범위 밖 명령 | RTB·WAYPOINT는 REJECTED_STATE·실행 안 함·위치 고정, STOP은 ACCEPTED·플래그 유지, 범위 밖은 REJECTED_INVALID | `test_REQ_SAFE_002_motion_command_during_outage_rejected_state`, `test_REQ_SAFE_002_invalid_command_during_outage_is_rejected_invalid` |
+| TC-SAFE-002-05 | U | 두절 중 REJECTED_STATE를 받은 cmd_id를 복구 뒤 다시, 이어서 새 cmd_id | 같은 cmd_id는 REJECTED_STATE 그대로·정지 유지, 새 cmd_id는 실행 | `test_REQ_SAFE_002_rejected_state_cmd_id_retransmitted_after_recovery_keeps_result` |
+| TC-SAFE-002-06 | U | 실제 SIM 본체(`app.run`): Failsafe 뒤 HEARTBEAT 1.5s, 이어서 COMMAND RTB | HEARTBEAT 동안 정지·플래그 유지, RTB에 ACK ACCEPTED, TELEMETRY가 RTB·플래그 없음 | `test_REQ_SAFE_002_process_resumes_only_on_command` |
+| TC-SAFE-002-07 | I | 실제 GW·SIM·HMI(WebSocket): GW를 3.8s 내렸다가 같은 포트로 재시작, 이어서 HMI RTB 명령 | 재시작 뒤 1.6s 동안 IF-03 telemetry가 모두 STOPPED·speed 0·FAILSAFE_ACTIVE, RTB에 cmd_result ACCEPTED, telemetry가 RTB·플래그 없음 | `test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command` |
 
 ---
 
