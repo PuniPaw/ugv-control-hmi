@@ -10,13 +10,17 @@ class FakeSocket implements SocketLike {
   onmessage: SocketLike["onmessage"] = null;
   onerror: SocketLike["onerror"] = null;
   closed = false;
+  sent: string[] = [];
+  send(text: string) {
+    this.sent.push(text);
+  }
   close() {
     this.closed = true;
   }
   // 소켓 쪽 이벤트 (처리기가 떼어졌으면 전달되지 않는다)
   open() { this.onopen?.({}); }
   drop(code = 1006) { this.onclose?.({ code }); }
-  send(data: unknown) { this.onmessage?.({ data }); }
+  deliver(data: unknown) { this.onmessage?.({ data }); }
 }
 
 interface Timer { fn: () => void; ms: number; cleared: boolean; fired: boolean }
@@ -111,12 +115,12 @@ it("REQ_HMI_006 an open connection that receives nothing for 4s is closed and re
   const s = h.last();
   s.open();
   expect(h.pending().map((t) => t.ms)).toEqual([IDLE_TIMEOUT_MS]); // 열린 직후부터 잰다
-  s.send("a"); // 받을 때마다 다시 잰다
+  s.deliver("a"); // 받을 때마다 다시 잰다
   expect(h.pending().map((t) => t.ms)).toEqual([IDLE_TIMEOUT_MS]);
   h.fire(); // FIN/RST 없이 GW가 사라짐
   expect(s.closed).toBe(true);
   expect(h.states.at(-1)).toEqual(["WAITING_RETRY", 1000, "idle timeout"]);
-  s.send("late"); // 버린 소켓의 이벤트는 전달되지 않는다
+  s.deliver("late"); // 버린 소켓의 이벤트는 전달되지 않는다
   expect(h.texts).toEqual(["a"]);
 });
 
@@ -151,7 +155,7 @@ it("REQ_HMI_006 resync() reconnects at once without counting a failure", () => {
   expect(h.sockets.length).toBe(2); // 기다리지 않고 바로 새 소켓
   expect(h.events.at(-1)).toEqual({ state: "CONNECTING", cause: "resync" });
   expect(h.states.some(([st]) => st === "WAITING_RETRY")).toBe(false); // 연결 끊김으로 알리지 않음
-  s.send("old"); // 버린 소켓의 이벤트는 전달되지 않음
+  s.deliver("old"); // 버린 소켓의 이벤트는 전달되지 않음
   expect(h.texts).toEqual([]);
   h.last().drop(); // 재설정 접속이 실패하면 그때부터는 보통의 재시도 (1s부터)
   expect(h.retryDelays()).toEqual([1000]);
@@ -165,8 +169,8 @@ it("REQ_HMI_007 passes text frames through and ignores binary", () => {
   const h = harness();
   h.conn.start();
   h.last().open();
-  h.last().send('{"type":"stats"}');
-  h.last().send(new ArrayBuffer(4));
+  h.last().deliver('{"type":"stats"}');
+  h.last().deliver(new ArrayBuffer(4));
   expect(h.texts).toEqual(['{"type":"stats"}']);
 });
 
@@ -177,7 +181,7 @@ it("REQ_HMI_006 stop() closes the socket, stops all events and schedules no retr
   s.open();
   h.conn.stop();
   expect(s.closed).toBe(true);
-  s.send("after-stop");
+  s.deliver("after-stop");
   s.drop();
   expect(h.texts).toEqual([]);
   expect(h.pending()).toEqual([]);
@@ -188,9 +192,9 @@ it("REQ_HMI_006 calling start() twice keeps a single live socket", () => {
   h.conn.start();
   h.conn.start();
   expect(h.sockets[0]!.closed).toBe(true);
-  h.sockets[0]!.send("from-first-socket");
+  h.sockets[0]!.deliver("from-first-socket");
   h.sockets[1]!.open();
-  h.sockets[1]!.send("from-second");
+  h.sockets[1]!.deliver("from-second");
   expect(h.texts).toEqual(["from-second"]);
   expect(h.pending().length).toBe(1);
 });
@@ -199,4 +203,26 @@ it("REQ_HMI_006 default URL follows the page host, override wins", () => {
   expect(defaultGwUrl("10.0.0.5")).toBe("ws://10.0.0.5:8080/ws");
   expect(defaultGwUrl("", undefined)).toBe("ws://127.0.0.1:8080/ws");
   expect(defaultGwUrl("x", "ws://gw:9000/ws")).toBe("ws://gw:9000/ws");
+});
+
+it("REQ_CMD_001 send() writes only to an open socket and never queues or resends", () => {
+  const h = harness();
+  expect(h.conn.send("before-start")).toBe(false);
+  h.conn.start();
+  expect(h.conn.send("connecting")).toBe(false); // 아직 열리지 않음
+  h.last().open();
+  expect(h.conn.send("a")).toBe(true);
+  expect(h.last().sent).toEqual(["a"]);
+  h.last().send = () => {
+    throw new Error("InvalidStateError");
+  };
+  expect(h.conn.send("closing")).toBe(false);
+  h.last().drop();
+  expect(h.conn.send("after-drop")).toBe(false);
+  h.fire(); // 재접속
+  h.last().open();
+  expect(h.last().sent).toEqual([]); // 새 소켓에 이전 텍스트를 다시 보내지 않는다
+  expect(h.sockets[0]!.sent).toEqual(["a"]);
+  h.conn.stop();
+  expect(h.conn.send("after-stop")).toBe(false);
 });

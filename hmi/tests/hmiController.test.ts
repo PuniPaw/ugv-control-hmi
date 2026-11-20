@@ -13,6 +13,10 @@ class FakeSocket implements SocketLike {
   onmessage: SocketLike["onmessage"] = null;
   onerror: SocketLike["onerror"] = null;
   closed = false;
+  sent: string[] = [];
+  send(text: string) {
+    this.sent.push(text);
+  }
   close() {
     this.closed = true;
   }
@@ -35,6 +39,7 @@ function harness(tickDelayMs = QUARTER_MS) {
   let gwNow = 5_000_000; // GW 시계 (HMI와 다름)
   let seq = 0; // GW가 매긴 텔레메트리 seq (HMI에 닿지 않아도 늘어난다)
   let quarter = 0;
+  let reqIds = 0;
   let paused = false; // GW가 보낸 것이 HMI에 닿지 않음 (재설정 접속 대기, 버려진 적체)
   const sockets: FakeSocket[] = [];
   const timers: Array<{ fn: () => void; done: boolean }> = [];
@@ -44,6 +49,7 @@ function harness(tickDelayMs = QUARTER_MS) {
     "ws://gw/ws",
     {
       now: () => wall,
+      newReqId: () => `r${++reqIds}`,
       monotonic: () => mono,
       openSocket: () => {
         const s = new FakeSocket();
@@ -231,4 +237,138 @@ it("REQ_HMI_007 discarded IF-03 messages are counted for display in the status p
   h.live().onmessage?.({ data: JSON.stringify({ type: "telemetry", ts: 1, data: { lat: 91 } }) });
   expect(h.c.view().discarded).toBe(2); // 상태 패널(data-testid="discarded")이 그리는 값
   expect(h.c.view().state.vehicle?.lat).not.toBe(91);
+});
+
+// ---- 명령 패널 (REQ-CMD-001·004, 이슈 #27) ----
+
+const vehicleLink = (state: "CONNECTED" | "LOST") =>
+  JSON.stringify({ type: "link_status", ts: 5_000_000, data: { source: "VEHICLE", state, last_rx_ts: 5_000_000 } });
+const resultText = (req_id: string, result: string, attempts: number) =>
+  JSON.stringify({ type: "cmd_result", ts: 5_000_000, data: { req_id, cmd_id: 42, result, attempts } });
+/** 모든 소켓으로 HMI가 보낸 command (보낸 순서) */
+const sentCommands = (h: ReturnType<typeof harness>) =>
+  h.sockets.flatMap((s) => s.sent.map((t) => JSON.parse(t) as { type: string; data: { req_id: string; cmd_type: string } }));
+
+/** 열린 연결, 차량 링크 CONNECTED */
+function readyHarness() {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  return h;
+}
+
+it("REQ_CMD_001 a command button only opens confirmation, cancel sends nothing, confirm sends once", () => {
+  const h = readyHarness();
+  for (const spec of [{ cmd_type: "STOP" }, { cmd_type: "RTB" }, { cmd_type: "WAYPOINT", lat: 36.5, lon: 127.25 }] as const) {
+    h.c.requestCommand(spec);
+    expect(h.view().command.confirm).not.toBeNull();
+    h.c.cancelCommand();
+    expect(h.view().command.confirm).toBeNull();
+  }
+  expect(sentCommands(h)).toEqual([]); // 버튼과 취소만으로는 아무것도 보내지 않는다
+  h.c.confirmCommand(); // 확인할 명령이 없으면 보내지 않는다
+  expect(sentCommands(h)).toEqual([]);
+
+  h.c.requestCommand({ cmd_type: "WAYPOINT", lat: 36.5, lon: 127.25 });
+  expect(h.view().command.confirm).toBe("경로점 이동 (WAYPOINT) 36.5000000, 127.2500000");
+  h.c.confirmCommand();
+  h.c.confirmCommand(); // 두 번 눌러도 한 번만 (확인 단계가 끝남)
+  expect(sentCommands(h)).toEqual([{ type: "command", data: { req_id: "r1", cmd_type: "WAYPOINT", lat: 36.5, lon: 127.25 } }]);
+  expect(h.view().command.confirm).toBeNull();
+  expect(h.view().command.rows.map((r) => [r.reqId, r.status])).toEqual([["r1", "PENDING"]]);
+});
+
+it("REQ_CMD_001 each confirmed command has its own req_id and shows its cmd_result", () => {
+  const h = readyHarness();
+  const send = (cmd_type: "STOP" | "RTB") => {
+    h.c.requestCommand({ cmd_type });
+    h.c.confirmCommand();
+  };
+  send("STOP");
+  send("RTB");
+  send("RTB");
+  expect(sentCommands(h).map((m) => m.data.req_id)).toEqual(["r1", "r2", "r3"]);
+  h.live().onmessage?.({ data: resultText("r1", "ACCEPTED", 2) });
+  h.live().onmessage?.({ data: resultText("r2", "TIMEOUT", 4) });
+  h.live().onmessage?.({ data: resultText("someone-else", "ACCEPTED", 1) }); // 다른 HMI의 명령
+  h.live().onmessage?.({ data: JSON.stringify({ type: "cmd_result", ts: 1, data: { req_id: "r3", cmd_id: null, result: "REJECTED_INVALID", attempts: 0 } }) });
+  const rows = h.view().command.rows;
+  expect(rows.map((r) => [r.reqId, r.status, r.text, r.level, r.retryable])).toEqual([
+    ["r3", "REJECTED_INVALID", "거절 · 필드 값 오류", "bad", false],
+    ["r2", "TIMEOUT", "응답 없음 (송신 4회)", "bad", true],
+    ["r1", "ACCEPTED", "수락 (송신 2회)", "ok", false],
+  ]);
+  expect(h.view().discarded).toBe(0);
+});
+
+it("REQ_CMD_001 a command whose result was not received is never resent automatically after the connection ends", () => {
+  for (const end of ["disconnect", "resync"] as const) {
+    const h = readyHarness();
+    h.c.requestCommand({ cmd_type: "RTB" });
+    h.c.confirmCommand();
+    if (end === "disconnect") {
+      h.live().onclose?.({ code: 1006 }); // GW 재시작 등
+      h.timers.filter((t) => !t.done).at(-1)!.fn(); // 1s 뒤 재접속
+    } else {
+      while (h.quarter() < 12) h.step(); // FRESH 연결
+      h.stepWall(3000); // HMI 시계 계단 변화 → 늦음 5초 → 기준선 재설정 재접속
+      while (h.sockets.length === 1 && h.quarter() < 80) h.step();
+      expect(h.banners).toContain("GW 데이터 지연 · 기준선 재설정 중");
+    }
+    expect(h.sockets).toHaveLength(2);
+    h.live().onopen?.({});
+    h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+    for (let i = 0; i < 40; i++) h.step(); // 새 연결에서 10초
+    expect(sentCommands(h), end).toHaveLength(1); // 처음 한 번뿐
+    expect(h.sockets[1]!.sent, end).toEqual([]);
+    const row = h.view().command.rows[0]!;
+    expect([row.status, row.retryable], end).toEqual(["UNCONFIRMED", true]);
+    expect(row.text).toBe("결과 미확인 · 결과 전에 GW 연결이 끊김 (자동으로 다시 보내지 않음)");
+  }
+});
+
+it("REQ_CMD_001 retrying after a lost result or TIMEOUT asks for confirmation again and uses a new req_id", () => {
+  const h = readyHarness();
+  h.c.requestCommand({ cmd_type: "WAYPOINT", lat: 1, lon: 2 });
+  h.c.confirmCommand();
+  h.live().onclose?.({ code: 1006 });
+  h.timers.filter((t) => !t.done).at(-1)!.fn();
+  h.live().onopen?.({});
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  const lost = h.view().command.rows[0]!;
+  h.c.requestCommand(lost.spec); // "다시 보내기": 같은 내용으로 확인 절차부터
+  expect(h.sockets[1]!.sent).toEqual([]);
+  expect(h.view().command.confirm).toBe("경로점 이동 (WAYPOINT) 1.0000000, 2.0000000");
+  h.c.confirmCommand();
+  h.live().onmessage?.({ data: resultText("r2", "TIMEOUT", 4) });
+  h.c.requestCommand(h.view().command.rows[0]!.spec);
+  h.c.confirmCommand();
+  expect(sentCommands(h).map((m) => [m.data.req_id, m.data.cmd_type])).toEqual([["r1", "WAYPOINT"], ["r2", "WAYPOINT"], ["r3", "WAYPOINT"]]);
+  expect(h.view().command.rows.map((r) => r.status)).toEqual(["PENDING", "TIMEOUT", "UNCONFIRMED"]);
+});
+
+it("REQ_CMD_004 vehicle link LOST or no GW connection disables commands with the reason and confirm sends nothing", () => {
+  const h = harness();
+  h.c.start();
+  expect(h.view().command.blocked).toBe("GW와 연결되지 않아 명령을 보낼 수 없음");
+  h.live().onopen?.({});
+  expect(h.view().command.blocked).toBe("차량 링크 LOST · 명령을 보낼 수 없음"); // 첫 link_status 전은 LOST (GW 초기값)
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  expect(h.view().command.blocked).toBeNull();
+
+  h.c.requestCommand({ cmd_type: "STOP" }); // 확인 중에 링크가 LOST가 됨
+  h.live().onmessage?.({ data: vehicleLink("LOST") });
+  expect(h.view().command).toMatchObject({ blocked: "차량 링크 LOST · 명령을 보낼 수 없음", confirm: "정지 (STOP)" });
+  h.c.confirmCommand();
+  expect(sentCommands(h)).toEqual([]);
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") }); // DEGRADED·CONNECTED면 보낼 수 있다
+  h.c.confirmCommand();
+  expect(sentCommands(h).map((m) => m.data.cmd_type)).toEqual(["STOP"]);
+
+  h.c.requestCommand({ cmd_type: "RTB" });
+  h.live().onclose?.({ code: 1006 });
+  expect(h.view().command.blocked).toBe("GW와 연결되지 않아 명령을 보낼 수 없음");
+  h.c.confirmCommand();
+  expect(sentCommands(h)).toHaveLength(1);
 });

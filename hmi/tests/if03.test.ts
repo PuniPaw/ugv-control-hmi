@@ -91,3 +91,24 @@ it("REQ_HMI_007 rejects values outside the ICD ranges and enums", () => {
     expect(parseIf03(ok), ok).not.toBeNull();
   }
 });
+
+const cmdResult = (patch: Record<string, unknown>) =>
+  JSON.stringify({ type: "cmd_result", ts: 1, data: { req_id: "r1", cmd_id: 7, result: "ACCEPTED", attempts: 1, ...patch } });
+
+it("REQ_HMI_007 cmd_result is accepted only in the ICD 7.1 shape", () => {
+  expect(parseIf03(cmdResult({ extra: 1 }))).toEqual({
+    type: "cmd_result", ts: 1, data: { req_id: "r1", cmd_id: 7, result: "ACCEPTED", attempts: 1 },
+  });
+  // 형식 오류로 거절해 보내지 않은 명령: cmd_id null, attempts 0, REJECTED_INVALID뿐
+  expect(parseIf03(cmdResult({ cmd_id: null, result: "REJECTED_INVALID", attempts: 0 }))?.data).toMatchObject({ cmd_id: null });
+  for (const r of ["REJECTED_STATE", "TIMEOUT"]) expect(parseIf03(cmdResult({ result: r, attempts: 4 }))).not.toBeNull();
+  expect(parseIf03(cmdResult({ cmd_id: 2 ** 32 - 1, req_id: "가".repeat(21) }))).not.toBeNull(); // 63바이트
+  for (const bad of [
+    { req_id: "" }, { req_id: "가".repeat(22) /* 66바이트 */ }, { req_id: 1 },
+    { result: "OK" }, { cmd_id: 0 }, { cmd_id: 2 ** 32 }, { cmd_id: 1.5 }, { cmd_id: "7" },
+    { attempts: 0 }, { attempts: 5 }, { cmd_id: null, result: "TIMEOUT", attempts: 0 },
+    { cmd_id: null, result: "REJECTED_INVALID", attempts: 1 }, { result: undefined },
+  ]) {
+    expect(parseIf03(cmdResult(bad)), JSON.stringify(bad)).toBeNull();
+  }
+});

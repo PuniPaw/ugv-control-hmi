@@ -2,6 +2,7 @@
 // 연결 이벤트를 어느 함수로 반영할지는 app/hmiController.ts가 정한다: 열림 connectionOpened(),
 // IF-03 연결 끊김 connectionLost(), 기준선 재설정 resyncStarted(). 이 층은 전송 층(net/)을 모른다.
 
+import { connectionEnded, emptyCommandLog, resultReceived, type CommandLog } from "./commands";
 import { parseIf03, type If03Message, type LinkState, type Source, type StatsData, type TelemetryData } from "../if03/messages";
 
 export const TRACK_MAX_POINTS = 3000; // 10Hz 기준 약 5분
@@ -53,6 +54,7 @@ export interface HmiState {
   lastFixSeq: number | null;
   session: Session | null; // IF-03 연결이 열려 있을 때만
   discarded: number; // 형식·범위가 ICD와 달라 폐기한 IF-03 메시지 수 (누계, GLOSSARY "폐기")
+  commands: CommandLog; // 명령 확인 절차와 보낸 명령의 결과 (state/commands.ts). 연결을 넘어 유지한다
 }
 
 export function initialState(): HmiState {
@@ -68,6 +70,7 @@ export function initialState(): HmiState {
     lastFixSeq: null,
     session: null,
     discarded: 0,
+    commands: emptyCommandLog(),
   };
 }
 
@@ -98,19 +101,20 @@ export function connectionOpened(s: HmiState, at: number): HmiState {
 
 /**
  * IF-03 연결이 끊겼을 때. 링크·차량·궤적 값은 "이전 값"으로 남기고, 연결 범위 값(session)은 버린다
- * → 재접속 후에는 기준선을 새로 잡는다.
+ * → 재접속 후에는 기준선을 새로 잡는다. 결과를 기다리던 명령은 결과 미확인이 된다(다시 보내지 않음).
  */
 export function connectionLost(s: HmiState): HmiState {
-  return { ...s, session: null, lastFixSeq: null };
+  return { ...s, session: null, lastFixSeq: null, commands: connectionEnded(s.commands) };
 }
 
 /**
  * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
  * 여기서는 궤적을 끊지 않는다. 재설정 동안 버린 적체·접속 시간만큼 텔레메트리 seq가 건너뛰므로,
  * 그 간격이 NO_FIX_GAP_SAMPLES 이상이면 다음 유효 위치에서 apply()가 끊는다.
+ * 명령 결과는 재접속 사이에 GW가 보냈다면 놓치므로, 끊김과 같이 결과 미확인으로 둔다.
  */
 export function resyncStarted(s: HmiState): HmiState {
-  return { ...s, session: null };
+  return { ...s, session: null, commands: connectionEnded(s.commands) };
 }
 
 /** 마지막 stats가 지금 기준선보다 2초 넘게 늦게 도착했는지 (늦음 판정은 여기 하나) */
@@ -160,6 +164,8 @@ export function apply(s0: HmiState, m: If03Message, receivedAt: number): HmiStat
       return { ...s, stats: { ...s.stats, [m.data.source]: m.data } };
     case "detection":
       return s; // 영상 오버레이(12월 3주)에서 쓴다
+    case "cmd_result":
+      return { ...s, commands: resultReceived(s.commands, m.data) };
   }
 }
 

@@ -1,7 +1,10 @@
 // 화면 표시 정책 (순수 함수). 컴포넌트는 이 결과를 그리기만 한다.
 
-import { SOURCES, type LinkState, type Mode, type Source, type StatsData, type TelemetryData } from "../if03/messages";
+import {
+  SOURCES, type CmdResult, type CommandSpec, type LinkState, type Mode, type Source, type StatsData, type TelemetryData,
+} from "../if03/messages";
 import type { ConnectAttempt, ConnectCause } from "../model/connection";
+import type { SentCommand } from "./commands";
 import { freshness, gpsValid, toLocalTime, type Freshness, type HmiState } from "./hmiState";
 
 export type Level = "ok" | "warn" | "bad";
@@ -103,6 +106,83 @@ export interface VehicleRows {
   flags: string;
 }
 
+/** 화면에 보이는 최근 명령 수 */
+export const COMMAND_ROWS_SHOWN = 5;
+
+/** 명령을 보낼 수 없는 사유 (REQ-CMD-004). null이면 보낼 수 있다. 버튼과 확인 단계의 "보내기"가 같은 판정을 쓴다 */
+export function commandBlock(s: HmiState, conn: ConnView): string | null {
+  if (conn.state !== "OPEN") return "GW와 연결되지 않아 명령을 보낼 수 없음";
+  if (s.link.VEHICLE.state === "LOST") return "차량 링크 LOST · 명령을 보낼 수 없음";
+  return null;
+}
+
+export function commandLabel(spec: CommandSpec): string {
+  switch (spec.cmd_type) {
+    case "STOP":
+      return "정지 (STOP)";
+    case "RTB":
+      return "복귀 (RTB)";
+    case "WAYPOINT":
+      return `경로점 이동 (WAYPOINT) ${spec.lat.toFixed(7)}, ${spec.lon.toFixed(7)}`;
+  }
+}
+
+/** 명령 상태 표지 (화면 속성 data-status): 결과를 받았으면 결과 이름 */
+export type CommandRowStatus = "PENDING" | "UNCONFIRMED" | CmdResult;
+
+export interface CommandRow {
+  reqId: string;
+  spec: CommandSpec; // 다시 보내기 = 같은 내용으로 확인 절차를 다시 시작 (새 req_id)
+  label: string;
+  status: CommandRowStatus;
+  text: string;
+  level: Level;
+  retryable: boolean; // 결과 미확인·응답 없음·상태 거절이면 운용자가 다시 확인하고 보낼 수 있다
+}
+
+function commandRow(c: SentCommand): CommandRow {
+  const base = { reqId: c.reqId, spec: c.spec, label: commandLabel(c.spec) };
+  const st = c.status;
+  switch (st.kind) {
+    case "PENDING":
+      return { ...base, status: "PENDING", text: "결과 대기 중", level: "warn", retryable: false };
+    case "UNCONFIRMED":
+      return {
+        ...base, status: "UNCONFIRMED", level: "bad", retryable: true,
+        text: "결과 미확인 · 결과 전에 GW 연결이 끊김 (자동으로 다시 보내지 않음)",
+      };
+    case "DONE": {
+      const r = st.result;
+      switch (r.result) {
+        case "ACCEPTED":
+          return { ...base, status: r.result, text: `수락 (송신 ${r.attempts}회)`, level: "ok", retryable: false };
+        case "REJECTED_INVALID":
+          return { ...base, status: r.result, text: "거절 · 필드 값 오류", level: "bad", retryable: false };
+        case "REJECTED_STATE":
+          return { ...base, status: r.result, text: "거절 · 현재 상태에서 수행 불가", level: "bad", retryable: true };
+        case "TIMEOUT":
+          return { ...base, status: r.result, text: `응답 없음 (송신 ${r.attempts}회)`, level: "bad", retryable: true };
+      }
+    }
+  }
+}
+
+/** 명령 패널 (REQ-CMD-001·004) */
+export interface CommandView {
+  blocked: string | null; // 보낼 수 없는 사유
+  confirm: string | null; // 확인을 기다리는 명령의 문구 (확인 단계가 아니면 null)
+  rows: CommandRow[]; // 최근 것부터 COMMAND_ROWS_SHOWN개
+}
+
+export function commandView(s: HmiState, conn: ConnView): CommandView {
+  const draft = s.commands.draft;
+  return {
+    blocked: commandBlock(s, conn),
+    confirm: draft && commandLabel(draft),
+    rows: s.commands.sent.slice(0, COMMAND_ROWS_SHOWN).map(commandRow),
+  };
+}
+
 export interface Presented {
   fresh: Freshness;
   banner: Banner;
@@ -111,6 +191,7 @@ export interface Presented {
   links: LinkRow[];
   vehicle: VehicleRows | null;
   discarded: number; // 폐기한 IF-03 메시지 수 (0이면 표시 안 함)
+  command: CommandView;
 }
 
 /** 화면 판정을 한 번에, 같은 시각으로. 컴포넌트는 이 결과를 그리기만 한다 (App.vue와 시험이 같은 함수를 쓴다) */
@@ -138,5 +219,6 @@ export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented 
       flags: v.flags.join(" · ") || "—",
     },
     discarded: s.discarded,
+    command: commandView(s, conn),
   };
 }
