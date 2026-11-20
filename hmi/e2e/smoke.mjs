@@ -77,8 +77,9 @@ async function startGateway(ports, wsPort) {
   return { proc: gw, wsPort: Number(m[1]) };
 }
 
-function startSim(port) {
-  return run("python3", ["-m", "ugvc_sim.telemetry_sender", "--port", String(port)], {
+function startSim(ports) {
+  // SIM은 GW의 HEARTBEAT를 sim 포트로 받고 TELEMETRY를 vehicle 포트로 보낸다 (HEARTBEAT가 없으면 3초 뒤 Failsafe 정지)
+  return run("python3", ["-m", "ugvc_sim", "--port", String(ports.sim), "--gw-port", String(ports.vehicle)], {
     cwd: resolve(REPO, "sim"),
     env: { ...process.env, PYTHONPATH: `${resolve(REPO, "python")}:.` },
   });
@@ -169,7 +170,7 @@ async function scenario(browser) {
   checkPageErrors();
 
   step("2. SIM 10Hz 송신: 차량 링크 CONNECTED, 유실률·모드·배터리 표시, 마커와 궤적 이동, 차량 값 진하게");
-  const sim = startSim(ports.vehicle);
+  const sim = startSim(ports);
   await expectText(page, "link-state-VEHICLE", "CONNECTED");
   await expectText(page, "loss-VEHICLE", "0.0%", 3000); // GW stats가 반영됨
   await expectText(page, "age-VEHICLE", /^0\.\ds 전$/); // 시계 차와 무관하게 0.x초 (음수·수 초가 아님)
