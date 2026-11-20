@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.4 (초안) |
+| 버전 | v0.4.1 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-STP-001 v0.17, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-STP-001 v0.18, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -29,6 +29,7 @@
 | v0.3.2 | 2026-11-14 | 6.1 PR #24 2차 리뷰 반영: `reject`가 거절한 req_id를 `recent_`에 남김(`request` 없음), 판정이 1.0s 이상 늦으면 `due = now + 1.0s`, ACK는 유실 계산에서도 제외. 형식 오류 응답 주체(`app` → `CommandTracker`)와 유효 ACK 검증 범위(①~⑧) 문구 정정 |
 | v0.3.3 | 2026-11-14 | 6.1 PR #24 3차 리뷰 반영: 거절 기록을 `rejected_`로 분리(상한 따로), 늦은 판정 규칙 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`, `kJudgePeriod`를 tracker 헤더로. 관련 문서 버전 갱신 |
 | v0.4 | 2026-11-20 | 8.6 HMI 명령 패널 신설(REQ-CMD-001·004, 이슈 #27): 확인 절차 `draft`, 보낸 명령 상태(PENDING·UNCONFIRMED·DONE), 연결이 끝나면 결과 미확인으로 두고 자동 재송신하지 않음, 다시 보내기는 확인 후 새 req_id, 송신 가능 판정 `commandBlock`, `cmd_result` 경계 파서. 8.1 모듈 표, 8.2, 시험 절을 8.7로 |
+| v0.4.1 | 2026-11-20 | 8.6 PR #35 1차 리뷰 반영: 차량 링크는 이 연결에서 받은 link_status로만 판정(`session.vehicleLinkSeen`, 재접속 직후 이전 값으로 보내지 않음), 기준선 재설정은 명령을 끊김으로 다루지 않고 결과 기한(첫 송신 + 5s, 단조 시계)이 지나야 결과 미확인, IF-03 끊김이면 확인 단계를 닫음, 다시 보내기 판정 `canRetry` 하나(결과 대기 중·이미 다시 보낸 명령 제외)와 경고 문구, 결과 대기 중 명령은 기록 상한으로 밀리지 않음, 경로점 입력은 소수 7자리까지, 브라우저 소켓은 OPEN이 아니면 송신 실패, TIMEOUT은 attempts 4만. GW 미연결 차단 근거, 남는 위험(STALE 중 판정) |
 
 ---
 
@@ -232,12 +233,12 @@ flowchart LR
 |---|---|---|
 | `src/net/gwConnection.ts` | IF-03 접속·끊김 판정·재접속, 기준선 재설정 재접속(`resync`, 실패로 세지 않음), 열린 연결로 텍스트 송신(`send`, 열린 연결이 없으면 false, 대기열·재송신 없음). 상태 변화는 판별 유니온 `ConnEvent`로 알린다. 소켓과 타이머는 주입받는다 (`Deps`). 브라우저 WebSocket은 `browserSocket`이 `SocketLike`로 감싼다 | REQ-HMI-006 |
 | `src/if03/messages.ts` | IF-03 JSON을 판별 유니온 `If03Message`로 검증(`cmd_result` 포함). 틀린 메시지와 모르는 type은 `null`. HMI가 보내는 command 텍스트(`commandText`)도 여기서만 만든다 | REQ-HMI-007, REQ-CMD-001, ICD 7.1·7.2 |
-| `src/state/commands.ts` | 명령 확인 절차(`draft`)와 보낸 명령 기록(`CommandLog`): `draftCommand`·`cancelDraft`·`commandSent`·`resultReceived`·`connectionEnded`, 경로점 입력 해석 `waypointFromInput` | REQ-CMD-001 |
+| `src/state/commands.ts` | 명령 확인 절차(`draft`)와 보낸 명령 기록(`CommandLog`): `draftCommand`·`cancelDraft`·`commandSent`·`resultReceived`·`connectionLost`·`resultDeadlinePassed`, 다시 보내기 판정 `canRetry`, 경로점 입력 해석 `waypointFromInput` | REQ-CMD-001 |
 | `src/state/hmiState.ts` | `receiveText()`: 파싱 후 반영 또는 폐기 계수. `apply()`: 메시지 하나를 반영한 새 상태. `connectionOpened()`·`connectionLost()`·`resyncStarted()`: 연결 범위 상태(`session`) 시작·폐기(끊김이면 궤적도 끊음, 재설정이면 궤적 유지). `freshness()`: GW 데이터 신선도. `needsResync()`: 기준선 재설정 필요 여부. 전송 층(`net/`)을 모른다 | REQ-HMI-001·002·006·007 |
 | `src/state/view.ts` | 표시 정책: 화면용 연결 상태 `ConnView`, 배너 등급·문구, 흐림 범위, 상태 패널 행(`LinkRow`·`VehicleRows`: 경과 시간·유실률·배터리·위치 문구), 명령 패널(`commandBlock` 송신 가능 판정과 사유, 확인 문구, 결과 행 `CommandRow`), 이를 한 시각으로 묶은 `present()` | REQ-HMI-002·006, REQ-CMD-001·004 |
 | `src/model/connection.ts` | `net/`과 `state/`가 함께 쓰는 접속 이유 타입(`ConnectAttempt`). 두 층은 서로를 import하지 않는다. 그리기 컴포넌트는 `state/view`의 `Presented`만 받는다 | |
 | `src/map/trackSync.ts` | 이전에 그린 것과 다음 궤적을 비교해 그리기 연산(`clear`·`newLine`·`extend`) 목록을 낸다 | REQ-HMI-001 |
-| `src/app/hmiController.ts` | 연결 + 상태 + 주기 판정 + 화면 판정을 한곳에 묶는다: 텍스트 → `receiveText`, 연결 이벤트 → `connectionOpened`·`connectionLost`·`resyncStarted`와 `ConnView`, `tick()` → `needsResync`면 `resync()`, `view()` → `present()`. 명령: `requestCommand`(확인 단계 시작)·`cancelCommand`·`confirmCommand`(보낼 수 있을 때만 새 req_id로 송신). 벽시계·단조 시계·소켓·타이머·req_id 발급은 주입 | REQ-HMI-006, REQ-CMD-001·004 |
+| `src/app/hmiController.ts` | 연결 + 상태 + 주기 판정 + 화면 판정을 한곳에 묶는다: 텍스트 → `receiveText`, 연결 이벤트 → `connectionOpened`·`connectionLost`·`resyncStarted`와 `ConnView`, `tick()` → `needsResync`면 `resync()`, `view()` → `present()`. 명령: `requestCommand`(확인 단계 시작)·`retryCommand`·`cancelCommand`·`confirmCommand`(보낼 수 있을 때만 새 req_id로 송신), `tick()`에서 결과 기한. 벽시계·단조 시계·소켓·타이머·req_id 발급은 주입 | REQ-HMI-006, REQ-CMD-001·004 |
 | `src/components/*.vue` | 그리기만 한다. 위 모듈의 결과를 그대로 쓰고 판정하지 않는다 | |
 
 판정은 모두 순수 함수(시각은 인자)와 주입받는 `HmiController`에 있고, 실제 시계(`Date.now`, `performance.now`, 250ms 주기 `tick`)와 WebSocket은 `App.vue`에서 주입한다. 화면 판정(신선도·배너·흐림)은 `present()`가 한 시각으로 한 번에 하므로 App.vue와 시험이 같은 경로를 쓴다.
@@ -322,25 +323,35 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     [*] --> 확인대기: 버튼 (requestCommand)
-    확인대기 --> [*]: 취소
+    확인대기 --> [*]: 취소 / IF-03 끊김
     확인대기 --> PENDING: 보내기 (confirmCommand, 보낼 수 있을 때만, 새 req_id)
     PENDING --> DONE: cmd_result (같은 req_id)
-    PENDING --> UNCONFIRMED: IF-03 끊김 / 기준선 재설정 재접속
+    PENDING --> UNCONFIRMED: IF-03 끊김 / 첫 송신 + 5s까지 결과 없음
+    note right of PENDING: 기준선 재설정 재접속은 상태를 바꾸지 않는다
     UNCONFIRMED --> DONE: 새 연결에서 cmd_result
-    UNCONFIRMED --> 확인대기: 다시 보내기 (같은 내용)
-    DONE --> 확인대기: 다시 보내기 (TIMEOUT, REJECTED_STATE)
+    UNCONFIRMED --> 확인대기: 다시 보내기 (같은 내용, 경고)
+    DONE --> 확인대기: 다시 보내기 (TIMEOUT, REJECTED_STATE, 경고)
 ```
 
 - **확인 절차(REQ-CMD-001):** 정지·복귀·경로점 버튼은 `HmiState.commands.draft`에 명령 내용(`CommandSpec`: STOP, RTB, 또는 좌표를 가진 WAYPOINT)을 둘 뿐 보내지 않는다. 패널은 확인 문구(경로점은 좌표 7자리)와 보내기·취소를 보인다. `commandSent()`는 draft를 소비해 기록을 만들므로, 확인 없이 보낸 기록은 만들 수 없다. 보내기를 두 번 눌러도 두 번째는 draft가 없어 보내지 않는다.
-- **보낼 수 있는지(REQ-CMD-004):** `commandBlock(state, conn)` 하나가 정한다. IF-03이 열려 있지 않으면 "GW와 연결되지 않아 명령을 보낼 수 없음", 차량 링크가 LOST면(첫 link_status 전 초기값 포함) "차량 링크 LOST · 명령을 보낼 수 없음". 버튼, 다시 보내기, 확인 단계의 보내기가 모두 이 판정으로 비활성되고, `confirmCommand()`도 보내기 직전에 다시 판정한다(확인 단계 중에 LOST가 되면 확인 단계는 남기고 보내지 않음). DEGRADED와 데이터 지연(STALE)은 막지 않는다. SRS는 LOST만 정하고, 지연 중에도 정지 명령은 보낼 수 있어야 하기 때문이다.
+- **확인 단계의 수명:** IF-03 연결이 끊기면 확인 단계를 닫는다. 끊기기 전 상황에서 연 확인으로 재접속 뒤에 보내지 않기 위해서다. 차량 링크가 LOST가 되거나 기준선 재설정 재접속이 일어날 때는 닫지 않는다. 그동안은 보내기만 막히고(아래), 운용자가 보는 화면은 그대로이기 때문이다.
+- **보낼 수 있는지(REQ-CMD-004):** `commandBlock(state, conn)` 하나가 정한다. 차례로:
+  1. IF-03이 열려 있지 않으면 "GW와 연결되지 않아 명령을 보낼 수 없음". SRS는 LOST만 정하지만, GW와 연결되지 않으면 명령을 전달할 길이 없고 링크 값도 이전 값이다.
+  2. 이 연결에서 VEHICLE `link_status`를 아직 받지 않았으면 "차량 링크 상태 수신 전 · 명령을 보낼 수 없음"(`session.vehicleLinkSeen`). 재접속 직후의 `link.VEHICLE`은 이전 연결의 값이라, GW가 재시작해 차량 링크가 실제로 LOST여도 CONNECTED로 남아 있을 수 있다. GW는 접속 직후 link_status를 보내므로(ICD 7장) 보통 곧 풀린다. 기준선 재설정 재접속도 같다.
+  3. 차량 링크가 LOST면 "차량 링크 LOST · 명령을 보낼 수 없음".
+
+  버튼, 다시 보내기, 확인 단계의 보내기가 모두 이 판정으로 비활성되고, `confirmCommand()`도 보내기 직전에 다시 판정한다(확인 단계 중에 LOST가 되면 확인 단계는 남기고 보내지 않음). DEGRADED와 데이터 지연(STALE)은 막지 않는다. SRS는 LOST만 정하고, 지연 중에도 정지 명령은 보낼 수 있어야 하기 때문이다. **남는 위험:** STALE 동안의 링크 값은 2초 넘게 늦은 GW 판정이므로, 그사이 차량이 LOST가 됐어도 CONNECTED로 보고 보낼 수 있다. 그 명령은 GW가 SIM에 보내 TIMEOUT으로 끝난다(경고 체계 작업에서 STALE을 입력으로 다룬다).
 - **req_id:** 보낼 때마다 `deps.newReqId()`로 새로 발급한다. 실제 값은 `crypto.getRandomValues` 128비트의 16진 32자다. `crypto.randomUUID`는 보안 맥락(https, localhost)에서만 있어 다른 PC에서 http로 연 HMI에서 쓸 수 없다.
-- **결과 상태:** 보낸 명령은 PENDING(이 연결에서 결과 대기), DONE(cmd_result 받음), UNCONFIRMED(결과 전에 IF-03 연결이 끝남) 중 하나다. `resultReceived()`는 우리 req_id이고 아직 DONE이 아닌 것만 바꾼다. 다른 HMI의 명령 결과(ICD 7.1: 모든 HMI에 보냄)와 같은 결과의 재전달은 무시한다(형식이 맞으므로 폐기로 세지 않음). 기록은 최근 20개, 화면은 5개.
-- **자동 재송신 금지(이슈 #27):** HMI는 어떤 경우에도 스스로 command를 다시 보내지 않는다.
-  - 같은 연결에서는 다시 보낼 이유가 없다. GW는 연결된 HMI에 빈틈 없이 보내므로(ICD 7장) 결과는 ACK 또는 TIMEOUT(첫 송신 후 4초)으로 반드시 온다. GW가 멈추면 무수신 4초에 연결이 끊긴다(8.4).
-  - 연결이 끝나면(끊김, 기준선 재설정) PENDING은 UNCONFIRMED가 된다(`connectionLost()`·`resyncStarted()` → `connectionEnded()`). 결과를 놓쳤을 수 있고, GW가 다시 시작돼 req_id 기억이 사라졌을 수도 있다(ICD 7.2 한계). 그래서 같은 req_id로 다시 보내면 두 번 실행될 수 있다. 화면은 "결과 미확인 · 결과 전에 GW 연결이 끊김 (자동으로 다시 보내지 않음)"을 보인다. GW가 살아 있어 새 연결에서 결과가 오면 DONE이 된다.
-  - **다시 보내기**(UNCONFIRMED, TIMEOUT, REJECTED_STATE)는 같은 내용으로 확인 단계를 다시 열 뿐이다. 운용자가 확인하면 새 req_id로 보낸다. 좌표를 고친 재시도도 새 명령이라 새 req_id다. 같은 req_id로 보내는 경로는 코드에 없다.
-- **송신:** `GwConnection.send()`는 열린 소켓에만 보내고 대기열을 두지 않는다. 열린 연결이 없거나 소켓이 예외를 던지면 false이고, 컨트롤러는 기록을 만들지 않고 확인 단계를 남긴다.
-- **경로점 입력:** `waypointFromInput()`은 화면 입력 경계다. 부호와 소수점만 있는 십진수(지수·16진수·NaN·Infinity·쉼표 불가)이고 위도 −90~90, 경도 −180~180이어야 한다(ICD 7.2). 지도에서 경로점을 고르고 표시하는 일(REQ-HMI-001 경로점)은 이 범위가 아니다.
+- **결과 상태:** 보낸 명령은 PENDING(결과 대기), DONE(cmd_result 받음), UNCONFIRMED(결과를 받지 못함) 중 하나다. `resultReceived()`는 우리 req_id이고 아직 DONE이 아닌 것만 바꾼다. 다른 HMI의 명령 결과(ICD 7.1: 모든 HMI에 보냄)와 같은 결과의 재전달은 무시한다(형식이 맞으므로 폐기로 세지 않음). 기록은 최근 20개이되 PENDING은 밀어내지 않는다(결과를 맞출 곳이 없어지므로). 화면은 5개.
+- **결과를 받지 못하는 경우:** GW는 첫 송신 4초 뒤에는 TIMEOUT으로라도 결과를 낸다(ICD 7.3).
+  - **IF-03 끊김:** 곧바로 UNCONFIRMED(`connectionLost()`). 결과를 놓쳤을 수 있고, GW가 다시 시작돼 req_id 기억이 사라졌을 수도 있다(ICD 7.2 한계).
+  - **기준선 재설정 재접속:** 끊김이 아니다(GLOSSARY). GW는 살아 있고 명령을 계속 재전송하는 중이므로 PENDING을 그대로 둔다(`resyncStarted()`는 명령을 건드리지 않음). 새 연결에서 결과가 오면 DONE이다. 재접속 사이에 GW가 결과를 보내 놓쳤으면, 결과 기한 `RESULT_DEADLINE_MS`(첫 송신 + 5초 = GW TIMEOUT 4초 + 판정 주기·전달 여유 1초)이 지난 뒤 `tick()`의 `resultDeadlinePassed()`가 UNCONFIRMED로 바꾼다. 기한은 단조 시계로 잰다(재설정의 원인인 벽시계 계단 변화와 무관). GW 판정이 멈췄다 깨어나 결과가 기한보다 늦게 와도 UNCONFIRMED에서 DONE으로 바뀐다.
+  - 결과 대기 중에는 다시 보내기가 없다. 재설정 직후에 운용자가 다시 보내 두 번 실행되는 것을 막기 위해서다.
+  - 화면은 "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)"을 보인다.
+- **자동 재송신 금지(이슈 #27):** HMI는 어떤 경우에도 스스로 command를 다시 보내지 않는다. 이슈 #27의 "같은 연결 안에서 응답 지연 때문에 다시 보낼 때만 같은 req_id" 항목은 "같은 req_id로 다시 보내지 않음"으로 대신한다. 같은 연결에서는 다시 보낼 이유가 없기 때문이다. GW는 연결된 HMI에 빈틈 없이 보내므로(ICD 7장) 결과는 ACK 또는 TIMEOUT(첫 송신 후 4초)으로 반드시 오고, GW가 멈추면 무수신 4초에 연결이 끊긴다(8.4).
+- **다시 보내기:** 다시 보낼 수 있는지는 `canRetry()` 하나가 정한다(UNCONFIRMED, TIMEOUT, REJECTED_STATE이고 아직 다시 보내지 않은 명령). `retryCommand(reqId)`는 같은 내용으로 확인 단계를 다시 열 뿐이고, 확인 단계에 "다시 보내기 · 이전 명령이 이미 실행됐을 수 있음 (새 명령으로 보냄)"을 보인다. 운용자가 확인하면 새 req_id로 보내고, 원래 명령에는 다시 보내기를 더 보이지 않는다. 좌표를 고친 재시도도 새 명령이라 새 req_id다. 같은 req_id로 보내는 경로는 코드에 없다.
+- **송신:** `GwConnection.send()`는 열린 소켓에만 보내고 대기열을 두지 않는다. 열린 연결이 없거나 소켓이 예외를 던지면 false이고, 컨트롤러는 기록을 만들지 않고 확인 단계를 남긴다. 브라우저 WebSocket은 CLOSING·CLOSED에서 예외 없이 버리므로, `browserSocket`은 `readyState`가 OPEN이 아니면 예외를 던져 실패를 알린다. 실패하면 소켓은 닫히는 중이라 곧 끊김으로 처리되고(확인 단계 닫힘, 사유 표시), 따로 실패 문구는 두지 않는다.
+- **경로점 입력:** `waypointFromInput()`은 화면 입력 경계다. 부호와 소수점만 있는 소수 7자리 이하 십진수(지수·16진수·NaN·Infinity·쉼표 불가)이고 위도 −90~90, 경도 −180~180이어야 한다(ICD 7.2). 7자리로 제한하는 이유: GW는 1e-7 deg 정수로 반올림해 싣는데(ICD 6.3), 8자리 이상이면 확인 화면(7자리)과 실제로 실리는 값이 1 LSB 다를 수 있다. 지도에서 경로점을 고르고 표시하는 일(REQ-HMI-001 경로점)은 이 범위가 아니다.
 
 ### 8.7 시험
 
@@ -350,7 +361,7 @@ stateDiagram-v2
 | `HmiController` | 가짜 소켓·타이머·벽시계·단조 시계(ms 단위)로 늦음 → 재설정(첫 늦은 stats부터 5~5.25초, 계단부터 ≤6.25초, 계단 위상 4가지) → 새 기준선 FRESH 전체 순환, 느린 재설정 접속은 궤적 분리, 단조 시계 카운트다운, 진짜 끊김 뒤 궤적 분리, 상태 패널 행. 경계값은 코드 상수가 아니라 ICD 값으로 확인 |
 | `receiveText`, `apply`, `freshness`, `needsResync`, `view`, `trackSync` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계·시계 차·계단 변화를 대기 없이 시험. `planDraw` 연산을 실행한 결과가 상태 궤적과 같은지 무작위 8000메시지로 확인 |
 | `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격, 접속·무수신 제한, 예외, stop·재시작 시험 |
-| 명령 패널 | `state/commands.ts` 순수 함수(확인 없는 기록 불가, 결과 대응, 연결 끝 → 결과 미확인, 경로점 입력)와 `HmiController`(가짜 소켓이 받은 텍스트로 송신 여부·req_id 확인: 확인 절차, LOST·GW 끊김 차단, 끊김·재설정 뒤 10초 동안 재송신 없음, 다시 보내기는 새 req_id). 시연 점검은 GW 진단의 `cmd sent` 줄로 실제 송신을 확인한다 |
+| 명령 패널 | `state/commands.ts` 순수 함수(확인 없는 기록 불가, 결과 대응, 끊김 → 결과 미확인, 결과 기한 경계, 결과 대기 중 명령은 상한으로 밀리지 않음, 경로점 입력)와 `HmiController`(가짜 소켓이 받은 텍스트로 송신 여부·req_id 확인: 확인 절차, LOST·GW 끊김·재접속 뒤 link_status 전 차단, 끊김 뒤 10초 동안 재송신 없음, 재설정은 결과 대기 유지, 다시 보내기는 경고와 새 req_id). 시연 점검은 GW 진단의 `cmd sent` 줄로 실제 송신을 확인한다 |
 | 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`, `data-heading`)과 개발 서버 훅(`__ugvcTrackPoints`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치와, 실행 중 시계 +3초 계단 변화 뒤 회복(GW WebSocket 재접속 정확히 1회, `MutationObserver`로 기록한 배너 변화에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음)도 확인. 명령은 SIM 수신부(`ugvc_sim.uplink`)를 띄워 확인·취소·ACCEPTED, 결과 전 GW 재시작 뒤 재송신 없음과 새 req_id 다시 보내기·TIMEOUT, LOST·GW 끊김 차단을 확인 |
 
 ## 9. 미정 사항
