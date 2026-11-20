@@ -10,7 +10,8 @@
 RTM(06)을 grep으로 만들 때 이름이 어긋나면 그 TC가 "시험 없음"으로 보이므로, 어긋나면 실패한다.
 
 반대 방향도 검사한다: 코드의 시험 이름에 붙은 REQ ID 중 하나라도 SRS(docs/01_SRS.md)에 없으면 실패한다
-(이름에 ID가 여러 개면 전부 대조한다).
+(이름에 ID가 여러 개면 전부 대조한다). 시험 하나는 요구사항 하나의 증거이므로(STP 2.7), 서로 다른 REQ ID가
+둘 이상인 이름도 실패한다.
 RTM은 이름의 REQ ID로 요구사항을 잇기 때문에, 없는 ID(오타)는 추적표에서 조용히 사라진다.
 (ID가 있지만 시험 내용과 맞지 않는 경우는 기계로 못 잡는다. 리뷰에서 본다.)
 
@@ -181,7 +182,7 @@ def srs_ids() -> set[str]:
     return set(re.findall(r"^\| (REQ-[A-Z]+-\d{3}) \|", SRS.read_text(encoding="utf-8"), re.M))
 
 
-REQ_STRICT = re.compile(r"REQ[_-]([A-Z]+)[_-](\d{3})(?!\d)")
+REQ_STRICT = re.compile(r"(?<![A-Z])REQ[_-]([A-Z]+)[_-](\d{3})(?!\d)")  # 앞 조건은 req_candidates와 같다(PREREQ 제외)
 
 
 def req_candidates(areas: tuple[str, ...]) -> re.Pattern[str]:
@@ -204,8 +205,13 @@ def malformed_req(test_name: str, areas: tuple[str, ...]) -> bool:
 
 
 def req_ids(test_name: str) -> list[str]:
-    """시험 이름의 REQ ID 전부. 시험 하나가 요구사항 여러 개의 증거일 수 있고 RTM도 이름의 ID를 모두 모은다 (STP 2.7)"""
-    return [f"REQ-{m.group(1)}-{m.group(2)}" for m in REQ_STRICT.finditer(test_name)]
+    """시험 이름의 REQ ID 전부 (순서대로, 중복 없이)"""
+    return list(dict.fromkeys(f"REQ-{m.group(1)}-{m.group(2)}" for m in REQ_STRICT.finditer(test_name)))
+
+
+def has_multiple_req_ids(test_name: str) -> bool:
+    """서로 다른 REQ ID가 둘 이상. RTM grep이 한 시험을 두 요구사항에 이어 TC와 시험 1:1이 깨진다 (STP 2.7)"""
+    return len(req_ids(test_name)) > 1
 
 
 def unknown_req_ids(test_name: str, known: set[str]) -> list[str]:
@@ -238,12 +244,15 @@ def main() -> int:
         return 2
     for name in malformed:
         print(f"형식이 틀린 REQ ID를 단 테스트: {name}")
+    multiple = sorted(n for n in code if has_multiple_req_ids(n))
+    for name in multiple:
+        print(f"REQ ID가 둘 이상인 테스트: {name} ({', '.join(req_ids(name))})")
     unknown = {n: ids for n in sorted(code) if (ids := unknown_req_ids(n, known))}
     for name, ids in unknown.items():
         print(f"SRS에 없는 REQ ID를 단 테스트: {name} ({', '.join(ids)})")
     print(f"STP 테스트 이름 {len(cpp) + len(py) + len(ts)}개 확인, 불일치 {len(missing)}개. "
           f"코드의 REQ 시험 {sum(1 for n in code if req_ids(n))}개 중 SRS에 없는 ID를 단 시험 {len(unknown)}개")
-    return 1 if missing or unknown or unparsed or malformed else 0
+    return 1 if missing or unknown or unparsed or malformed or multiple else 0
 
 
 if __name__ == "__main__":

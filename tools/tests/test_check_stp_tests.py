@@ -48,6 +48,13 @@ def test_req_ids_reads_only_exact_ids():
     assert c.req_ids("REQ_HMI_0067 x") == []
     assert c.req_ids("no id") == []
     assert c.req_ids("test_REQ_CMD_002_and_REQ_COM_006") == ["REQ-CMD-002", "REQ-COM-006"]
+    assert c.req_ids("test_REQ_HMI_006_then_again_REQ_HMI_006") == ["REQ-HMI-006"]  # 같은 ID는 한 번만
+
+
+@pytest.mark.parametrize("name", ["PREREQ_HMI_999", "test_PREREQ_HMI_999_step", "XREQ_CMD_002"])
+def test_req_ids_ignores_req_inside_a_longer_uppercase_word(name):
+    assert c.req_ids(name) == []  # req_candidates와 같은 기준: 앞이 대문자인 REQ는 ID가 아니다
+    assert not c.malformed_req(name, AREAS)
 
 
 @pytest.mark.parametrize("name, unknown", [
@@ -61,6 +68,18 @@ def test_req_ids_reads_only_exact_ids():
 ])
 def test_every_req_id_in_a_name_is_checked_against_srs(name, unknown):
     assert c.unknown_req_ids(name, {"REQ-HMI-006", "REQ-CMD-002", "REQ-COM-006"}) == unknown
+
+
+
+@pytest.mark.parametrize("name, multiple", [
+    ("test_REQ_CMD_002_and_REQ_COM_006", True),  # 시험 하나는 요구사항 하나의 증거 (STP 2.7, TC와 1:1)
+    ("REQ_HMI_006 and REQ_HMI_007", True),
+    ("test_REQ_HMI_006_then_again_REQ_HMI_006", False),  # 같은 ID 반복은 하나로 본다
+    ("REQ_HMI_006 only", False),
+    ("plain test without id", False),
+])
+def test_names_with_more_than_one_distinct_req_id_are_flagged(name, multiple):
+    assert c.has_multiple_req_ids(name) is multiple
 
 
 STP_SAMPLE = """
