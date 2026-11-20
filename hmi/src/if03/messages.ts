@@ -1,4 +1,5 @@
-// IF-03 GW → HMI 메시지 (ICD 7.1). GW가 보낸 JSON은 이 파일에서만 검증한다 (경계에서 한 번).
+// IF-03 메시지 (ICD 7.1 GW → HMI, 7.2 HMI → GW). GW가 보낸 JSON은 이 파일에서만 검증한다 (경계에서 한 번).
+// HMI가 보내는 command도 이 파일의 commandText()만 만든다.
 //
 // 열거값은 아래 `as const` 배열 하나에서 타입과 검사를 함께 만든다. 결과 객체는 검사한 필드만으로
 // 새로 조립한다 (타입 단언 없이 → 검사한 목록과 타입이 어긋나면 컴파일 오류).
@@ -12,7 +13,12 @@ export const MODES = ["STANDBY", "MISSION", "STOPPED", "RTB", "FAULT"] as const;
 export const FLAGS = ["GPS_VALID", "CAMERA_OK", "BATTERY_LOW", "FAILSAFE_ACTIVE"] as const; // ICD 표 6-2
 export const ERROR_KEYS = ["sync", "version", "length", "crc", "type", "range", "order"] as const; // ICD 7.1
 export const CLASSES = ["PERSON", "VEHICLE", "ARMORED_VEHICLE", "UNKNOWN"] as const; // ICD 표 6-3 (TBD-02)
+export const CMD_RESULTS = ["ACCEPTED", "REJECTED_INVALID", "REJECTED_STATE", "TIMEOUT"] as const; // ICD 7.1, 표 6-5
 export const MAX_OBJECTS = 32; // ICD 6.2 count
+export const LAT_LIMIT = 90; // deg, ICD 6.1 (telemetry 검사와 HMI 경로점 입력이 같이 쓴다)
+export const LON_LIMIT = 180;
+const MAX_ATTEMPTS = 4; // ICD 7.3: 송신 최대 4회
+const REQ_ID_MAX_BYTES = 64; // ICD 7.2
 const U32_MAX = 0xffffffff;
 const IMG_MAX = 4096;
 
@@ -22,6 +28,10 @@ export type Mode = (typeof MODES)[number];
 export type Flag = (typeof FLAGS)[number];
 export type ErrorKey = (typeof ERROR_KEYS)[number];
 export type DetectionClass = (typeof CLASSES)[number];
+export type CmdResult = (typeof CMD_RESULTS)[number];
+
+/** HMI가 보내는 명령 하나의 내용 (ICD 7.2). 좌표는 WAYPOINT만 가진다 */
+export type CommandSpec = { cmd_type: "STOP" } | { cmd_type: "RTB" } | { cmd_type: "WAYPOINT"; lat: number; lon: number };
 
 export interface TelemetryData {
   lat: number; // deg (GPS_VALID가 없으면 의미 없음)
@@ -66,6 +76,14 @@ export interface LinkStatusData {
   last_rx_ts: number | null; // GW 시계 epoch ms
 }
 
+/**
+ * 명령 결과 (ICD 7.1). GW가 형식 오류로 보내지 않고 거절한 명령만 cmd_id가 null이고 attempts 0이다
+ * (그 결과는 REJECTED_INVALID). 그 밖에는 cmd_id가 있고 attempts는 1~4다
+ */
+export type CmdResultData =
+  | { req_id: string; cmd_id: null; result: "REJECTED_INVALID"; attempts: 0 }
+  | { req_id: string; cmd_id: number; result: CmdResult; attempts: number };
+
 interface Envelope<T extends string, D> {
   type: T;
   ts: number; // GW 시계 epoch ms
@@ -76,7 +94,8 @@ export type If03Message =
   | Envelope<"telemetry", TelemetryData>
   | Envelope<"detection", DetectionData>
   | Envelope<"stats", StatsData>
-  | Envelope<"link_status", LinkStatusData>;
+  | Envelope<"link_status", LinkStatusData>
+  | Envelope<"cmd_result", CmdResultData>;
 
 // ---- 검증 ----
 
@@ -103,11 +122,14 @@ const isLinkState = oneOf(LINK_STATES);
 const isMode = oneOf(MODES);
 const isFlag = oneOf(FLAGS);
 const isClass = oneOf(CLASSES);
+const isCmdResult = oneOf(CMD_RESULTS);
+const utf8Bytes = (v: string) => new TextEncoder().encode(v).length;
+const isReqId = (v: unknown): v is string => isStr(v) && v.length > 0 && utf8Bytes(v) <= REQ_ID_MAX_BYTES;
 
 function telemetry(d: Obj): TelemetryData | null {
   const { lat, lon, heading_deg, speed_mps, battery_pct, mode, flags, seq, rx_ts } = d;
   if (
-    inRange(lat, -90, 90) && inRange(lon, -180, 180) && inRange(heading_deg, 0, 359.99) &&
+    inRange(lat, -LAT_LIMIT, LAT_LIMIT) && inRange(lon, -LON_LIMIT, LON_LIMIT) && inRange(heading_deg, 0, 359.99) &&
     inRange(speed_mps, 0, 30) && isInt(battery_pct, 0, 100) && isMode(mode) &&
     Array.isArray(flags) && flags.every(isFlag) && isInt(seq, 0, U32_MAX) && isCount(rx_ts)
   ) {
@@ -175,6 +197,17 @@ function linkStatus(d: Obj): LinkStatusData | null {
   return isCount(last_rx_ts) ? { source, state, last_rx_ts } : null;
 }
 
+function cmdResult(d: Obj): CmdResultData | null {
+  const { req_id, cmd_id, result, attempts } = d;
+  if (!isReqId(req_id) || !isCmdResult(result)) return null;
+  if (cmd_id === null) {
+    return result === "REJECTED_INVALID" && attempts === 0 ? { req_id, cmd_id: null, result, attempts: 0 } : null;
+  }
+  // TIMEOUT은 4번 보낸 뒤에만 나온다 (ICD 7.3)
+  if (result === "TIMEOUT" && attempts !== MAX_ATTEMPTS) return null;
+  return isInt(cmd_id, 1, U32_MAX) && isInt(attempts, 1, MAX_ATTEMPTS) ? { req_id, cmd_id, result, attempts } : null;
+}
+
 /** GW가 보낸 텍스트 한 개를 IF-03 메시지로. 형식·범위가 맞지 않거나 모르는 type이면 null. */
 export function parseIf03(text: string): If03Message | null {
   let raw: unknown;
@@ -202,7 +235,16 @@ export function parseIf03(text: string): If03Message | null {
       const d = linkStatus(data);
       return d && { type: "link_status", ts, data: d };
     }
+    case "cmd_result": {
+      const d = cmdResult(data);
+      return d && { type: "cmd_result", ts, data: d };
+    }
     default:
-      return null; // cmd_result 등은 명령 기능(12월)에서 추가
+      return null;
   }
+}
+
+/** HMI → GW command 텍스트 (ICD 7.2). ts는 선택이라 싣지 않는다. 좌표는 WAYPOINT만 싣는다 */
+export function commandText(reqId: string, spec: CommandSpec): string {
+  return JSON.stringify({ type: "command", data: { req_id: reqId, ...spec } });
 }
