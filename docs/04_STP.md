@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.17 (초안) |
+| 버전 | v0.18 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.4, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.4.1, ADR-002 |
 
 ## 개정 이력
 
@@ -28,7 +28,8 @@
 | v0.14 | 2026-11-14 | PR #24 1차 리뷰 반영: TC-CMD-002-05를 req_id 규칙(대기 중·최근 결과·형식 오류)으로 바꾸고 TC-CMD-002-10~13(재전송 예정 시각, ACK 스트림 ⑨ 제외, SIM 수신부 재시작, 같은 req_id 다른 HMI·결과 전체 전달·형식 오류), TC-CMD-003-06·07(GW 재시작 cmd_id, 결과를 놓친 HMI 재송신) 추가 |
 | v0.15 | 2026-11-14 | PR #24 2차 리뷰 반영: TC-COM-005-07을 ACK 스트림 유실 제외로 바꿈(ACK가 유실 계산에서 빠져 기존 "스트림 독립" 시험이 아무것도 증명하지 못하게 됨), TC-COM-006-06(ACK 스트림 ⑨ 제외) 추가, TC-CMD-002-11은 같은 시험을 가리킴. TC-CMD-003-07을 TC-CMD-002-14로 옮김(req_id 규칙은 GW 동작이라 SRS v0.7 REQ-CMD-002). TC-CMD-002-15~17(거절한 req_id 기억, 판정이 1s 넘게 늦은 재전송, 고친 명령을 거절한 req_id로) 추가 |
 | v0.16 | 2026-11-14 | PR #24 3차 리뷰 반영: TC-CMD-002-11 삭제(TC-COM-006-06과 같은 시험이라 REQ-CMD-002 추적에 REQ-COM-006 시험이 끼었음), TC-CMD-002-16 기대 시각을 새 규칙(실제 송신 + 0.95s)으로, TC-CMD-002-18(0.9s 늦은 판정)·19(거절 기록과 송신 기록의 상한 분리) 추가. 관련 문서 버전 갱신 |
-| v0.17 | 2026-11-20 | Failsafe 구현: TC-SAFE-001-01~05(HEARTBEAT 3.0s 두절 정지), TC-SAFE-002-01~07(복구 뒤 재개 금지, 해제 명령, 두절 중 REJECTED_STATE, GW 두절 통합). 2.2에 SIM 시각 주입. SIM이 한 프로세스가 되어 TC-CMD-003-04·006-04의 실제 UDP 시험은 `python -m ugvc_sim` 본체(`app.run`)를 구동 |
+| v0.17 | 2026-11-20 | Failsafe 구현: TC-SAFE-001-01~06(HEARTBEAT 3.0s 두절 정지), TC-SAFE-002-01~07(복구 뒤 재개 금지, 해제 명령, 두절 중 REJECTED_STATE, GW 두절 통합). 2.2에 SIM 시각 주입. SIM이 한 프로세스가 되어 TC-CMD-003-04·006-04의 실제 UDP 시험은 `python -m ugvc_sim` 본체(`app.run`)를 구동 |
+| v0.18 | 2026-11-20 | PR #36 1차 리뷰 반영: TC-SAFE-001-07(GW 송신 실패에도 SIM이 죽지 않고 Failsafe), TC-SAFE-002-08(해제 경계: 복구 HEARTBEAT 뒤 +2.999s 수락, +3.000s REJECTED_STATE) 추가. TC-SAFE-001-04는 전이 1회, TC-SAFE-002-05는 새 명령 뒤 상태, TC-SAFE-002-06은 복구 구간 전체를 판정. TC-CMD-002-12를 SIM 한 프로세스 구조에 맞춤(차량 링크는 시험의 텔레메트리 송신기로 CONNECTED 유지, 재시작 내내 LOST 없음). 2.7에 SIM 운동 모사 시험 예외, 3.14·4장의 옛 구성요소 이름 정정 |
 
 ---
 
@@ -94,6 +95,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 - 3장 TC 표의 "테스트" 열(머리 행의 열 이름으로 찾는다)에 적은 백틱 항목은 모두 시험 이름(gtest·pytest·vitest) 또는 시연 점검 참조여야 한다. 해석하지 못한 항목이 있으면 `check_stp_tests.py`가 실패한다
 - vitest 시험은 3장 표에 "파일 이름 > 시험 이름"으로 적는다 (예: `hmiState.test.ts > REQ_HMI_002 starts with both links LOST like the GW`). HMI 시험 파일은 `describe`를 쓰지 않아 it 제목이 곧 시험 이름이다. `check_stp_tests.py`는 `vitest list --json`의 실제 목록과 비교한다
 - 시험 이름에는 모두 REQ ID를 단다 (RTM grep에서 빠지지 않도록). 예외: 검사 도구 자체 시험(`tools/tests/`)은 제품 요구사항의 증거가 아니므로 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 도구만 바꾸는 커밋도 같은 이유로 REQ ID 없이 `test(tools):`·`fix(tools):`로 쓴다
+- 예외: SIM 차량 운동 모사 자체의 정확도 시험(`sim/tests/test_vehicle.py`: 직진, 경로점·복귀 주행, 도착 뒤 STANDBY, 배터리)은 시험 장비(차량 모사기)의 동작이라 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 명령·Failsafe가 차량 상태에 미치는 영향 중 요구사항에 해당하는 것(정지 유지, 재개 금지·해제)은 `Simulator` 시험(TC-SAFE)으로 추적한다
 - 시험 이름에서 `req`·`REQ` 뒤에 영역 이름과 숫자가 바로 오는 약어(예: `req_cmd_3`)는 REQ ID와 구분할 수 없어 형식 오류로 걸린다. 이런 약어는 쓰지 않는다(`request_cmd_3`처럼 풀어 쓴다)
 - TC와 테스트는 1:1로 대응하며, 대응 관계는 3장 표의 "테스트" 열이 정본이다.
 
@@ -301,7 +303,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 ### 3.14 REQ-CMD-002 명령 송신·재전송·결과 (GW)
 
-U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`ugvc_sim.uplink`)과 WebSocket HMI(`tests/integration/test_cmd_relay.py`).
+U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`python -m ugvc_sim`)과 WebSocket HMI(`tests/integration/test_cmd_relay.py`).
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
@@ -315,7 +317,7 @@ U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`ugvc_sim.uplink`)과 WebSoc
 | TC-CMD-002-08 | I | SIM 정상 / 첫 COMMAND 유실(`--drop-first 1`) / SIM 없음 / WAYPOINT | ACCEPTED attempts 1(1s 안, stdout과 WS가 같은 결과) / 0.95~1.6s에 같은 cmd_id로 재전송해 attempts 2 / 3.95~4.6s에 TIMEOUT attempts 4 / WAYPOINT가 SIM에 cmd_type 3으로 한 번 실행 | `test_REQ_CMD_002_command_accepted_on_first_send`, `test_REQ_CMD_002_lost_first_send_is_retransmitted_after_1s`, `test_REQ_CMD_002_no_ack_times_out_after_three_retransmits`, `test_REQ_CMD_002_waypoint_is_relayed` |
 | TC-CMD-002-09 | I | HMI가 범위 밖 WAYPOINT(위도 91) 송신 | SIM에 보내지 않고 0.5s 안에 cmd_result REJECTED_INVALID(cmd_id null, attempts 0) | `test_REQ_CMD_002_invalid_hmi_command_is_rejected_without_sending` |
 | TC-CMD-002-10 | U | 판정이 40ms 늦은 재전송 뒤 이어지는 송신 | 다음 송신은 예정 시각(2000·3000ms)에, TIMEOUT은 4000ms에 (늦음이 쌓이지 않음) | `CommandTrackerTest.REQ_CMD_002_resend_schedule_does_not_drift_with_late_polls` |
-| TC-CMD-002-12 | I | 텔레메트리 10Hz 송신 중 SIM 수신부만 다시 시작한 뒤 명령 | ACCEPTED attempts 1 (ACK가 order로 버려지지 않음) | `test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted` |
+| TC-CMD-002-12 | I | 시험의 송신기가 차량 포트로 TELEMETRY를 10Hz로 계속 보내 차량 링크를 CONNECTED로 둔 채 SIM만 다시 시작한 뒤 명령 | ACCEPTED attempts 1 (새 SIM의 ACK seq 0이 order로 버려지지 않음), 재시작 뒤 차량 link_status는 모두 CONNECTED(LOST 뒤 기준값 재설정으로 통과한 것이 아님) | `test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted` |
 | TC-CMD-002-13 | I | (a) 대기 중인 req_id로 형식이 틀린 명령 (b) HMI A의 명령이 대기 중일 때 HMI B가 같은 req_id로 다른 명령 | (a) 그 req_id의 결과는 ACCEPTED 하나뿐, 무시 기록 (b) B의 명령은 SIM에 가지 않고 무시 기록, A·B 모두 같은 결과 하나를 받음(모든 HMI 전달) | `test_REQ_CMD_002_invalid_command_with_pending_req_id_does_not_give_a_second_result`, `test_REQ_CMD_002_same_req_id_from_another_hmi_is_not_sent_and_both_hmis_get_the_result` |
 | TC-CMD-002-14 | I | 결과를 받은 HMI가 다시 접속해 같은 req_id·같은 WAYPOINT를 다시 보냄 | 0.5s 안에 같은 cmd_result(같은 cmd_id)를 다시 받고, SIM 실행은 한 번 | `test_REQ_CMD_002_hmi_resending_after_missing_the_result_does_not_execute_twice` |
 | TC-CMD-002-15 | U | 형식 오류로 거절한 req_id로 올바른 명령, 같은 형식 오류 다시, 60초 뒤 | 올바른 명령은 보내지 않고 무시 기록, 같은 형식 오류에는 같은 거절을 다시(repeated), 60초 뒤에는 새 명령으로 보냄 | `CommandTrackerTest.REQ_CMD_002_rejected_req_id_is_remembered_so_it_has_one_result` |
@@ -363,9 +365,10 @@ U 수준은 `Simulator`에 시각을 직접 넣는다(2.2). 판정 경계는 "3.
 | TC-SAFE-001-01 | U | 시작 후 HEARTBEAT 없음, 2.999s와 3.000s | 2.999s는 MISSION·플래그 없음, 3.000s에 STOPPED, speed 0, FAILSAFE_ACTIVE (시작 시각부터 잼) | `test_REQ_SAFE_001_no_heartbeat_since_start_failsafe_at_3s` |
 | TC-SAFE-001-02 | U | 마지막 HEARTBEAT 뒤 +2.999s, +3.000s | +3.000s에 Failsafe (마지막 HEARTBEAT부터 잼) | `test_REQ_SAFE_001_failsafe_3s_after_last_heartbeat` |
 | TC-SAFE-001-03 | U | 두절 직전 mode가 MISSION(경로 있음·없음), RTB, STOPPED, STANDBY | 모두 STOPPED + FAILSAFE_ACTIVE | `test_REQ_SAFE_001_failsafe_from_any_mode` |
-| TC-SAFE-001-04 | U | Failsafe 중 주기 진행, 두절이 이어짐 | 위치 고정, 전이는 두절 한 번에 한 번 | `test_REQ_SAFE_001_vehicle_does_not_move_in_failsafe`, `test_REQ_SAFE_001_failsafe_is_a_single_transition_per_outage` |
+| TC-SAFE-001-04 | U | Failsafe 중 주기 진행, 두절이 이어짐 | 위치 고정, FAILSAFE 플래그 변화는 3.0s에 한 번뿐 | `test_REQ_SAFE_001_vehicle_does_not_move_in_failsafe`, `test_REQ_SAFE_001_failsafe_is_a_single_transition_per_outage` |
 | TC-SAFE-001-05 | U | 명령으로 재개한 뒤 두 번째 두절 | 다시 Failsafe | `test_REQ_SAFE_001_failsafe_again_after_second_outage` |
 | TC-SAFE-001-06 | U | 실제 SIM 본체(`app.run`)(실제 UDP·시계), HEARTBEAT 없음 | 첫 Failsafe TELEMETRY가 시작 후 3.0~3.35s, 그 전은 MISSION·플래그 없음, 뒤로는 위치 고정 | `test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe` |
+| TC-SAFE-001-07 | U | SIM 본체(`app.run`)의 송신이 모두 OSError(GW 경로 없음, 가짜 소켓·가짜 시계) | SIM이 죽지 않고 40개 주기를 모두 돌며, 시작 3.0s 뒤 Failsafe 전이 1회. 송신 오류 기록은 실패 시작에 한 줄 | `test_REQ_SAFE_001_send_failure_does_not_kill_sim_and_failsafe_still_engages` |
 
 ### 3.19 REQ-SAFE-002 링크 복구 뒤 운용자 명령 없이 재개 금지 (SIM)
 
@@ -377,9 +380,10 @@ U 수준은 `Simulator`에 시각을 직접 넣는다(2.2). 판정 경계는 "3.
 | TC-SAFE-002-02 | U | 복구 뒤 RTB, WAYPOINT | ACCEPTED, 플래그 해제, RTB·MISSION으로 주행 | `test_REQ_SAFE_002_motion_command_after_recovery_resumes_and_clears_flag` |
 | TC-SAFE-002-03 | U | 복구 뒤 STOP | ACCEPTED, 플래그 해제, STOPPED 유지 | `test_REQ_SAFE_002_stop_after_recovery_clears_flag_stays_stopped` |
 | TC-SAFE-002-04 | U | 두절 중 RTB, WAYPOINT, STOP, 범위 밖 명령 | RTB·WAYPOINT는 REJECTED_STATE·실행 안 함·위치 고정, STOP은 ACCEPTED·플래그 유지, 범위 밖은 REJECTED_INVALID | `test_REQ_SAFE_002_motion_command_during_outage_rejected_state`, `test_REQ_SAFE_002_invalid_command_during_outage_is_rejected_invalid` |
-| TC-SAFE-002-05 | U | 두절 중 REJECTED_STATE를 받은 cmd_id를 복구 뒤 다시, 이어서 새 cmd_id | 같은 cmd_id는 REJECTED_STATE 그대로·정지 유지, 새 cmd_id는 실행 | `test_REQ_SAFE_002_rejected_state_cmd_id_retransmitted_after_recovery_keeps_result` |
-| TC-SAFE-002-06 | U | 실제 SIM 본체(`app.run`): Failsafe 뒤 HEARTBEAT 1.5s, 이어서 COMMAND RTB | HEARTBEAT 동안 정지·플래그 유지, RTB에 ACK ACCEPTED, TELEMETRY가 RTB·플래그 없음 | `test_REQ_SAFE_002_process_resumes_only_on_command` |
+| TC-SAFE-002-05 | U | 두절 중 REJECTED_STATE를 받은 cmd_id를 복구 뒤 다시, 이어서 새 cmd_id | 같은 cmd_id는 REJECTED_STATE 그대로·정지 유지, 새 cmd_id는 ACCEPTED·mode RTB·플래그 해제 | `test_REQ_SAFE_002_rejected_state_cmd_id_retransmitted_after_recovery_keeps_result` |
+| TC-SAFE-002-06 | U | 실제 SIM 본체(`app.run`): Failsafe 뒤 HEARTBEAT 1.5s, 이어서 COMMAND RTB | HEARTBEAT 구간의 TELEMETRY 전부 정지·플래그·위치 고정, RTB에 ACK ACCEPTED, TELEMETRY가 RTB·플래그 없음 | `test_REQ_SAFE_002_process_resumes_only_on_command` |
 | TC-SAFE-002-07 | I | 실제 GW·SIM·HMI(WebSocket): GW를 3.8s 내렸다가 같은 포트로 재시작, 이어서 HMI RTB 명령 | 재시작 뒤 1.6s 동안 IF-03 telemetry가 모두 STOPPED·speed 0·FAILSAFE_ACTIVE, RTB에 cmd_result ACCEPTED, telemetry가 RTB·플래그 없음 | `test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command` |
+| TC-SAFE-002-08 | U | Failsafe 뒤 복구 HEARTBEAT 한 번, 그 뒤 +2.999s와 +3.000s에 RTB | +2.999s는 ACCEPTED·플래그 해제·RTB, +3.000s는 REJECTED_STATE·정지 유지 | `test_REQ_SAFE_002_release_boundary_is_3s_after_recovery_heartbeat` |
 
 ---
 
@@ -424,7 +428,7 @@ NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew -5000
 ```
 
 3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 6단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수로 확인한다. 페이지 오류가 하나라도 나면 실패한다.
-4. 합격: 세 번 모두 마지막 줄이 `PASS`이고, 실행 뒤 `ugvc_gateway`·`vite`·`telemetry_sender` 프로세스가 남지 않는다. 화면 캡처는 STR(05)에 붙인다.
+4. 합격: 세 번 모두 마지막 줄이 `PASS`이고, 실행 뒤 `ugvc_gateway`·`vite`·`ugvc_sim`(`python3 -m ugvc_sim`) 프로세스가 남지 않는다. 화면 캡처는 STR(05)에 붙인다.
 
 ---
 

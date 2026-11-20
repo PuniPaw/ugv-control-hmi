@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.4 (초안) |
+| 버전 | v0.4.1 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.17, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.18, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -29,6 +29,7 @@
 | v0.3.2 | 2026-11-14 | 6.1 PR #24 2차 리뷰 반영: `reject`가 거절한 req_id를 `recent_`에 남김(`request` 없음), 판정이 1.0s 이상 늦으면 `due = now + 1.0s`, ACK는 유실 계산에서도 제외. 형식 오류 응답 주체(`app` → `CommandTracker`)와 유효 ACK 검증 범위(①~⑧) 문구 정정 |
 | v0.3.3 | 2026-11-14 | 6.1 PR #24 3차 리뷰 반영: 거절 기록을 `rejected_`로 분리(상한 따로), 늦은 판정 규칙 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`, `kJudgePeriod`를 tracker 헤더로. 관련 문서 버전 갱신 |
 | v0.4 | 2026-11-20 | 6.2 SIM을 한 프로세스로(`python -m ugvc_sim`, 단일 스레드): 순수 `Simulator`(차량 상태 + HEARTBEAT 감시 + 명령 처리, 시각 주입), 명령을 주행 모사에 반영(`apply_command`), Failsafe 진입·해제(REQ-SAFE-001·002, ICD v0.15 6.5). `CommandResponder`·`telemetry_sender`는 `Simulator`·`app`으로 대체. 2장 그림, 7장 표 |
+| v0.4.1 | 2026-11-20 | 6.2 PR #36 1차 리뷰 반영: `app`은 송신 OSError를 기록만 하고 계속 돎(GW 주소는 시작 때 한 번 해석), 한 주기 넘게 늦으면 몰아 보내지 않음, 두절 중 STOP은 `execute = None`, 경과 시간은 처리 시각 기준이라는 한계, 시작 상태(명령 없이 MISSION 주행)는 시연용 선택. 6장 시퀀스의 SIM 처리 이름 정정 |
 
 ---
 
@@ -168,7 +169,7 @@ sequenceDiagram
     GW->>SIM: COMMAND(cmd_id) 1회차
     Note over GW: 1.0s 안에 ACK 없음 (poll)
     GW->>SIM: COMMAND(같은 cmd_id) 2회차
-    SIM->>SIM: CommandResponder: 처음 받은 cmd_id면 실행, 이미 받았으면 이전 결과만
+    SIM->>SIM: Simulator.on_command: 처음 받은 cmd_id면 판정·실행, 이미 받았으면 이전 결과만
     SIM->>GW: ACK(cmd_id, result) → GW 차량 포트
     GW->>HMI: cmd_result {req_id, cmd_id, result, attempts: 2}
     Note over GW: 4회 송신 후 1.0s까지 ACK가 없으면 result TIMEOUT
@@ -217,13 +218,15 @@ stateDiagram-v2
 - **`parse_uplink`(`uplink.py`)**는 COMMAND를 세 가지로 나눈다: cmd_id 0은 폐기(ACK 없음), 필드가 6.3 범위 밖이면 `InvalidCommand`, 그 밖은 `ReceivedCommand`. 별도 형으로 나눠 "범위 밖인데 실행"이 표현되지 않게 했다.
 - **`Simulator`(`simulator.py`, 순수 로직)**는 차량 상태(`VehicleState`), 출발 지점, `HeartbeatWatch`, 최근 1024개 cmd_id의 첫 결과(`OrderedDict`)를 가진다. 소켓·시계가 없고 모든 메서드가 시각 `now`(단조 시계 초)를 인자로 받는다. 그래서 시험은 3.0s 경계를 가짜 시각으로 바로 확인한다.
   - `on_heartbeat(now)`, `on_command(msg, now)`, `advance(now, dt)`는 모두 **맨 앞에서 Failsafe 조건을 먼저 평가**한다(`HeartbeatWatch.expired`: 마지막 HEARTBEAT, 없으면 시작 후 3.0s 이상). 그래서 사건이 어떤 순서로 와도 결과가 같다. 예를 들어 3초 넘게 끊겼다가 처음 온 HEARTBEAT도 감시를 되살리기 전에 먼저 정지를 반영한다.
-  - 명령 처리 순서: 이미 처리한 cmd_id면 첫 결과로 ACK만 다시(REQ-CMD-003, REJECTED_STATE도 같음) → `InvalidCommand`면 REJECTED_INVALID(두절 중이어도 필드 오류가 먼저) → 두절 중이면 STOP은 ACCEPTED(상태 그대로), RTB·WAYPOINT는 REJECTED_STATE → 그 밖은 `apply_command` 후 ACCEPTED. 결과는 `CommandOutcome{ack, execute}`이고 `execute`는 수락해 처리한 명령이다(중복·거절이면 `None`).
+  - 명령 처리 순서: 이미 처리한 cmd_id면 첫 결과로 ACK만 다시(REQ-CMD-003, REJECTED_STATE도 같음) → `InvalidCommand`면 REJECTED_INVALID(두절 중이어도 필드 오류가 먼저) → 두절 중이면 STOP은 ACCEPTED(상태 그대로), RTB·WAYPOINT는 REJECTED_STATE → 그 밖은 `apply_command` 후 ACCEPTED. 결과는 `CommandOutcome{ack, execute}`이고 `execute`는 이번에 차량 상태에 적용한 명령이다(중복·거절, 상태를 바꾸지 않는 두절 중 STOP이면 `None`). stdout `executed`도 같은 뜻이라 두절 중 STOP이 Failsafe를 푼 것처럼 보이지 않는다.
+  - **한계: 경과 시간은 도착 시각이 아니라 처리 시각으로 잰다.** SIM 프로세스 자체가 2초 넘게 멈췄다 재개하면 HEARTBEAT가 소켓에 제때 도착했어도 Failsafe에 들어간다. 제어기가 멈춘 것이므로 안전한 쪽 판정으로 두고, 도착 시각(`SO_TIMESTAMP`)은 쓰지 않는다.
 - **`vehicle.py`(순수 함수)**: `VehicleState`는 불변이고 남은 경로점 `route`를 가진다.
   - `enter_failsafe`: 어떤 mode에서든 STOPPED, speed 0, FAILSAFE_ACTIVE, 경로 비움. 이미 켜져 있으면 그대로라 두절 한 번에 전이는 한 번이다.
   - `apply_command`: FAILSAFE_ACTIVE를 지우고 STOP → STOPPED(경로 비움), RTB → 출발 지점으로(경로 비움), WAYPOINT → 경로 끝에 더하고 MISSION. 링크가 살아 있을 때만 불린다.
+  - **시작 상태는 시연용 선택이다.** SIM은 명령 없이 MISSION(경로 없이 방위 87.25° 직진, 4.5 m/s)으로 시작한다(시연 점검이 진행 방향·궤적을 이것으로 확인). HEARTBEAT가 한 번도 오지 않으면 3.0s 동안 약 13 m 간 뒤 Failsafe로 멈춘다. 기동 시 운용자 명령 없이 출발해도 되는지는 규격에 없으며, STANDBY로 시작해 명령으로 출발하게 할지는 이슈로 남긴다.
   - `step`: MISSION은 첫 경로점 방향으로 4.5 m/s, 도착하면 그 점에 붙고 다음 점으로, 마지막이면 STANDBY. 경로가 없는 MISSION(시작 상태)은 고정 방위로 직진하는 시연 구간이다. RTB는 출발 지점 도착 시 STANDBY. STOPPED·STANDBY는 움직이지 않고 배터리만 닳는다.
   - STOP·RTB·Failsafe가 경로를 비우는 것은 SIM의 선택이다(ICD에 없음). 정지 뒤 받은 WAYPOINT가 예전 경로 뒤에 붙어 운용자가 모르는 곳으로 가지 않게 한다.
-- **`app.run`**: TELEMETRY와 ACK는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 각자 seq 스트림(0부터)을 쓴다. 첫 TELEMETRY는 시작 상태 그대로다. stdout에는 사건마다 JSON 한 줄(`command`, `heartbeat`, `reject`, `drop`)과 전이(`failsafe`, `mode`)를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
+- **`app.run`**: TELEMETRY와 ACK는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 각자 seq 스트림(0부터)을 쓴다. 첫 TELEMETRY는 시작 상태 그대로이고, 그 뒤 상태는 실제 경과 시간만큼 진행한다. 한 주기 넘게 늦으면 밀린 TELEMETRY를 몰아 보내지 않고 지금부터 다시 잰다. **송신 실패(OSError: 경로 없음 등)는 기록만 하고 계속 돈다.** 두절 상황에서 SIM이 죽으면 Failsafe가 사라지기 때문이다(실패 시작·회복 때만 `send_error`·`send_ok` 한 줄). GW 주소는 시작 때 한 번 해석해 실행 중 이름 해석 실패가 없다. stdout에는 사건마다 JSON 한 줄(`command`, `heartbeat`, `reject`, `drop`)과 전이(`failsafe`, `mode`)를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
 
 ## 7. 시험 용이성을 위한 설계
 
