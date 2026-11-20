@@ -1,4 +1,4 @@
-"""check_stp_tests.py 자체 시험: 형식이 틀린 REQ ID 판정, STP 표 해석.
+"""check_stp_tests.py 자체 시험: 형식이 틀린 REQ ID 판정, SRS에 없는 REQ ID 판정, STP 표 해석.
 
 실행: python3 -m pytest -q tools/tests
 (제품 시험이 아니므로 STP·RTM 대상이 아니고, REQ ID를 달지 않는다)
@@ -43,10 +43,24 @@ def test_empty_area_list_is_a_tool_error():
         c.malformed_req("REQ_HMI_006", ())
 
 
-def test_req_id_reads_only_exact_ids():
-    assert c.req_id("REQ_HMI_006 x") == "REQ-HMI-006"
-    assert c.req_id("REQ_HMI_0067 x") is None
-    assert c.req_id("no id") is None
+def test_req_ids_reads_only_exact_ids():
+    assert c.req_ids("REQ_HMI_006 x") == ["REQ-HMI-006"]
+    assert c.req_ids("REQ_HMI_0067 x") == []
+    assert c.req_ids("no id") == []
+    assert c.req_ids("test_REQ_CMD_002_and_REQ_COM_006") == ["REQ-CMD-002", "REQ-COM-006"]
+
+
+@pytest.mark.parametrize("name, unknown", [
+    ("REQ_HMI_006 ok", []),
+    ("REQ_HMI_999 typo", ["REQ-HMI-999"]),
+    ("test_REQ_HMI_006_and_REQ_HMI_999", ["REQ-HMI-999"]),  # 이슈 #22: 두 번째 ID도 대조
+    ("REQ_HMI_999 then REQ_HMI_006", ["REQ-HMI-999"]),
+    ("REQ_CMD_002 and REQ_COM_006 both known", []),
+    ("REQ_HMI_998 and REQ_HMI_999", ["REQ-HMI-998", "REQ-HMI-999"]),
+    ("plain test without id", []),
+])
+def test_every_req_id_in_a_name_is_checked_against_srs(name, unknown):
+    assert c.unknown_req_ids(name, {"REQ-HMI-006", "REQ-CMD-002", "REQ-COM-006"}) == unknown
 
 
 STP_SAMPLE = """

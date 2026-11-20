@@ -9,7 +9,8 @@
 
 RTM(06)을 grep으로 만들 때 이름이 어긋나면 그 TC가 "시험 없음"으로 보이므로, 어긋나면 실패한다.
 
-반대 방향도 검사한다: 코드의 시험 이름에 붙은 REQ ID가 SRS(docs/01_SRS.md)에 없으면 실패한다.
+반대 방향도 검사한다: 코드의 시험 이름에 붙은 REQ ID 중 하나라도 SRS(docs/01_SRS.md)에 없으면 실패한다
+(이름에 ID가 여러 개면 전부 대조한다).
 RTM은 이름의 REQ ID로 요구사항을 잇기 때문에, 없는 ID(오타)는 추적표에서 조용히 사라진다.
 (ID가 있지만 시험 내용과 맞지 않는 경우는 기계로 못 잡는다. 리뷰에서 본다.)
 
@@ -202,9 +203,13 @@ def malformed_req(test_name: str, areas: tuple[str, ...]) -> bool:
     return any(not REQ_STRICT.match(test_name, m.start()) for m in req_candidates(areas).finditer(test_name))
 
 
-def req_id(test_name: str) -> str | None:
-    m = REQ_STRICT.search(test_name)
-    return f"REQ-{m.group(1)}-{m.group(2)}" if m else None
+def req_ids(test_name: str) -> list[str]:
+    """시험 이름의 REQ ID 전부. 시험 하나가 요구사항 여러 개의 증거일 수 있고 RTM도 이름의 ID를 모두 모은다 (STP 2.7)"""
+    return [f"REQ-{m.group(1)}-{m.group(2)}" for m in REQ_STRICT.finditer(test_name)]
+
+
+def unknown_req_ids(test_name: str, known: set[str]) -> list[str]:
+    return [rid for rid in req_ids(test_name) if rid not in known]
 
 
 def main() -> int:
@@ -233,11 +238,11 @@ def main() -> int:
         return 2
     for name in malformed:
         print(f"형식이 틀린 REQ ID를 단 테스트: {name}")
-    unknown = sorted(n for n in code if (rid := req_id(n)) and rid not in known)
-    for name in unknown:
-        print(f"SRS에 없는 REQ ID를 단 테스트: {name}")
+    unknown = {n: ids for n in sorted(code) if (ids := unknown_req_ids(n, known))}
+    for name, ids in unknown.items():
+        print(f"SRS에 없는 REQ ID를 단 테스트: {name} ({', '.join(ids)})")
     print(f"STP 테스트 이름 {len(cpp) + len(py) + len(ts)}개 확인, 불일치 {len(missing)}개. "
-          f"코드의 REQ 시험 {sum(1 for n in code if req_id(n))}개 중 SRS에 없는 ID {len(unknown)}개")
+          f"코드의 REQ 시험 {sum(1 for n in code if req_ids(n))}개 중 SRS에 없는 ID를 단 시험 {len(unknown)}개")
     return 1 if missing or unknown or unparsed or malformed else 0
 
 
