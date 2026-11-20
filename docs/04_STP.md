@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.16 (초안) |
+| 버전 | v0.17 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-SDD-001 v0.3.3, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-SDD-001 v0.4, ADR-002 |
 
 ## 개정 이력
 
@@ -28,6 +28,7 @@
 | v0.14 | 2026-11-14 | PR #24 1차 리뷰 반영: TC-CMD-002-05를 req_id 규칙(대기 중·최근 결과·형식 오류)으로 바꾸고 TC-CMD-002-10~13(재전송 예정 시각, ACK 스트림 ⑨ 제외, SIM 수신부 재시작, 같은 req_id 다른 HMI·결과 전체 전달·형식 오류), TC-CMD-003-06·07(GW 재시작 cmd_id, 결과를 놓친 HMI 재송신) 추가 |
 | v0.15 | 2026-11-14 | PR #24 2차 리뷰 반영: TC-COM-005-07을 ACK 스트림 유실 제외로 바꿈(ACK가 유실 계산에서 빠져 기존 "스트림 독립" 시험이 아무것도 증명하지 못하게 됨), TC-COM-006-06(ACK 스트림 ⑨ 제외) 추가, TC-CMD-002-11은 같은 시험을 가리킴. TC-CMD-003-07을 TC-CMD-002-14로 옮김(req_id 규칙은 GW 동작이라 SRS v0.7 REQ-CMD-002). TC-CMD-002-15~17(거절한 req_id 기억, 판정이 1s 넘게 늦은 재전송, 고친 명령을 거절한 req_id로) 추가 |
 | v0.16 | 2026-11-14 | PR #24 3차 리뷰 반영: TC-CMD-002-11 삭제(TC-COM-006-06과 같은 시험이라 REQ-CMD-002 추적에 REQ-COM-006 시험이 끼었음), TC-CMD-002-16 기대 시각을 새 규칙(실제 송신 + 0.95s)으로, TC-CMD-002-18(0.9s 늦은 판정)·19(거절 기록과 송신 기록의 상한 분리) 추가. 관련 문서 버전 갱신 |
+| v0.17 | 2026-11-20 | HMI 명령 패널: TC-CMD-001-01~10(운용자 확인 절차, command 텍스트·송신, cmd_result 표시, 연결이 끝난 뒤 자동 재송신 금지와 재시도 새 req_id(이슈 #27), 경로점 입력), TC-CMD-004-01·02(차량 링크 LOST·GW 연결 없음이면 비활성과 사유), TC-HMI-007-06(cmd_result 수신 검증) 추가. 시연 점검에 명령 단계(2c·2d)와 3·4단계의 명령 차단 확인 추가 |
 
 ---
 
@@ -42,7 +43,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 |---|---|---|
 | COM (REQ-COM-001~007) | ✅ | |
 | QUAL (REQ-QUAL-001) | ✅ | REQ-QUAL-002 (고도화) |
-| CMD (REQ-CMD-002·003·005·006) | v0.13 | REQ-CMD-001·004(HMI 명령 패널)는 HMI 명령 작업 시 |
+| CMD (REQ-CMD-001~006) | v0.13, 001·004는 v0.17 | |
 | SAFE | | 12월 1–2주 (Failsafe 구현 시) |
 | HMI (REQ-HMI-001·002 뼈대, 006, 007) | v0.5~0.6 | 경로점(REQ-HMI-001), 지연 시간(REQ-HMI-002)은 해당 기능 구현 시 |
 | HMI-003~005, AI, LOG, PERF | | 해당 기능 구현 시 |
@@ -296,6 +297,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | TC-HMI-007-03 | U | 깨진 JSON, 모르는 type, 빠진 필드, 정의 밖 열거값(mode, flags, state, source, class), ICD 6장 범위 밖 값(배터리 101·50.5, 위도 91, 방향 −1·360, 속도 30.01·1e308, seq·frame_id 2^32, img_w 0·4097, 객체 33개, w 0, x = img_w, x+w > img_w, y+h > img_h, conf 1.01, 유실률 1.5), errors 키 누락·추가·음수. `capture_ts` 1e300·2^70, `last_rx_ts`가 null인데 state CONNECTED. 경계 안 값(방향 359.99, 속도 30, seq 2^32−1, 상자가 이미지 끝에 닿음, 객체 32개, `capture_ts` 2^53+2·2^64, `last_rx_ts` null인 LOST) | 범위 밖은 모두 null, 경계 안은 받아들임 | `if03.test.ts > REQ_HMI_007 rejects malformed JSON, unknown types and missing fields`, `if03.test.ts > REQ_HMI_007 rejects values outside the ICD ranges and enums` |
 | TC-HMI-007-04 | U | 텍스트가 아닌 프레임 | 텍스트만 전달 | `gwConnection.test.ts > REQ_HMI_007 passes text frames through and ignores binary` |
 | TC-HMI-007-05 | U | 받은 텍스트: 깨진 JSON, 다른 필드는 다 갖추고 위도만 91인 telemetry, 정상 stats. HmiController에 형식 오류 메시지 2개 | 폐기 수 2, 정상 메시지는 반영되고 폐기 수는 그대로. 화면 판정(`present().discarded`, 상태 패널 `data-testid="discarded"`가 그리는 값)도 2이고 범위 밖 위도는 반영되지 않음 | `hmiState.test.ts > REQ_HMI_007 text that is not IF-03 is discarded and counted`, `hmiController.test.ts > REQ_HMI_007 discarded IF-03 messages are counted for display in the status panel` |
+| TC-HMI-007-06 | U | cmd_result: 정의 밖 필드, 형식 오류 거절(cmd_id null·attempts 0·REJECTED_INVALID), 결과 4종, cmd_id 2^32−1, req_id 63바이트. 틀린 것: req_id 빈 값·66바이트·숫자, 정의 밖 result, cmd_id 0·2^32·1.5·문자열, attempts 0·5, cmd_id null인데 TIMEOUT 또는 attempts 1, result 없음 | ICD 7.1 필드만 남겨 받아들이고 틀린 것은 모두 null | `if03.test.ts > REQ_HMI_007 cmd_result is accepted only in the ICD 7.1 shape` |
 
 ### 3.14 REQ-CMD-002 명령 송신·재전송·결과 (GW)
 
@@ -352,6 +354,30 @@ PostgreSQL 저장(REQ-LOG)은 로그 작업 때 추가한다. 지금은 GW 진�
 | TC-CMD-006-03 | U | 좌표 경계(±90°, ±180°), 정상 명령 | 수락·실행 | `test_REQ_CMD_006_waypoint_bounds_accepted`, `test_REQ_CMD_006_valid_command_accepted_and_executed` |
 | TC-CMD-006-04 | U | 실제 UDP: 범위 밖 명령, cmd_id 0 | REJECTED_INVALID ACK / ACK 없음 | `test_REQ_CMD_006_listen_rejects_invalid_over_udp`, `test_REQ_CMD_006_listen_cmd_id_0_gets_no_ack` |
 
+### 3.18 REQ-CMD-001 운용자 확인 뒤에만 명령 송신 (HMI)
+
+U는 vitest(가짜 소켓·타이머·시계, `HmiController`와 순수 함수 `state/commands.ts`), D는 시연 점검(실제 GW·SIM 수신부 `ugvc_sim.uplink`·HMI). 실제 송신 여부는 화면이 아니라 GW 진단 기록의 `cmd sent` 줄로 판정한다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-CMD-001-01 | U | STOP·RTB·WAYPOINT command 텍스트 | ICD 7.2 봉투(`type` command, `data`에 req_id·cmd_type), 좌표는 WAYPOINT만 | `commands.test.ts > REQ_CMD_001 command text follows ICD 7.2 with coordinates only for WAYPOINT` |
+| TC-CMD-001-02 | U | 세 버튼 각각 누르고 취소, 확인할 명령 없이 확인, WAYPOINT 확인 두 번 | 버튼·취소만으로는 송신 0, 확인 단계에 명령 문구(좌표 7자리), 확인하면 한 번만 송신하고 확인 단계가 끝남, 기록은 PENDING | `hmiController.test.ts > REQ_CMD_001 a command button only opens confirmation, cancel sends nothing, confirm sends once` |
+| TC-CMD-001-03 | U | 확인할 명령 없이 송신 기록, 취소, 확인 후 기록, 기록 23개 | draft 없으면 기록 없음, 기록은 최근 것부터 20개까지 | `commands.test.ts > REQ_CMD_001 a sent record exists only for a confirmed draft` |
+| TC-CMD-001-04 | U | 명령 셋 송신, 결과 ACCEPTED(2회)·TIMEOUT(4회)·REJECTED_INVALID(cmd_id null), 다른 HMI의 req_id 결과, 같은 req_id 결과 재전달 | req_id가 명령마다 다름, 결과 문구·등급·다시 보내기 가능 여부 표시, 다른 HMI의 결과와 재전달은 바꾸지 않음(폐기도 아님) | `hmiController.test.ts > REQ_CMD_001 each confirmed command has its own req_id and shows its cmd_result`, `commands.test.ts > REQ_CMD_001 results match our req_id once, and a connection end leaves pending commands unconfirmed` |
+| TC-CMD-001-05 | U | 결과 전에 (a) IF-03 끊김(close 1006) 뒤 재접속 (b) 기준선 재설정 재접속. 새 연결에서 10s | 처음 한 번 말고는 송신 없음(새 소켓으로 보낸 것 0), 기록은 "결과 미확인 · 결과 전에 GW 연결이 끊김 (자동으로 다시 보내지 않음)"이고 다시 보내기 가능. 새 연결에서 결과가 오면 결과로 바뀜 | `hmiController.test.ts > REQ_CMD_001 a command whose result was not received is never resent automatically after the connection ends`, `commands.test.ts > REQ_CMD_001 results match our req_id once, and a connection end leaves pending commands unconfirmed` |
+| TC-CMD-001-06 | U | 결과 미확인 WAYPOINT 다시 보내기, 이어서 TIMEOUT 다시 보내기 | 다시 보내기는 확인 단계만 엶(송신 없음), 확인하면 새 req_id(r1 → r2 → r3)로 같은 내용 송신 | `hmiController.test.ts > REQ_CMD_001 retrying after a lost result or TIMEOUT asks for confirmation again and uses a new req_id` |
+| TC-CMD-001-07 | U | 경로점 입력: 공백 둘레, 경계(90, −180), `.5`·`+1.`. 틀린 것: 빈 값, `1e1`, `0x10`, NaN, Infinity, `1,5`, 90.0000001, 180.5, −91 | 십진수 도 단위로 ICD 7.2 범위 안만 WAYPOINT, 나머지는 오류 문구 | `commands.test.ts > REQ_CMD_001 waypoint input accepts decimal degrees within ICD 7.2 ranges only` |
+| TC-CMD-001-08 | D | SIM 송신·수신부 가동 중 정지 버튼 → 취소, 정지 → 보내기, 경로점(36.5, 127.25) → 보내기 | 취소 뒤 1.5s 동안 GW `cmd sent` 0, 보내기마다 결과 ACCEPTED "수락 (송신 1회)", GW가 보낸 req_id 순서가 화면 기록과 같음, 화면 캡처 | `hmi/e2e/smoke.mjs` 2c단계 |
+| TC-CMD-001-09 | D | SIM 수신부 중지(ACK 없음) 뒤 복귀 송신, 결과 전에 GW 중지 → 같은 포트로 재시작 → 다시 보내기 → 보내기 | 기록 "결과 미확인", 새 GW는 2s 동안 `cmd sent` 0, 다시 보내기는 확인 단계만 엶(송신 0), 보내면 새 GW가 이전과 다른 req_id 하나로 송신, 6s 안에 "응답 없음 (송신 4회)" | `hmi/e2e/smoke.mjs` 2d단계 |
+| TC-CMD-001-10 | U | 시작 전·접속 중·열린 뒤·소켓 예외·끊김 뒤·재접속 뒤·정지 뒤 `send()` | 열린 소켓에만 보내고 true, 그 밖은 false. 끊긴 뒤 새 소켓에 이전 텍스트를 다시 보내지 않음(대기열 없음) | `gwConnection.test.ts > REQ_CMD_001 send() writes only to an open socket and never queues or resends` |
+
+### 3.19 REQ-CMD-004 차량 링크 LOST면 명령 비활성 (HMI)
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-CMD-004-01 | U | 접속 전, 열린 직후(첫 link_status 전), CONNECTED, 확인 단계 중 LOST, 다시 CONNECTED, 확인 단계 중 IF-03 끊김 | 사유 "GW와 연결되지 않아 명령을 보낼 수 없음" / "차량 링크 LOST · 명령을 보낼 수 없음" / 없음. LOST·끊김 동안 확인해도 송신 0(확인 단계는 남음), CONNECTED로 돌아오면 확인으로 송신 | `hmiController.test.ts > REQ_CMD_004 vehicle link LOST or no GW connection disables commands with the reason and confirm sends nothing` |
+| TC-CMD-004-02 | D | SIM 중지(차량 LOST), GW 중지 | 정지·복귀·경로점 버튼 비활성, 사유 문구 "차량 링크 LOST · 명령을 보낼 수 없음" / "GW와 연결되지 않아 명령을 보낼 수 없음" | `hmi/e2e/smoke.mjs` 3·4단계 |
+
 ---
 
 ## 4. 통합 시험 상세 절차
@@ -377,7 +403,7 @@ PostgreSQL 저장(REQ-LOG)은 로그 작업 때 추가한다. 지금은 GW 진�
 - **합격 기준**: 30개 간격 모두 1000 ± 100ms, 모든 패킷이 검증 규칙 ①~⑤를 통과
 - **자동화**: `tests/integration/test_stp_com.py::test_REQ_COM_007_heartbeat_interval` (`-m slow`)
 
-### TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01, TC-HMI-006-11 시연 점검
+### TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01, TC-HMI-006-11, TC-CMD-001-08·09, TC-CMD-004-02 시연 점검
 
 1. `gateway/build/ugvc_gateway`를 빌드하고 `hmi/`에서 `npm install`을 한다.
 2. 저장소 루트에서 세 번 실행한다:
@@ -394,8 +420,8 @@ NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew 3000
 NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew -5000
 ```
 
-3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 6단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수로 확인한다. 페이지 오류가 하나라도 나면 실패한다.
-4. 합격: 세 번 모두 마지막 줄이 `PASS`이고, 실행 뒤 `ugvc_gateway`·`vite`·`telemetry_sender` 프로세스가 남지 않는다. 화면 캡처는 STR(05)에 붙인다.
+3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 8단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → 명령 확인·송신 → 결과 전 GW 재시작과 다시 보내기 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수, GW 진단 기록의 `cmd sent` 줄로 확인한다. 페이지 오류가 하나라도 나면 실패한다.
+4. 합격: 세 번 모두 마지막 줄이 `PASS`이고, 실행 뒤 `ugvc_gateway`·`vite`·`telemetry_sender`·`ugvc_sim.uplink` 프로세스가 남지 않는다. 화면 캡처는 STR(05)에 붙인다.
 
 ---
 
