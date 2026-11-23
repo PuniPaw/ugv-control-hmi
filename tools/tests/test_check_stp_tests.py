@@ -1,4 +1,4 @@
-"""check_stp_tests.py 자체 시험: 형식이 틀린 REQ ID 판정, STP 표 해석.
+"""check_stp_tests.py 자체 시험: 형식이 틀린 REQ ID 판정, SRS에 없는 REQ ID 판정, STP 표 해석.
 
 실행: python3 -m pytest -q tools/tests
 (제품 시험이 아니므로 STP·RTM 대상이 아니고, REQ ID를 달지 않는다)
@@ -43,10 +43,43 @@ def test_empty_area_list_is_a_tool_error():
         c.malformed_req("REQ_HMI_006", ())
 
 
-def test_req_id_reads_only_exact_ids():
-    assert c.req_id("REQ_HMI_006 x") == "REQ-HMI-006"
-    assert c.req_id("REQ_HMI_0067 x") is None
-    assert c.req_id("no id") is None
+def test_req_ids_reads_only_exact_ids():
+    assert c.req_ids("REQ_HMI_006 x") == ["REQ-HMI-006"]
+    assert c.req_ids("REQ_HMI_0067 x") == []
+    assert c.req_ids("no id") == []
+    assert c.req_ids("test_REQ_CMD_002_and_REQ_COM_006") == ["REQ-CMD-002", "REQ-COM-006"]
+    assert c.req_ids("test_REQ_HMI_006_then_again_REQ_HMI_006") == ["REQ-HMI-006"]  # 같은 ID는 한 번만
+
+
+@pytest.mark.parametrize("name", ["PREREQ_HMI_999", "test_PREREQ_HMI_999_step", "XREQ_CMD_002"])
+def test_req_ids_ignores_req_inside_a_longer_uppercase_word(name):
+    assert c.req_ids(name) == []  # req_candidates와 같은 기준: 앞이 대문자인 REQ는 ID가 아니다
+    assert not c.malformed_req(name, AREAS)
+
+
+@pytest.mark.parametrize("name, unknown", [
+    ("REQ_HMI_006 ok", []),
+    ("REQ_HMI_999 typo", ["REQ-HMI-999"]),
+    ("test_REQ_HMI_006_and_REQ_HMI_999", ["REQ-HMI-999"]),  # 이슈 #22: 두 번째 ID도 대조
+    ("REQ_HMI_999 then REQ_HMI_006", ["REQ-HMI-999"]),
+    ("REQ_CMD_002 and REQ_COM_006 both known", []),
+    ("REQ_HMI_998 and REQ_HMI_999", ["REQ-HMI-998", "REQ-HMI-999"]),
+    ("plain test without id", []),
+])
+def test_every_req_id_in_a_name_is_checked_against_srs(name, unknown):
+    assert c.unknown_req_ids(name, {"REQ-HMI-006", "REQ-CMD-002", "REQ-COM-006"}) == unknown
+
+
+
+@pytest.mark.parametrize("name, multiple", [
+    ("test_REQ_CMD_002_and_REQ_COM_006", True),  # 시험 하나는 요구사항 하나의 증거 (STP 2.7, TC와 1:1)
+    ("REQ_HMI_006 and REQ_HMI_007", True),
+    ("test_REQ_HMI_006_then_again_REQ_HMI_006", False),  # 같은 ID 반복은 하나로 본다
+    ("REQ_HMI_006 only", False),
+    ("plain test without id", False),
+])
+def test_names_with_more_than_one_distinct_req_id_are_flagged(name, multiple):
+    assert c.has_multiple_req_ids(name) is multiple
 
 
 STP_SAMPLE = """
