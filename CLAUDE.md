@@ -160,6 +160,10 @@ Single-context: 루트 `GLOSSARY.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 PR 독립 리뷰는 새 세션에서 `/review-pr <PR 번호>`로 실행한다 (`.claude/skills/review-pr/`). 위험도 등급별 리뷰 조합, 지적 구분(제품 동작 / 시험·도구·문서)과 병합 판정(3장 "병합 기준"), PR 코멘트 양식이 들어 있다.
 
+### 병렬 개발
+
+여러 브랜치를 별개의 세션에서 동시에 개발할 때는 `/parallel-dev [작업 목록]`으로 조율 세션을 시작한다. 규칙과 이유는 `docs/agents/parallel-dev.md`.
+
 ### 구현 세션 시작 (pstack poteto-mode)
 
 구현 작업(`feat/...`, `fix/...` 브랜치) 세션은 다른 일보다 먼저 Skill 도구로 `pstack:poteto-mode`를 실행한다. 첫 메시지가 `/pstack:poteto-mode`로 시작하면 이미 실행된 것이므로 다시 실행하지 않는다. `/review-pr` 리뷰 세션과 `docs/...` 문서 작업은 대상이 아니다. poteto-mode와 이 문서가 다르면 이 문서를 따른다 (답변 언어, 커밋 형식, 병합 기준).
