@@ -118,34 +118,86 @@ def test_REQ_SAFE_002_process_resumes_only_on_command(rig):
     assert not rig.last().status_flags & Flags.FAILSAFE_ACTIVE
 
 
-class _UnreachableSocket:
-    """GW 경로가 없는 소켓: sendto는 항상 OSError(ENETUNREACH), 수신은 아무것도 없음. 시계도 함께 진행한다."""
+class _FakeSocket:
+    """가짜 소켓 + 가짜 시계. 수신은 `inbox`의 (시각, 데이터그램)을 그 시각이 되면 내주고, 없으면 기다린 만큼 시간이 간다.
 
-    def __init__(self):
+    `unreachable`이면 sendto는 항상 OSError(ENETUNREACH)다. 보내려던 프레임은 실패해도 `frames`에 남겨 내용을 판정한다.
+    `stall`은 (시각, 초): 그 시각을 처음 지날 때 시계를 한 번 건너뛴다 (SIM 프로세스가 멈췄다 재개한 경우).
+    """
+
+    def __init__(self, unreachable=True, inbox=(), stall=None):
         self.now = 0.0
-        self.sends = 0
+        self.unreachable = unreachable
+        self.inbox = list(inbox)
+        self.stall = stall
+        self.frames: list[tuple[float, bytes]] = []
 
     def clock(self) -> float:
+        if self.stall and self.now >= self.stall[0]:
+            self.now += self.stall[1]
+            self.stall = None
         return self.now
 
     def settimeout(self, timeout: float) -> None:
         self._timeout = timeout
 
     def recvfrom(self, _size: int):
-        self.now += self._timeout  # 기다린 만큼 시간이 간다
+        if self.inbox and self.inbox[0][0] <= self.now + self._timeout:
+            at, data = self.inbox.pop(0)
+            self.now = max(self.now, at)
+            return data, ("127.0.0.1", 15001)
+        self.now += self._timeout
         raise socket.timeout
 
-    def sendto(self, _data: bytes, _addr) -> int:
-        self.sends += 1
-        raise OSError(101, "Network is unreachable")
+    def sendto(self, data: bytes, _addr) -> int:
+        self.frames.append((self.now, data))
+        if self.unreachable:
+            raise OSError(101, "Network is unreachable")
+        return len(data)
+
+    def telemetry(self) -> list[tuple[float, int, Telemetry]]:
+        out = []
+        for at, data in self.frames:
+            header, payload = check_frame(data, PAYLOAD_LEN)
+            if header.msg_type == MsgType.TELEMETRY:
+                out.append((at, header.seq, Telemetry.from_payload(payload)))
+        return out
+
+    def acks(self) -> list[Ack]:
+        out = []
+        for _, data in self.frames:
+            header, payload = check_frame(data, PAYLOAD_LEN)
+            if header.msg_type == MsgType.ACK:
+                out.append(Ack.from_payload(payload))
+        return out
 
 
 def test_REQ_SAFE_001_send_failure_does_not_kill_sim_and_failsafe_still_engages(capsys):
-    """GW로 가는 경로가 없어 송신이 모두 OSError여도 SIM은 죽지 않고, 시작 3.0초 뒤 Failsafe에 들어간다 (리뷰 #1)."""
-    sock = _UnreachableSocket()
-    sent = app.run(sock, ("192.0.2.1", 15001), count=40, clock=sock.clock)  # 4초 분량
-    assert sent == 40 and sock.sends == 40
+    """GW로 가는 경로가 없어 TELEMETRY·ACK 송신이 모두 OSError여도 SIM은 죽지 않고,
+    시작 3.0초에 Failsafe에 들어간다: TELEMETRY seq 29(2.9s)는 플래그 없음, seq 30(3.0s)부터 FAILSAFE_ACTIVE (리뷰 1차 #1, 2차 #1)."""
+    rtb = encode_frame(MsgType.COMMAND, 0, 0, Command(1, CmdType.STOP).to_payload())
+    sock = _FakeSocket(inbox=[(1.05, rtb)])  # 1.05s에 COMMAND: ACK 송신도 실패하는 경로
+    sent = app.run(sock, ("192.0.2.1", 15001), count=40, clock=sock.clock)  # 0.0~3.9s
+    assert sent == 40
+    tel = {seq: (at, t) for at, seq, t in sock.telemetry()}
+    assert sorted(tel) == list(range(40))
+    assert all(not t.status_flags & Flags.FAILSAFE_ACTIVE for seq, (_, t) in tel.items() if seq <= 29)
+    assert abs(tel[30][0] - 3.0) < 1e-9 and _failsafe(tel[30][1])
+    assert all(_failsafe(t) for seq, (_, t) in tel.items() if seq >= 30)
+    assert sock.acks() == [Ack(1, AckResult.ACCEPTED)]  # ACK도 보내려 했고 실패했지만 계속 돌았다
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [l["type"] for l in lines if l["type"].startswith("send_")] == ["send_error"]  # 실패 시작에 한 줄만
-    failsafe = [l for l in lines if l["type"] == "failsafe"]
-    assert failsafe == [{"type": "failsafe", "active": True, "mode": "STOPPED"}]
+    assert [l for l in lines if l["type"] == "failsafe"] == [{"type": "failsafe", "active": True, "mode": "STOPPED"}]
+
+
+def test_REQ_SAFE_001_stalled_loop_sends_one_failsafe_telemetry_without_burst():
+    """SIM 루프가 1.0s에 3.5초 멈췄다 재개하면 밀린 TELEMETRY를 몰아 보내지 않고 한 번 보내며, 그 TELEMETRY가 이미 Failsafe다."""
+    sock = _FakeSocket(unreachable=False, stall=(1.0, 3.5))
+    app.run(sock, ("127.0.0.1", 15001), count=20, clock=sock.clock)
+    tel = sock.telemetry()
+    times = [at for at, _, _ in tel]
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    resumed = gaps.index(max(gaps)) + 1
+    assert max(gaps) >= 3.5 and _failsafe(tel[resumed][2])  # 멈춘 뒤 첫 TELEMETRY가 이미 Failsafe
+    assert all(not _failsafe(x) for _, _, x in tel[:resumed])
+    assert all(g >= 0.1 - 1e-9 for g in gaps), gaps  # 밀린 주기를 같은 시각에 몰아 보내지 않는다

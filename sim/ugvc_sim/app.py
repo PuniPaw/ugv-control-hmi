@@ -10,7 +10,10 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import ipaddress
 import json
+import math
 import socket
 import sys
 import threading
@@ -27,6 +30,8 @@ from ugvc_sim.uplink import Heartbeat, parse_uplink
 
 GW_VEHICLE_PORT = 15001  # IF-01a. GW는 TELEMETRY·ACK를 이 포트로 받는다
 _MAX_WAIT_S = 0.1        # 소켓을 기다리는 최대 시간 (stop 확인 주기)
+_MAX_RATE_HZ = 1000.0
+_FATAL_SOCKET_ERRNOS = {errno.EBADF, errno.ENOTSOCK}  # 소켓 자체가 없다: 계속 돌아도 회복할 수 없음
 
 
 def _emit(obj: dict) -> None:
@@ -83,6 +88,7 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
     tel_seq = ack_seq = sent = 0
     due = last_tick = t0
     to_drop = drop_first
+    recv_failing = False
     try:
         while (stop is None or not stop.is_set()) and (count is None or sent < count):
             now = clock()
@@ -107,9 +113,14 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
                 data, _ = sock.recvfrom(2048)
             except socket.timeout:
                 continue
-            except OSError as e:  # 예: 연결하지 않은 UDP에 ICMP 오류가 올라온 경우. 수신 루프는 계속
-                _emit({"type": "recv_error", "errno": e.errno, "error": str(e)})
+            except OSError as e:  # 일시 오류(예: ICMP 오류)는 계속. 소켓 자체가 없으면 다시 던진다
+                if e.errno in _FATAL_SOCKET_ERRNOS:
+                    raise
+                if not recv_failing:
+                    recv_failing = True
+                    _emit({"type": "recv_error", "errno": e.errno, "error": str(e)})
                 continue
+            recv_failing = False
             now = clock()
             before = (int(sim.state.mode), sim.failsafe)
             msg = parse_uplink(data)
@@ -122,6 +133,9 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
                 to_drop -= 1
                 _emit({"type": "drop", "cmd_id": msg.command.cmd_id})
             else:
+                # 받기 전 구간은 이전 명령대로 진행해 두고 새 명령을 적용한다 (주기 중간 명령이 주기 시작부터 적용되지 않게)
+                sim.advance(now, now - last_tick)
+                last_tick = now
                 outcome = sim.on_command(msg, now)
                 sender.send(encode_frame(MsgType.ACK, ack_seq, _epoch_ms(), outcome.ack.to_payload()))
                 ack_seq = (ack_seq + 1) & 0xFFFFFFFF
@@ -133,10 +147,10 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
     return sent
 
 
-def _positive(text: str) -> float:
+def _rate(text: str) -> float:
     v = float(text)
-    if not v > 0:
-        raise argparse.ArgumentTypeError("양수여야 한다")
+    if not (math.isfinite(v) and 0 < v <= _MAX_RATE_HZ):
+        raise argparse.ArgumentTypeError(f"0보다 크고 {_MAX_RATE_HZ:g} 이하여야 한다")
     return v
 
 
@@ -145,13 +159,20 @@ def _resolve(host: str, port: int) -> tuple[str, int]:
     return socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_DGRAM)[0][4][:2]
 
 
+def _is_loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="python3 -m ugvc_sim", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--host", default="127.0.0.1", help="COMMAND·HEARTBEAT를 받을 주소")
     p.add_argument("--port", type=int, default=15010, help="수신 포트 (IF-01b)")
     p.add_argument("--gw-host", default="127.0.0.1", help="TELEMETRY·ACK를 보낼 GW 주소")
     p.add_argument("--gw-port", type=int, default=GW_VEHICLE_PORT, help="GW 차량 수신 포트 (IF-01a)")
-    p.add_argument("--rate", type=_positive, default=10.0, help="TELEMETRY Hz (기본 10)")
+    p.add_argument("--rate", type=_rate, default=10.0, help="TELEMETRY Hz (기본 10)")
     p.add_argument("--count", type=int, default=None, help="보낼 TELEMETRY 개수 (기본: 무한)")
     p.add_argument("--drop-first", type=int, default=0, metavar="N",
                    help="시험용: 처음 받은 COMMAND N개를 무시한다 (ACK 없음)")
@@ -159,8 +180,10 @@ def main(argv: list[str] | None = None) -> None:
     a = p.parse_args(argv)
     try:
         gw_addr = _resolve(a.gw_host, a.gw_port)
-    except OSError as e:
+    except (OSError, UnicodeError) as e:
         p.error(f"GW 주소 {a.gw_host}:{a.gw_port}를 해석할 수 없다: {e}")
+    if _is_loopback(a.host) and not ipaddress.ip_address(gw_addr[0]).is_loopback:
+        p.error(f"--host {a.host}(루프백)에 바인드하면 루프백이 아닌 GW {gw_addr[0]}로 보낼 수 없다. --host 0.0.0.0 등을 준다")
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind((a.host, a.port))
         sent = run(sock, gw_addr, a.rate, a.count, a.drop_first, a.verbose)

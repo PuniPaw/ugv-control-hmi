@@ -218,3 +218,14 @@ def test_REQ_SAFE_002_invalid_command_during_outage_is_rejected_invalid():
     t = _run(sim, 0.0, 3.5)
     out = sim.on_command(InvalidCommand(0, 0, Command(5, 0x99)), t)
     assert out.ack == Ack(5, AckResult.REJECTED_INVALID) and out.execute is None
+
+
+def test_REQ_SAFE_002_rtb_after_recovery_drives_to_simulator_home():
+    """복구 뒤 RTB는 Simulator에 준 출발 지점(home)으로 간다 (기본 HOME이 아니어도)."""
+    home = (START.lat_deg + 0.0005, START.lon_deg)
+    sim = Simulator(start=0.0, home=home)
+    t = _run(sim, 0.0, 3.0)
+    t = _run(sim, t, t + 1.0, hb=lambda x: True)
+    assert sim.on_command(_cmd(1, CmdType.RTB), t).ack == Ack(1, AckResult.ACCEPTED)
+    _run(sim, t, t + 60.0, hb=_every_second)
+    assert _pos(sim) == home and sim.telemetry().mode == Mode.STANDBY
