@@ -1,6 +1,7 @@
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -8,8 +9,9 @@ import pytest
 from ugvc_proto.command import Ack, AckResult, Command, CmdType
 from ugvc_proto.frame import MsgType, check_frame, encode_frame
 
-from ugvc_sim import uplink
-from ugvc_sim.uplink import CommandResponder, Heartbeat, HeartbeatWatch, InvalidCommand, ReceivedCommand, parse_uplink
+from ugvc_sim import app
+from ugvc_sim.simulator import Simulator
+from ugvc_sim.uplink import Heartbeat, HeartbeatWatch, InvalidCommand, ReceivedCommand, parse_uplink
 
 VECTORS = Path(__file__).resolve().parents[2] / "testdata" / "vectors"
 COMMANDS = json.loads((VECTORS / "command.json").read_text(encoding="utf-8"))["vectors"]
@@ -57,6 +59,12 @@ def test_REQ_SAFE_001_never_received_expires_from_start():
     w = HeartbeatWatch(start=10.0)
     assert not w.expired(12.999)
     assert w.expired(13.0)
+
+
+def CommandResponder(memory=1024):
+    """링크가 살아 있는 Simulator (now=0, 시작 직후). 명령 응답 규칙만 시험할 때 쓴다."""
+    sim = Simulator(start=0.0, memory=memory)
+    return type("R", (), {"on_command": lambda self, msg: sim.on_command(msg, 0.0)})()
 
 
 def _frame(command, seq=0):
@@ -150,17 +158,27 @@ def test_REQ_CMD_003_ack_frame_is_valid_and_seq_increments(sim):
     ack_sock, send = sim()
     send(_frame(Command(1, CmdType.STOP)))
     send(_frame(Command(2, CmdType.STOP)))
-    frames = [ack_sock.recvfrom(2048)[0] for _ in range(2)]
-    checked = [check_frame(f, {MsgType.ACK: 5}) for f in frames]
+    checked = [_recv_ack(ack_sock) for _ in range(2)]
     assert [c[0].msg_type for c in checked] == [MsgType.ACK] * 2
     assert [len(c[1]) for c in checked] == [5, 5]
     assert [c[0].seq for c in checked] == [0, 1]
     assert [Ack.from_payload(c[1]) for c in checked] == [Ack(1, AckResult.ACCEPTED), Ack(2, AckResult.ACCEPTED)]
 
 
+def _recv_ack(gw):
+    """가짜 GW 소켓에서 ACK 하나를 받는다 (같이 오는 TELEMETRY는 건너뛴다). 0.5초 안에 없으면 socket.timeout."""
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        data = gw.recvfrom(2048)[0]
+        checked = check_frame(data, {MsgType.ACK: 5, MsgType.TELEMETRY: 16})
+        if checked[0].msg_type == MsgType.ACK:
+            return checked
+    raise socket.timeout("no ACK")
+
+
 @pytest.fixture
 def sim():
-    """실제 UDP 소켓의 SIM 서버 스레드와 가짜 GW 소켓. sim(drop_first=0)이 (GW 소켓, COMMAND 송신 함수)를 준다."""
+    """실제 UDP 소켓의 SIM 스레드와 가짜 GW 소켓. sim(drop_first=0)이 (GW 소켓, COMMAND 송신 함수)를 준다."""
     opened, threads, stop = [], [], threading.Event()
 
     def start(drop_first=0):
@@ -170,7 +188,8 @@ def sim():
         srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         srv.bind(("127.0.0.1", 0))
         opened.extend([gw, srv])
-        t = threading.Thread(target=uplink.serve, args=(srv, gw.getsockname(), drop_first, stop), daemon=True)
+        t = threading.Thread(target=app.run, args=(srv, gw.getsockname()),
+                             kwargs=dict(drop_first=drop_first, stop=stop), daemon=True)
         t.start()
         threads.append(t)
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -189,7 +208,7 @@ def test_REQ_CMD_003_listen_duplicate_gets_same_ack(sim, capsys):
     gw, send = sim()
     send(_frame(Command(5, CmdType.RTB)))
     send(_frame(Command(5, CmdType.RTB)))
-    acks = [Ack.from_payload(check_frame(gw.recvfrom(2048)[0], {MsgType.ACK: 5})[1]) for _ in range(2)]
+    acks = [Ack.from_payload(_recv_ack(gw)[1]) for _ in range(2)]
     assert acks == [Ack(5, AckResult.ACCEPTED)] * 2
     lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if '"command"' in l]
     assert [l["executed"] for l in lines] == [True, False]
@@ -198,20 +217,20 @@ def test_REQ_CMD_003_listen_duplicate_gets_same_ack(sim, capsys):
 def test_REQ_CMD_006_listen_rejects_invalid_over_udp(sim):
     gw, send = sim()
     send(_frame(Command(6, 0x99)))
-    assert Ack.from_payload(check_frame(gw.recvfrom(2048)[0], {MsgType.ACK: 5})[1]) == Ack(6, AckResult.REJECTED_INVALID)
+    assert Ack.from_payload(_recv_ack(gw)[1]) == Ack(6, AckResult.REJECTED_INVALID)
 
 
 def test_REQ_CMD_006_listen_cmd_id_0_gets_no_ack(sim):
     gw, send = sim()
     send(_frame(Command(0, CmdType.STOP)))
     with pytest.raises(socket.timeout):
-        gw.recvfrom(2048)
+        _recv_ack(gw)
 
 
 def test_REQ_CMD_003_drop_first_ignores_first_command_then_acks_retransmission(sim):
     gw, send = sim(drop_first=1)
     send(_frame(Command(9, CmdType.STOP)))
     with pytest.raises(socket.timeout):
-        gw.recvfrom(2048)
+        _recv_ack(gw)
     send(_frame(Command(9, CmdType.STOP)))
-    assert Ack.from_payload(check_frame(gw.recvfrom(2048)[0], {MsgType.ACK: 5})[1]) == Ack(9, AckResult.ACCEPTED)
+    assert Ack.from_payload(_recv_ack(gw)[1]) == Ack(9, AckResult.ACCEPTED)

@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-SRS-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.7 |
+| 버전 | v0.8 |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-ICD-001 (인터페이스 정의서), UGVC-STP-001 (시험 계획서), ADR-001, ADR-002, GLOSSARY.md |
 
@@ -19,6 +19,7 @@
 | v0.5 | 2026-11-12 | PR #19 3·4차 리뷰: REQ-HMI-006에 stats가 한 번도 오지 않는 연결, 늦은 도착이 이어질 때의 기준선 재설정(재접속, 연결 끊김으로 표시하지 않음). REQ-HMI-007에 범위의 출처(ICD 6장)와 용어 "폐기" |
 | v0.6 | 2026-11-14 | REQ-COM-006에서 ACK 스트림 제외 (PR #24 리뷰: SIM 수신부만 다시 시작하면 ACK가 order로 폐기되던 문제, ICD v0.12 9장) |
 | v0.7 | 2026-11-14 | PR #24 2차 리뷰: REQ-COM-005 유실 계산에서도 ACK 스트림 제외(v0.6은 순서 검사만 바꿔 유실 계산 문구와 어긋났음). REQ-CMD-002에 같은 req_id로 다시 온 명령은 다시 송신하지 않는다는 조항 추가(ICD v0.13 7.2) |
+| v0.8 | 2026-11-20 | REQ-SAFE-002에 Failsafe 해제 조건 추가: HEARTBEAT를 받는 중(마지막 HEARTBEAT 후 3.0초 미만)에 수락한 COMMAND만 해제한다(STOP은 정지 유지, RTB·WAYPOINT는 주행 재개). 두절 중 받은 RTB·WAYPOINT는 실행하지 않고 REJECTED_STATE로 응답한다(ICD v0.15 6.2·6.4·6.5) |
 
 ---
 
@@ -153,7 +154,7 @@ flowchart LR
 | ID | 요구사항 | 검증 | 단계 |
 |---|---|---|---|
 | REQ-SAFE-001 | SIM은 HEARTBEAT를 3.0초 이상 수신하지 못하면 스스로 정지(STOPPED)하고, status_flags의 FAILSAFE_ACTIVE를 설정하여야 한다. 시작 후 한 번도 받지 못한 경우는 시작 시각부터 경과 시간을 잰다. | T | MVP |
-| REQ-SAFE-002 | SIM은 Failsafe 정지 후 링크가 복구되어도 운용자 명령 없이 주행을 재개하지 않아야 한다. | T | MVP |
+| REQ-SAFE-002 | SIM은 Failsafe 정지 후 링크가 복구되어도 운용자 명령 없이 주행을 재개하지 않아야 한다. Failsafe는 HEARTBEAT를 받는 중(마지막 HEARTBEAT 후 3.0초 미만)에 수락한 COMMAND로만 해제하며(FAILSAFE_ACTIVE를 지움), STOP이면 정지를 유지하고 RTB·WAYPOINT이면 그 명령대로 주행한다. HEARTBEAT를 3.0초 이상 받지 못한 동안 받은 RTB·WAYPOINT는 실행하지 않고 ACK result REJECTED_STATE로 응답하여야 한다(STOP은 수락하고 Failsafe를 유지한다). | T | MVP |
 
 ### 3.8 품질 (QUAL)
 

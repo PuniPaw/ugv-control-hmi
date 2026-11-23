@@ -78,8 +78,10 @@ STP "테스트" 열의 이름이 실제 테스트에 없으면 실패합니다 (
 
 ```bash
 cd sim
-PYTHONPATH=../python:. python3 -m ugvc_sim.telemetry_sender
+PYTHONPATH=../python:. python3 -m ugvc_sim
 ```
+
+SIM은 GW의 HEARTBEAT를 3초 넘게 받지 못하면 정지(Failsafe)하므로 GW를 먼저 띄웁니다. 복구돼도 HMI 명령이 있어야 다시 주행합니다.
 
 GW는 IF-03 메시지를 WebSocket `ws://127.0.0.1:8080/ws`(HMI용)와 stdout(한 줄에 JSON 하나)에 똑같이 보냅니다: 유효 TELEMETRY·DETECTION은 받는 즉시, 송신원별 `stats`·`link_status`는 1Hz와 상태 전이 시. HMI가 접속하면 현재 `stats`·`link_status`를 먼저 보냅니다. HEARTBEAT는 1Hz로 UDP 15010에 보냅니다.
 

@@ -81,19 +81,15 @@ async function startGateway(ports, wsPort) {
   return { proc: gw, wsPort: Number(m[1]), sentReqIds };
 }
 
-function startSim(port) {
-  return run("python3", ["-m", "ugvc_sim.telemetry_sender", "--port", String(port)], {
+function startSim(ports, extraArgs = []) {
+  // SIM은 GW의 HEARTBEAT·COMMAND를 sim 포트로 받고 TELEMETRY·ACK를 vehicle 포트로 보낸다 (HEARTBEAT가 없으면 3초 뒤 Failsafe 정지)
+  const sim = run("python3", ["-m", "ugvc_sim", "--port", String(ports.sim), "--gw-port", String(ports.vehicle), ...extraArgs], {
     cwd: resolve(REPO, "sim"),
     env: { ...process.env, PYTHONPATH: `${resolve(REPO, "python")}:.` },
   });
-}
-
-/** SIM 수신부: COMMAND에 ACK (GW 차량 포트로) */
-function startUplink(simPort, vehiclePort) {
-  return run("python3", ["-m", "ugvc_sim.uplink", "--port", String(simPort), "--gw-port", String(vehiclePort)], {
-    cwd: resolve(REPO, "sim"),
-    env: { ...process.env, PYTHONPATH: `${resolve(REPO, "python")}:.` },
-  });
+  sim.stdout.resume(); // 사건 기록은 버린다 (파이프가 차서 SIM이 막히면 HEARTBEAT를 못 읽어 Failsafe로 오판)
+  sim.stderr.resume();
+  return sim;
 }
 
 async function startVite(port, gwUrl) {
@@ -181,7 +177,7 @@ async function scenario(browser) {
   checkPageErrors();
 
   step("2. SIM 10Hz 송신: 차량 링크 CONNECTED, 유실률·모드·배터리 표시, 마커와 궤적 이동, 차량 값 진하게");
-  const sim = startSim(ports.vehicle);
+  let sim = startSim(ports);
   await expectText(page, "link-state-VEHICLE", "CONNECTED");
   await expectText(page, "loss-VEHICLE", "0.0%", 3000); // GW stats가 반영됨
   await expectText(page, "age-VEHICLE", /^0\.\ds 전$/); // 시계 차와 무관하게 0.x초 (음수·수 초가 아님)
@@ -226,8 +222,6 @@ async function scenario(browser) {
   checkPageErrors();
 
   step("2c. 명령: 버튼은 확인만 연다(취소하면 SIM에 아무것도 안 감), 보내기를 눌러야 송신, 결과 ACCEPTED 표시");
-  const uplink = startUplink(ports.sim, ports.vehicle);
-  await page.waitForTimeout(500); // SIM 수신부가 포트를 열 시간
   await expectAttr(page, "cmd-panel", "data-blocked", "false");
   const firstRow = () => page.getByTestId("cmd-row").first();
   /** 맨 위(가장 최근) 명령의 상태가 status가 될 때까지 기다린다 */
@@ -265,7 +259,12 @@ async function scenario(browser) {
   checkPageErrors();
 
   step("2d. 결과 전에 GW 끊김: '결과 미확인', 새 GW에 자동 재송신 없음, 다시 시도는 경고가 붙은 새 확인 절차로 새 req_id, ACK가 없으면 TIMEOUT");
-  await stop(uplink); // ACK 없음 → 결과는 4초 뒤에야 나온다
+  // ACK가 없는 SIM: 받은 COMMAND를 버린다(--drop-first). 차량 LOST를 거쳐 다시 띄워야 GW가 seq 기준값을 새로 잡는다
+  await stop(sim);
+  await expectText(page, "link-state-VEHICLE", "LOST", 3000);
+  sim = startSim(ports, ["--drop-first", "100"]);
+  await expectText(page, "link-state-VEHICLE", "CONNECTED", 5000);
+  await expectAttr(page, "cmd-panel", "data-blocked", "false");
   await page.getByTestId("cmd-RTB").click();
   await page.getByTestId("cmd-send").click();
   await expectRow("PENDING", 1000);

@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.4.3 (초안) |
+| 버전 | v0.5.4 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-STP-001 v0.22, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.26, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -28,10 +28,14 @@
 | v0.3.1 | 2026-11-14 | 6장 PR #24 1차 리뷰 반영: cmd_id 시작값(시각), req_id 규칙(`recent_`, `reject`, `CommandIgnored`), 예정 시각 기준 재전송, ACK의 규칙 ⑨ 제외, `CommandRequest`를 gateway 소유로(if03 → gateway 한 방향) |
 | v0.3.2 | 2026-11-14 | 6.1 PR #24 2차 리뷰 반영: `reject`가 거절한 req_id를 `recent_`에 남김(`request` 없음), 판정이 1.0s 이상 늦으면 `due = now + 1.0s`, ACK는 유실 계산에서도 제외. 형식 오류 응답 주체(`app` → `CommandTracker`)와 유효 ACK 검증 범위(①~⑧) 문구 정정 |
 | v0.3.3 | 2026-11-14 | 6.1 PR #24 3차 리뷰 반영: 거절 기록을 `rejected_`로 분리(상한 따로), 늦은 판정 규칙 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`, `kJudgePeriod`를 tracker 헤더로. 관련 문서 버전 갱신 |
-| v0.4 | 2026-11-20 | 8.6 HMI 명령 패널 신설(REQ-CMD-001·004, 이슈 #27): 확인 절차 `draft`, 보낸 명령 상태(PENDING·UNCONFIRMED·DONE), 연결이 끝나면 결과 미확인으로 두고 자동 재송신하지 않음, 다시 보내기는 확인 후 새 req_id, 송신 가능 판정 `commandBlock`, `cmd_result` 경계 파서. 8.1 모듈 표, 8.2, 시험 절을 8.7로 |
-| v0.4.1 | 2026-11-20 | 8.6 PR #35 1차 리뷰 반영: 차량 링크는 이 연결에서 받은 link_status로만 판정(`session.vehicleLinkSeen`, 재접속 직후 이전 값으로 보내지 않음), 기준선 재설정은 명령을 끊김으로 다루지 않고 결과 기한(첫 송신 + 5s, 단조 시계)이 지나야 결과 미확인, IF-03 끊김이면 확인 단계를 닫음, 다시 보내기 판정 `canRetry` 하나(결과 대기 중·이미 다시 보낸 명령 제외)와 경고 문구, 결과 대기 중 명령은 기록 상한으로 밀리지 않음, 경로점 입력은 소수 7자리까지, 브라우저 소켓은 OPEN이 아니면 송신 실패, TIMEOUT은 attempts 4만. GW 미연결 차단 근거, 남는 위험(STALE 중 판정) |
-| v0.4.2 | 2026-11-20 | 8.6 PR #35 2차 리뷰 반영: 행별 다시 보내기와 결과 기한(5s)을 없앰. 두 차례 결함(늦은 결과 뒤 다시 보내기 확인으로 이중 실행, 기한이 GW 늦은 판정·IF-03 지연보다 짧음)이 "시간 기준으로 다시 보내기를 연다"는 같은 전제에서 나왔기 때문. 명령 상태는 메시지·연결 이벤트로만 바뀌고(결과 미확인은 IF-03 끊김만), 결과 대기는 경과 초로 표시. 다시 시도는 새 명령의 확인 절차이며, 같은 종류 명령이 결과 전이면 확인 단계가 경고하고(STOP 제외) 그 명령의 결과가 오면 확인 단계를 닫음 |
-| v0.4.3 | 2026-11-23 | 8.6 PR #35 3차 리뷰 반영: 기준선 재설정도 명령은 끊김과 같이 다룸(`connectionEnded`: 결과 대기 → 결과 미확인, 확인 단계 닫힘). 버린 적체 안의 cmd_result를 잃으면 영원히 결과 대기로 남던 결함을 고침. 결과를 잃는 두 경우(끊김, 재설정의 버린 적체)를 나눠 적음. 같은 종류 경고는 그 종류의 가장 최근 명령만 봄. v0.4.2에서 설계 본문에 있던 행별 다시 보내기의 이력 문단은 개정 이력(v0.4.2 행)에만 둠 |
+| v0.4 | 2026-11-20 | 6.2 SIM을 한 프로세스로(`python -m ugvc_sim`, 단일 스레드): 순수 `Simulator`(차량 상태 + HEARTBEAT 감시 + 명령 처리, 시각 주입), 명령을 주행 모사에 반영(`apply_command`), Failsafe 진입·해제(REQ-SAFE-001·002, ICD v0.15 6.5). `CommandResponder`·`telemetry_sender`는 `Simulator`·`app`으로 대체. 2장 그림, 7장 표 |
+| v0.4.1 | 2026-11-20 | 6.2 PR #36 1차 리뷰 반영: `app`은 송신 OSError를 기록만 하고 계속 돎(GW 주소는 시작 때 한 번 해석), 한 주기 넘게 늦으면 몰아 보내지 않음, 두절 중 STOP은 `execute = None`, 경과 시간은 처리 시각 기준이라는 한계, 시작 상태(명령 없이 MISSION 주행)는 시연용 선택. 6장 시퀀스의 SIM 처리 이름 정정 |
+| v0.4.2 | 2026-11-23 | 6.2 PR #36 2차 리뷰 반영: 주기 중간에 받은 명령은 그때까지 이전 상태로 진행한 뒤 적용, 수신 오류는 실패 시작에만 기록하고 소켓이 없어진 오류(EBADF·ENOTSOCK)는 종료, 시작 시 설정 오류 검사(루프백 바인드에 외부 GW, 이름 해석의 UnicodeError, `--rate`는 유한한 0 초과 1000 이하) |
+| v0.5 | 2026-11-20 | 8.6 HMI 명령 패널 신설(REQ-CMD-001·004, 이슈 #27): 확인 절차 `draft`, 보낸 명령 상태(PENDING·UNCONFIRMED·DONE), 연결이 끝나면 결과 미확인으로 두고 자동 재송신하지 않음, 다시 보내기는 확인 후 새 req_id, 송신 가능 판정 `commandBlock`, `cmd_result` 경계 파서. 8.1 모듈 표, 8.2, 시험 절을 8.7로 |
+| v0.5.1 | 2026-11-20 | 8.6 PR #35 1차 리뷰 반영: 차량 링크는 이 연결에서 받은 link_status로만 판정(`session.vehicleLinkSeen`, 재접속 직후 이전 값으로 보내지 않음), 기준선 재설정은 명령을 끊김으로 다루지 않고 결과 기한(첫 송신 + 5s, 단조 시계)이 지나야 결과 미확인, IF-03 끊김이면 확인 단계를 닫음, 다시 보내기 판정 `canRetry` 하나(결과 대기 중·이미 다시 보낸 명령 제외)와 경고 문구, 결과 대기 중 명령은 기록 상한으로 밀리지 않음, 경로점 입력은 소수 7자리까지, 브라우저 소켓은 OPEN이 아니면 송신 실패, TIMEOUT은 attempts 4만. GW 미연결 차단 근거, 남는 위험(STALE 중 판정) |
+| v0.5.2 | 2026-11-20 | 8.6 PR #35 2차 리뷰 반영: 행별 다시 보내기와 결과 기한(5s)을 없앰. 두 차례 결함(늦은 결과 뒤 다시 보내기 확인으로 이중 실행, 기한이 GW 늦은 판정·IF-03 지연보다 짧음)이 "시간 기준으로 다시 보내기를 연다"는 같은 전제에서 나왔기 때문. 명령 상태는 메시지·연결 이벤트로만 바뀌고(결과 미확인은 IF-03 끊김만), 결과 대기는 경과 초로 표시. 다시 시도는 새 명령의 확인 절차이며, 같은 종류 명령이 결과 전이면 확인 단계가 경고하고(STOP 제외) 그 명령의 결과가 오면 확인 단계를 닫음 |
+| v0.5.3 | 2026-11-23 | 8.6 PR #35 3차 리뷰 반영: 기준선 재설정도 명령은 끊김과 같이 다룸(`connectionEnded`: 결과 대기 → 결과 미확인, 확인 단계 닫힘). 버린 적체 안의 cmd_result를 잃으면 영원히 결과 대기로 남던 결함을 고침. 결과를 잃는 두 경우(끊김, 재설정의 버린 적체)를 나눠 적음. 같은 종류 경고는 그 종류의 가장 최근 명령만 봄. v0.5.2에서 설계 본문에 있던 행별 다시 보내기의 이력 문단은 개정 이력(v0.5.2 행)에만 둠 |
+| v0.5.4 | 2026-11-23 | 8.6 PR #35 4차 리뷰 반영: 같은 종류에 결과 대기 명령이 있으면 그것을 경고(더 새 명령의 결과로 숨기는 것은 오래된 결과 미확인뿐), "한 번만 보냄"을 "새 연결에 지난 결과를 스스로 다시 보내지 않음"으로, 8.2 재설정 서술(명령도 `connectionEnded`). `main`(PR #36) merge로 이 PR의 이력 행을 v0.5~v0.5.3으로 다시 매기고 관련 문서(SRS v0.8, ICD v0.15, STP v0.26) 갱신. 8.7 시연 점검은 한 프로세스 SIM 사용 |
 
 ---
 
@@ -53,7 +57,7 @@ flowchart LR
         gw --> app
     end
     subgraph PY["python/ · sim/"]
-        proto["ugvc_proto<br/>codec·check_frame"] --> sim["ugvc_sim<br/>송신·수신·ACK"]
+        proto["ugvc_proto<br/>codec·check_frame"] --> sim["ugvc_sim<br/>Simulator·Failsafe·app"]
     end
     vectors[("testdata/vectors<br/>공용 바이트 벡터")] -.-> codec
     vectors -.-> proto
@@ -171,7 +175,7 @@ sequenceDiagram
     GW->>SIM: COMMAND(cmd_id) 1회차
     Note over GW: 1.0s 안에 ACK 없음 (poll)
     GW->>SIM: COMMAND(같은 cmd_id) 2회차
-    SIM->>SIM: CommandResponder: 처음 받은 cmd_id면 실행, 이미 받았으면 이전 결과만
+    SIM->>SIM: Simulator.on_command: 처음 받은 cmd_id면 판정·실행, 이미 받았으면 이전 결과만
     SIM->>GW: ACK(cmd_id, result) → GW 차량 포트
     GW->>HMI: cmd_result {req_id, cmd_id, result, attempts: 2}
     Note over GW: 4회 송신 후 1.0s까지 ACK가 없으면 result TIMEOUT
@@ -191,12 +195,44 @@ sequenceDiagram
 - **`app`.** HMI 명령 → `parse_command` → `submit` → COMMAND 송신(COMMAND 전용 seq, HEARTBEAT와 같은 소켓). 유효 ACK(검증 ①~⑧을 통과한 `Message`의 `Ack`, ACK는 ⑨ 제외) → `on_ack`. 판정 주기 → `poll` 재전송. 매번 이벤트를 꺼내 진단 기록(stderr)에 쓰고, `CommandResult`는 `cmd_result`로 stdout과 모든 HMI에 보낸다. 진단에 쓰는 req_id와 명령 원문은 HMI가 보낸 텍스트이므로 JSON 문자열로 감싸 진단 줄 위조를 막는다.
 - **이벤트를 PostgreSQL에 남기는 것**은 로그 작업(REQ-LOG)에서 `drain_command_events`에 붙인다.
 
-### 6.2 SIM
+### 6.2 SIM (REQ-CMD-003·006, REQ-SAFE-001·002)
 
-- `parse_uplink`는 COMMAND를 세 가지로 나눈다: cmd_id 0은 폐기(ACK 없음), 필드가 6.3 범위 밖이면 `InvalidCommand`, 그 밖은 `ReceivedCommand`. 별도 형으로 나눠 "범위 밖인데 실행"이 표현되지 않게 했다.
-- `CommandResponder`는 최근 1024개 cmd_id의 첫 결과를 `OrderedDict`로 기억한다. 처음이면 `ReceivedCommand`는 ACCEPTED(실행), `InvalidCommand`는 REJECTED_INVALID(실행 안 함). 다시 오면 같은 ACK만 다시 보내고 실행하지 않는다(REQ-CMD-003).
-- ACK는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 ACK 스트림 전용 seq를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
-- **아직 하지 않은 것:** 실행 결과(`CommandOutcome.execute`)를 주행 모사에 반영하는 일(STOP이면 정지 등). 지금은 텔레메트리 송신과 명령 수신이 별도 프로세스라서, SIM을 한 프로세스로 합치는 Failsafe 작업(REQ-SAFE-001·002)에서 함께 한다.
+SIM은 한 프로세스(`python -m ugvc_sim`, `app.run`)다. 소켓 하나(기본 15010)에 바인드해 단일 스레드로 돈다. 다음 10Hz 송신 예정 시각까지 COMMAND·HEARTBEAT를 기다리고, 예정 시각이 되면 상태를 한 주기 진행해 TELEMETRY를 보낸다. 예정 시각은 절대 시각(`t0 + k × 0.1s`)이라 늦음이 쌓이지 않는다. 스레드를 나누지 않으므로 차량 상태를 여러 실행 흐름이 공유하지 않는다.
+
+```mermaid
+stateDiagram-v2
+    [*] --> MISSION: 시작 (경로 없음: 고정 방위 직진)
+    MISSION --> STANDBY: 마지막 경로점 도착
+    RTB --> STANDBY: 출발 지점 도착
+    MISSION --> STOPPED: STOP
+    RTB --> STOPPED: STOP
+    STANDBY --> STOPPED: STOP
+    STOPPED --> RTB: RTB
+    STOPPED --> MISSION: WAYPOINT
+    STANDBY --> RTB: RTB
+    STANDBY --> MISSION: WAYPOINT
+    MISSION --> FAILSAFE: HEARTBEAT 3.0s 두절
+    RTB --> FAILSAFE: HEARTBEAT 3.0s 두절
+    STANDBY --> FAILSAFE: HEARTBEAT 3.0s 두절
+    STOPPED --> FAILSAFE: HEARTBEAT 3.0s 두절
+    FAILSAFE --> STOPPED: 수신 중 STOP (플래그 해제)
+    FAILSAFE --> RTB: 수신 중 RTB
+    FAILSAFE --> MISSION: 수신 중 WAYPOINT
+    note right of FAILSAFE: mode STOPPED + FAILSAFE_ACTIVE<br/>HEARTBEAT 복구만으로는 나가지 않음<br/>두절 중 RTB·WAYPOINT는 REJECTED_STATE
+```
+
+- **`parse_uplink`(`uplink.py`)**는 COMMAND를 세 가지로 나눈다: cmd_id 0은 폐기(ACK 없음), 필드가 6.3 범위 밖이면 `InvalidCommand`, 그 밖은 `ReceivedCommand`. 별도 형으로 나눠 "범위 밖인데 실행"이 표현되지 않게 했다.
+- **`Simulator`(`simulator.py`, 순수 로직)**는 차량 상태(`VehicleState`), 출발 지점, `HeartbeatWatch`, 최근 1024개 cmd_id의 첫 결과(`OrderedDict`)를 가진다. 소켓·시계가 없고 모든 메서드가 시각 `now`(단조 시계 초)를 인자로 받는다. 그래서 시험은 3.0s 경계를 가짜 시각으로 바로 확인한다.
+  - `on_heartbeat(now)`, `on_command(msg, now)`, `advance(now, dt)`는 모두 **맨 앞에서 Failsafe 조건을 먼저 평가**한다(`HeartbeatWatch.expired`: 마지막 HEARTBEAT, 없으면 시작 후 3.0s 이상). 그래서 사건이 어떤 순서로 와도 결과가 같다. 예를 들어 3초 넘게 끊겼다가 처음 온 HEARTBEAT도 감시를 되살리기 전에 먼저 정지를 반영한다.
+  - 명령 처리 순서: 이미 처리한 cmd_id면 첫 결과로 ACK만 다시(REQ-CMD-003, REJECTED_STATE도 같음) → `InvalidCommand`면 REJECTED_INVALID(두절 중이어도 필드 오류가 먼저) → 두절 중이면 STOP은 ACCEPTED(상태 그대로), RTB·WAYPOINT는 REJECTED_STATE → 그 밖은 `apply_command` 후 ACCEPTED. 결과는 `CommandOutcome{ack, execute}`이고 `execute`는 이번에 차량 상태에 적용한 명령이다(중복·거절, 상태를 바꾸지 않는 두절 중 STOP이면 `None`). stdout `executed`도 같은 뜻이라 두절 중 STOP이 Failsafe를 푼 것처럼 보이지 않는다.
+  - **한계: 경과 시간은 도착 시각이 아니라 처리 시각으로 잰다.** SIM 프로세스 자체가 2초 넘게 멈췄다 재개하면 HEARTBEAT가 소켓에 제때 도착했어도 Failsafe에 들어간다. 제어기가 멈춘 것이므로 안전한 쪽 판정으로 두고, 도착 시각(`SO_TIMESTAMP`)은 쓰지 않는다.
+- **`vehicle.py`(순수 함수)**: `VehicleState`는 불변이고 남은 경로점 `route`를 가진다.
+  - `enter_failsafe`: 어떤 mode에서든 STOPPED, speed 0, FAILSAFE_ACTIVE, 경로 비움. 이미 켜져 있으면 그대로라 두절 한 번에 전이는 한 번이다.
+  - `apply_command`: FAILSAFE_ACTIVE를 지우고 STOP → STOPPED(경로 비움), RTB → 출발 지점으로(경로 비움), WAYPOINT → 경로 끝에 더하고 MISSION. 링크가 살아 있을 때만 불린다.
+  - **시작 상태는 시연용 선택이다.** SIM은 명령 없이 MISSION(경로 없이 방위 87.25° 직진, 4.5 m/s)으로 시작한다(시연 점검이 진행 방향·궤적을 이것으로 확인). HEARTBEAT가 한 번도 오지 않으면 3.0s 동안 약 13 m 간 뒤 Failsafe로 멈춘다. 기동 시 운용자 명령 없이 출발해도 되는지는 규격에 없으며, STANDBY로 시작해 명령으로 출발하게 할지는 이슈로 남긴다.
+  - `step`: MISSION은 첫 경로점 방향으로 4.5 m/s, 도착하면 그 점에 붙고 다음 점으로, 마지막이면 STANDBY. 경로가 없는 MISSION(시작 상태)은 고정 방위로 직진하는 시연 구간이다. RTB는 출발 지점 도착 시 STANDBY. STOPPED·STANDBY는 움직이지 않고 배터리만 닳는다.
+  - STOP·RTB·Failsafe가 경로를 비우는 것은 SIM의 선택이다(ICD에 없음). 정지 뒤 받은 WAYPOINT가 예전 경로 뒤에 붙어 운용자가 모르는 곳으로 가지 않게 한다.
+- **`app.run`**: TELEMETRY와 ACK는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 각자 seq 스트림(0부터)을 쓴다. 첫 TELEMETRY는 시작 상태 그대로이고, 그 뒤 상태는 실제 경과 시간만큼 진행한다. 한 주기 넘게 늦으면 밀린 TELEMETRY를 몰아 보내지 않고 지금부터 다시 잰다. **송신 실패(OSError: 경로 없음 등)는 기록만 하고 계속 돈다.** 두절 상황에서 SIM이 죽으면 Failsafe가 사라지기 때문이다(실패 시작·회복 때만 `send_error`·`send_ok` 한 줄). GW 주소는 시작 때 한 번 해석해 실행 중 이름 해석 실패가 없다. 시작 때 고칠 수 없는 설정(이름 해석 실패, `--host`가 루프백인데 GW가 루프백이 아님, `--rate`가 유한한 0 초과 1000 이하가 아님)은 실행 전에 오류로 끝낸다. 수신 오류도 실패 시작에만 `recv_error` 한 줄을 쓰고 계속 돌며, 소켓 자체가 없어진 경우(EBADF·ENOTSOCK)만 종료한다. 주기 중간에 받은 COMMAND는 받은 시각까지 이전 상태로 진행한 뒤 적용한다(STOP 전 이동이 사라지거나 RTB가 주기 시작부터 적용되지 않게). stdout에는 사건마다 JSON 한 줄(`command`, `heartbeat`, `reject`, `drop`)과 전이(`failsafe`, `mode`)를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
 
 ## 7. 시험 용이성을 위한 설계
 
@@ -204,6 +240,7 @@ sequenceDiagram
 |---|---|
 | 소켓 없는 `Gateway`, 얇은 `app` | 수신 처리 전체를 바이트 배열과 가짜 시계로 단위 시험 (TC-COM-003~006) |
 | `IClock` 주입, `FakeClock::advance` | 0.499s / 0.500s 같은 경계값을 실제 대기 없이 시험 |
+| SIM `Simulator`가 시각 `now`를 인자로 받음, 소켓은 `app`만 | Failsafe 3.0s 경계, 복구 뒤 재개 금지, 두절 중 명령 처리를 실제 대기 없이 시험 (TC-SAFE-001·002) |
 | `testdata/vectors/*.json`을 C++·Python이 함께 읽음, 생성기는 표준 라이브러리만 사용 | 두 언어 구현이 같은 바이트를 만드는지, 구현과 독립된 기준으로 확인 (ADR-002) |
 | GW가 IF-03 JSON을 stdout에도 출력 | WebSocket 없이 통합 시험(pytest가 subprocess로 GW 실행) |
 | `tools/check_stp_tests.py` | STP의 테스트 이름이 실제 테스트(C++·Python·HMI vitest)와 어긋나면 실패 (RTM grep의 전제) |
@@ -356,7 +393,7 @@ stateDiagram-v2
   - **기준선 재설정 재접속:** 화면에는 연결 끊김으로 표시하지 않지만(GLOSSARY), 명령은 끊김과 같이 다룬다. 재접속은 밀린 메시지를 버리므로(ICD 7장) 결과를 잃는 창은 재접속 시간만이 아니다. 실제 전달 지연으로 재설정하면 버린 적체 수 초가 창이 된다. 시계 계단 변화로 생긴 거짓 늦음이면 창은 재접속 시간(보통 수 ms)뿐이다. 창이 짧아도 놓쳤는지는 HMI가 알 수 없으므로 같이 결과 미확인으로 둔다. 1차 리뷰 뒤에는 재설정 때 결과 대기를 유지했으나, 버린 적체 안에 결과가 있으면 그 명령이 영원히 결과 대기로 남았다(3차 리뷰 #1).
   - 같은 req_id로 GW에 되물으면 GW가 살아 있을 때는 실행 없이 같은 결과를 받을 수 있다(ICD 7.2). 그러나 이슈 #27의 "새 req_id" 방침과 부딪쳐 이 PR에서는 하지 않는다.
 - **자동 재송신 금지(이슈 #27):** HMI는 command를 스스로 다시 보내지 않고, 보낸 명령을 같은 req_id로 다시 보내는 기능도 두지 않는다. 같은 연결에서는 다시 보낼 이유가 없다. GW는 연결된 HMI에 빈틈 없이 보내므로(ICD 7장) 결과는 반드시 오고, GW가 멈추면 무수신 4초에 연결이 끊긴다(8.4). 이슈 #27의 "같은 연결 안에서 응답 지연 때문에 다시 보낼 때만 같은 req_id" 항목은 "같은 req_id로 다시 보내지 않음"으로 대신한다.
-- **다시 시도:** 운용자가 다시 시도하려면 패널에서 새 명령으로 확인 절차를 거친다(새 req_id). 확인할 명령과 같은 종류의 가장 최근 명령이 결과를 아직 받지 못했으면(PENDING, UNCONFIRMED: `sameKindUnresolved()`) 확인 단계가 "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음"을 경고한다. STOP은 두 번 실행돼도 정지 상태 그대로라 경고하지 않는다(정지를 늦추지 않기 위해서다). 경로점은 좌표와 관계없이 같은 종류로 본다. 더 새 같은 종류 명령이 결과를 받았으면 그보다 오래된 결과 미확인으로는 경고하지 않는다. GW 재시작 등으로 결과가 영영 오지 않는 명령 때문에 경고가 늘 켜져 의미를 잃지 않게 하기 위해서다.
+- **다시 시도:** 운용자가 다시 시도하려면 패널에서 새 명령으로 확인 절차를 거친다(새 req_id). 확인할 명령과 같은 종류에 결과 대기(PENDING) 명령이 있거나 같은 종류의 가장 최근 명령이 결과 미확인이면(`sameKindUnresolved()`) 확인 단계가 "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음"을 경고한다. STOP은 두 번 실행돼도 정지 상태 그대로라 경고하지 않는다(정지를 늦추지 않기 위해서다). 경로점은 좌표와 관계없이 같은 종류로 본다. 더 새 같은 종류 명령이 결과를 받았으면 그보다 오래된 결과 미확인으로는 경고하지 않는다(결과 대기 중인 것은 GW가 아직 재전송 중일 수 있어 계속 경고한다). GW 재시작 등으로 결과가 영영 오지 않는 명령 때문에 경고가 늘 켜져 의미를 잃지 않게 하기 위해서다.
 - **송신:** `GwConnection.send()`는 열린 소켓에만 보내고 대기열을 두지 않는다. 열린 연결이 없거나 소켓이 예외를 던지면 false이고, 컨트롤러는 기록을 만들지 않고 확인 단계를 남긴다. 브라우저 WebSocket은 CLOSING·CLOSED에서 예외 없이 버리므로, `browserSocket`은 `readyState`가 OPEN이 아니면 예외를 던져 실패를 알린다. 실패하면 소켓은 닫히는 중이라 곧 끊김으로 처리되고(확인 단계 닫힘, 사유 표시), 따로 실패 문구는 두지 않는다.
 - **경로점 입력:** `waypointFromInput()`은 화면 입력 경계다. 부호와 소수점만 있는 소수 7자리 이하 십진수(지수·16진수·NaN·Infinity·쉼표 불가)이고 위도 −90~90, 경도 −180~180이어야 한다(ICD 7.2, 한계값은 `if03/messages.ts`의 `LAT_LIMIT`·`LON_LIMIT`). 7자리로 제한하는 이유: GW는 1e-7 deg 정수로 반올림해 싣는데(ICD 6.3), 8자리 이상이면 확인 화면(7자리)과 실제로 실리는 값이 1 LSB 다를 수 있다. 지도에서 경로점을 고르고 표시하는 일(REQ-HMI-001 경로점)은 이 범위가 아니다.
 
@@ -369,7 +406,7 @@ stateDiagram-v2
 | `receiveText`, `apply`, `freshness`, `needsResync`, `view`, `trackSync` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계·시계 차·계단 변화를 대기 없이 시험. `planDraw` 연산을 실행한 결과가 상태 궤적과 같은지 무작위 8000메시지로 확인 |
 | `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격, 접속·무수신 제한, 예외, stop·재시작 시험 |
 | 명령 패널 | `state/commands.ts` 순수 함수(확인 없는 기록 불가, 결과 대응, 끊김·재설정 → 결과 미확인과 확인 단계 닫힘, 결과 전 명령은 상한으로 밀리지 않음, 같은 종류 경고, 경로점 입력)와 `HmiController`(가짜 소켓이 받은 텍스트로 송신 여부·req_id 확인: 확인 절차, LOST·GW 끊김·재접속 뒤 link_status 전 차단, 끊김 뒤 10초 동안 재송신 없음, 30초 늦은 결과도 결과 대기 유지, 재설정의 버린 적체에서 잃은 결과는 결과 미확인, 다시 시도는 경고가 붙은 새 명령, 경고한 명령의 결과가 오면 확인 단계 닫힘). 시연 점검은 GW 진단의 `cmd sent` 줄로 실제 송신을 확인한다 |
-| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`, `data-heading`)과 개발 서버 훅(`__ugvcTrackPoints`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치와, 실행 중 시계 +3초 계단 변화 뒤 회복(GW WebSocket 재접속 정확히 1회, `MutationObserver`로 기록한 배너 변화에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음)도 확인. 명령은 SIM 수신부(`ugvc_sim.uplink`)를 띄워 확인·취소·ACCEPTED, 결과 전 GW 재시작 뒤 재송신 없음과 경고가 붙은 새 명령(새 req_id)·TIMEOUT, LOST·GW 끊김 차단을 확인 |
+| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`, `data-heading`)과 개발 서버 훅(`__ugvcTrackPoints`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치와, 실행 중 시계 +3초 계단 변화 뒤 회복(GW WebSocket 재접속 정확히 1회, `MutationObserver`로 기록한 배너 변화에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음)도 확인. 명령은 SIM(`python3 -m ugvc_sim`)의 ACK로 확인·취소·ACCEPTED, SIM을 `--drop-first`로 다시 띄워 ACK 없는 상태에서 결과 전 GW 재시작 뒤 재송신 없음과 경고가 붙은 새 명령(새 req_id)·TIMEOUT, LOST·GW 끊김 차단을 확인 |
 
 ## 9. 미정 사항
 
