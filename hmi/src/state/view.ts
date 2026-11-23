@@ -110,7 +110,7 @@ export interface VehicleRows {
 export const COMMAND_ROWS_SHOWN = 5;
 
 /**
- * 명령을 보낼 수 없는 사유 (REQ-CMD-004). null이면 보낼 수 있다. 버튼, 다시 보내기, 확인 단계의 "보내기"가
+ * 명령을 보낼 수 없는 사유 (REQ-CMD-004). null이면 보낼 수 있다. 명령 버튼과 확인 단계의 "보내기"가
  * 같은 판정을 쓴다. 차량 링크는 이 연결에서 받은 link_status로만 판정한다(재접속 직후의 값은 이전 연결의 것).
  * GW와 연결되지 않았으면 명령을 전달할 길이 없으므로 같이 막는다
  */

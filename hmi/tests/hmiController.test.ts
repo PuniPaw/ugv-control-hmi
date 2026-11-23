@@ -333,7 +333,7 @@ it("REQ_CMD_001 a command whose result was not received is never resent automati
   expect(rows(h)).toEqual([["r1", "ACCEPTED"]]);
 });
 
-it("REQ_CMD_001 a command keeps waiting for its result however late it comes, also across a baseline resync", () => {
+it("REQ_CMD_001 a command keeps waiting for its result however late it comes, and a result after a resync still counts", () => {
   // (a) 같은 연결, 결과가 GW 늦은 판정·IF-03 전달 지연으로 첫 송신 30s 뒤에 옴: 그때까지 결과 대기, 시간으로 상태가 바뀌지 않음
   const g = readyHarness();
   g.c.requestCommand({ cmd_type: "RTB" });
@@ -344,16 +344,16 @@ it("REQ_CMD_001 a command keeps waiting for its result however late it comes, al
   expect(rows(g)).toEqual([["r1", "ACCEPTED"]]);
   expect(sentCommands(g)).toHaveLength(1);
 
-  // (b) 재설정 직전에 송신, 재설정 뒤 새 연결에서 결과: 재설정은 끊김이 아니므로 결과 대기 그대로
+  // (b) 재설정 직전에 송신: 재설정은 밀린 메시지를 버리므로 결과 미확인. 새 연결 뒤에 확정된 결과는 반영
   const h = readyHarness();
   resyncByClockStep(h, () => {
     h.c.requestCommand({ cmd_type: "RTB" });
     h.c.confirmCommand();
   });
-  expect(rows(h)).toEqual([["r1", "PENDING"]]);
+  expect(rows(h)).toEqual([["r1", "UNCONFIRMED"]]);
   h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
   for (let i = 0; i < 40; i++) h.step();
-  expect(rows(h)).toEqual([["r1", "PENDING"]]);
+  expect(rows(h)).toEqual([["r1", "UNCONFIRMED"]]);
   h.live().onmessage?.({ data: resultText("r1", "ACCEPTED", 1) });
   expect(rows(h)).toEqual([["r1", "ACCEPTED"]]);
   expect(sentCommands(h)).toHaveLength(1);
@@ -445,4 +445,25 @@ it("REQ_CMD_004 after a reconnect commands stay disabled until the new connectio
     h.live().onmessage?.({ data: vehicleLink("LOST") });
     expect(h.view().command.blocked, how).toBe("차량 링크 LOST · 명령을 보낼 수 없음");
   }
+});
+
+it("REQ_CMD_001 a result lost in the backlog dropped by a baseline resync ends as unconfirmed, and a newer result of the same kind ends the warning", () => {
+  // 리뷰 3차 #1: 재설정 직전에 보낸 명령의 cmd_result가 버린 적체 안에 있어 오지 않음
+  const h = readyHarness();
+  resyncByClockStep(h, () => {
+    h.c.requestCommand({ cmd_type: "RTB" });
+    h.c.confirmCommand();
+  });
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  for (let i = 0; i < 4 * 120; i++) h.step(); // 새 연결에서 2분, FRESH
+  expect(h.view().command.rows.map((r) => [r.status, r.text])).toEqual([
+    ["UNCONFIRMED", "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)"],
+  ]);
+  h.c.requestCommand({ cmd_type: "RTB" });
+  expect(h.view().command.confirm?.warning).toBe(RTB_WARNING); // 놓친 명령은 경고로 알린다
+  h.c.confirmCommand(); // r2
+  h.live().onmessage?.({ data: resultText("r2", "ACCEPTED", 1) });
+  h.c.requestCommand({ cmd_type: "RTB" }); // 더 새 복귀가 결과를 받았으면 오래된 결과 미확인으로는 경고하지 않는다
+  expect(h.view().command.confirm?.warning).toBeNull();
+  expect(sentCommands(h).map((m) => m.data.req_id)).toEqual(["r1", "r2"]);
 });

@@ -72,7 +72,7 @@ export class GwConnection {
 
   /**
    * 열린 연결로 텍스트 하나를 보낸다 (IF-03 command). 열린 연결이 없으면 보내지 않고 false.
-   * 다시 보내기·대기열은 두지 않는다: 연결이 끊기면 그 결과를 어떻게 할지는 호출자가 정한다 (ICD 7.2)
+   * 재송신·대기열은 두지 않는다: 연결이 끊기면 그 결과를 어떻게 할지는 호출자가 정한다 (ICD 7.2)
    */
   send(text: string): boolean {
     if (this.socket === null || !this.open) return false;

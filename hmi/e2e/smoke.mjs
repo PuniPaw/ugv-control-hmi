@@ -279,7 +279,6 @@ async function scenario(browser) {
   await page.waitForTimeout(2000);
   if (gw.sentReqIds().length !== 0) throw new Error(`새 GW에 자동 재송신함: ${gw.sentReqIds()}`);
   await expectRow("UNCONFIRMED");
-  if ((await page.getByTestId("cmd-retry").count()) !== 0) throw new Error("행별 다시 보내기 버튼이 있음");
   await page.getByTestId("cmd-RTB").click(); // 다시 시도: 새 명령
   await expectText(page, "cmd-confirm-text", "복귀 (RTB)");
   await expectText(page, "cmd-confirm-warning", "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음");

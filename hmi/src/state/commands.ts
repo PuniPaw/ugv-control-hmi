@@ -3,12 +3,14 @@
 // 확인 절차: draftCommand()로 확인을 받을 명령을 정하고, 운용자가 확인하면 호출자(HmiController)가 보내고
 // commandSent()로 기록한다. draft 없이 보낸 기록은 만들 수 없다 (commandSent는 draft를 소비한다).
 //
-// 보낸 명령은 결과를 기다리거나(PENDING), 결과를 받았거나(DONE), IF-03 연결이 끊겨 결과를 받지 못했다
-// (UNCONFIRMED: 결과를 놓쳤을 수 있고, GW가 다시 시작돼 req_id 기억이 사라졌을 수도 있다. ICD 7.2 한계).
+// 보낸 명령은 결과를 기다리거나(PENDING), 결과를 받았거나(DONE), 결과 전에 연결이 끝나 결과를 받지 못했다
+// (UNCONFIRMED). 연결이 끝나는 것은 IF-03 끊김(GW가 다시 시작돼 req_id 기억이 사라졌을 수도 있다, ICD 7.2 한계)과
+// 기준선 재설정 재접속(밀린 메시지를 버리므로 그 안의 cmd_result를 놓쳤을 수 있다, ICD 7장) 둘이다.
+// GW는 cmd_result를 확정할 때 한 번만 보내므로, 연결이 끝난 뒤에는 그 뒤에 확정된 결과만 받는다.
 // 상태는 메시지와 연결 이벤트로만 바뀌고 시간으로는 바뀌지 않는다. GW가 결과를 낼 때까지의 시간은
 // 정해져 있지 않기 때문이다(ICD 7.3 늦은 판정, IF-03 전달 지연). 대기 시간은 화면에 경과 초로만 보인다.
 //
-// HMI는 명령을 스스로 다시 보내지 않고, 보낸 명령을 다시 보내는 기능도 두지 않는다. 운용자가 다시 시도하려면
+// HMI는 명령을 스스로 다시 보내지 않고, 보낸 명령을 같은 req_id로 다시 보내는 기능도 두지 않는다. 운용자가 다시 시도하려면
 // 패널에서 새 명령으로 확인 절차를 거치고(새 req_id, 이슈 #27), 같은 종류의 명령이 결과 대기 중이거나
 // 결과 미확인이면 확인 단계가 그 사실을 경고한다(sameKindUnresolved).
 
@@ -18,7 +20,7 @@ export const COMMAND_LOG_MAX = 20; // 기억하는 최근 명령 수 (결과를 
 
 export type CommandStatus =
   | { kind: "PENDING" } // 결과 대기
-  | { kind: "UNCONFIRMED" } // 결과 전에 IF-03 연결이 끊김
+  | { kind: "UNCONFIRMED" } // 결과 전에 IF-03 연결이 끝남 (끊김, 기준선 재설정)
   | { kind: "DONE"; result: CmdResultData };
 
 export interface SentCommand {
@@ -81,21 +83,24 @@ export function resultReceived(log: CommandLog, r: CmdResultData): CommandLog {
 }
 
 /**
- * IF-03 연결 끊김: 결과를 기다리던 명령은 결과 미확인, 확인 단계도 닫는다(끊기기 전 상황에서 연 확인으로
- * 재접속 뒤에 보내지 않도록). 기준선 재설정은 끊김이 아니므로 이것을 부르지 않는다(명령은 결과 대기 그대로)
+ * IF-03 연결이 끝남(끊김, 기준선 재설정): 결과를 기다리던 명령은 결과 미확인, 확인 단계도 닫는다(끝나기 전
+ * 상황에서 연 확인으로 새 연결에서 보내지 않도록). 다시 보내지 않는다. 늦은 결과가 새 연결로 오면 resultReceived가 반영한다
  */
-export function disconnected(log: CommandLog): CommandLog {
+export function connectionEnded(log: CommandLog): CommandLog {
   const sent = log.sent.map((c) => (c.status.kind === "PENDING" ? { ...c, status: { kind: "UNCONFIRMED" as const } } : c));
   return { draft: null, sent };
 }
 
 /**
- * 확인할 명령과 같은 종류인데 결과를 아직 받지 못한 명령 (확인 단계의 경고). 그 명령은 이미 실행됐거나
- * 실행 중일 수 있으므로 새로 보내면 두 번 실행될 수 있다. STOP은 두 번 실행돼도 정지 상태 그대로라 경고하지 않는다
+ * 확인할 명령과 같은 종류의 가장 최근 명령이 결과를 아직 받지 못했으면 그 명령 (확인 단계의 경고). 그 명령은
+ * 이미 실행됐거나 실행 중일 수 있으므로 새로 보내면 두 번 실행될 수 있다. 더 새 같은 종류 명령이 결과를 받았으면
+ * 그보다 오래된 결과 미확인으로는 경고하지 않는다(결과가 영영 오지 않는 명령 때문에 경고가 늘 켜져 있지 않도록).
+ * STOP은 두 번 실행돼도 정지 상태 그대로라 경고하지 않는다
  */
 export function sameKindUnresolved(log: CommandLog, spec: CommandSpec): SentCommand | null {
   if (spec.cmd_type === "STOP") return null;
-  return log.sent.find((c) => c.spec.cmd_type === spec.cmd_type && unresolved(c)) ?? null;
+  const latest = log.sent.find((c) => c.spec.cmd_type === spec.cmd_type);
+  return latest && unresolved(latest) ? latest : null;
 }
 
 // 소수 7자리까지: COMMAND는 1e-7 deg 정수로 싣는다(ICD 6.3). 더 긴 입력은 확인 화면과 실제 값이 1 LSB 다를 수 있다

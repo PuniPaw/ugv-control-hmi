@@ -2,7 +2,7 @@
 // 연결 이벤트를 어느 함수로 반영할지는 app/hmiController.ts가 정한다: 열림 connectionOpened(),
 // IF-03 연결 끊김 connectionLost(), 기준선 재설정 resyncStarted(). 이 층은 전송 층(net/)을 모른다.
 
-import { disconnected, emptyCommandLog, resultReceived, type CommandLog } from "./commands";
+import { connectionEnded, emptyCommandLog, resultReceived, type CommandLog } from "./commands";
 import { parseIf03, type If03Message, type LinkState, type Source, type StatsData, type TelemetryData } from "../if03/messages";
 
 export const TRACK_MAX_POINTS = 3000; // 10Hz 기준 약 5분
@@ -108,18 +108,18 @@ export function connectionOpened(s: HmiState, at: number): HmiState {
  * 확인 단계는 닫는다 (state/commands.ts).
  */
 export function connectionLost(s: HmiState): HmiState {
-  return { ...s, session: null, lastFixSeq: null, commands: disconnected(s.commands) };
+  return { ...s, session: null, lastFixSeq: null, commands: connectionEnded(s.commands) };
 }
 
 /**
  * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
  * 여기서는 궤적을 끊지 않는다. 재설정 동안 버린 적체·접속 시간만큼 텔레메트리 seq가 건너뛰므로,
  * 그 간격이 NO_FIX_GAP_SAMPLES 이상이면 다음 유효 위치에서 apply()가 끊는다.
- * 명령도 끊김으로 다루지 않는다: GW는 살아 있고 명령은 진행 중이므로 결과 대기 그대로 둔다. 재접속 사이에
- * 결과를 놓쳤으면 화면은 결과 대기 경과 초가 계속 늘어난다 (state/commands.ts).
+ * 명령은 끊김과 같이 다룬다: 재접속은 밀린 메시지를 버리므로 그 안의 cmd_result를 놓쳤을 수 있다(ICD 7장).
+ * 결과를 기다리던 명령은 결과 미확인, 확인 단계는 닫는다 (state/commands.ts connectionEnded).
  */
 export function resyncStarted(s: HmiState): HmiState {
-  return { ...s, session: null };
+  return { ...s, session: null, commands: connectionEnded(s.commands) };
 }
 
 /** 마지막 stats가 지금 기준선보다 2초 넘게 늦게 도착했는지 (늦음 판정은 여기 하나) */
