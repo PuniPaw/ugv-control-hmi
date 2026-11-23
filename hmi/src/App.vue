@@ -2,8 +2,9 @@
 // HMI 최상위: HmiController(연결 + 상태 + 주기 판정 + 화면 판정)를 만들고 view()를 그리기만 한다.
 // 실제 시계(Date.now, performance.now)와 WebSocket은 이 파일에서 주입한다.
 import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
-import { HmiController, type View } from "./app/hmiController";
+import { HmiController, randomReqId, type View } from "./app/hmiController";
 import { browserSocket, defaultGwUrl } from "./net/gwConnection";
+import CommandPanel from "./components/CommandPanel.vue";
 import ConnectionBanner from "./components/ConnectionBanner.vue";
 import MapView from "./components/MapView.vue";
 import StatusPanel from "./components/StatusPanel.vue";
@@ -15,6 +16,7 @@ const controller = new HmiController(
   {
     now: () => Date.now(),
     monotonic: () => performance.now(),
+    newReqId: randomReqId,
     openSocket: browserSocket,
     setTimer: (fn, ms) => window.setTimeout(fn, ms),
     clearTimer: (h) => window.clearTimeout(h as number),
@@ -42,7 +44,15 @@ onBeforeUnmount(() => {
   <div class="layout">
     <ConnectionBanner class="banner" :level="view.banner.level" :text="view.banner.text" :gw-url="gwUrl" />
     <MapView class="map" :fix="state.fix" :fix-valid="view.fixValid" :track="state.track" :stale="view.stale.vehicle" />
-    <StatusPanel class="panel" :view="view" />
+    <div class="side">
+      <StatusPanel class="status" :view="view" />
+      <CommandPanel
+        :view="view.command"
+        @request="(spec) => controller.requestCommand(spec)"
+        @cancel="controller.cancelCommand()"
+        @confirm="controller.confirmCommand()"
+      />
+    </div>
   </div>
 </template>
 
@@ -54,7 +64,8 @@ onBeforeUnmount(() => {
 }
 .banner { grid-area: banner; }
 .map { grid-area: map; }
-.panel { grid-area: panel; }
+.side { grid-area: panel; display: flex; flex-direction: column; min-height: 0; }
+.status { flex: 1; min-height: 0; }
 @media (max-width: 800px) {
   .layout { grid-template: "banner" auto "map" 55vh "panel" auto / 1fr; height: auto; min-height: 100%; }
 }

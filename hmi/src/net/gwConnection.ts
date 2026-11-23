@@ -21,6 +21,7 @@ export interface SocketLike {
   onclose: ((ev: { code: number }) => void) | null;
   onmessage: ((ev: { data: unknown }) => void) | null;
   onerror: ((ev: unknown) => void) | null;
+  send(text: string): void;
   close(): void;
 }
 
@@ -46,6 +47,7 @@ export class GwConnection {
   private timer: unknown = null; // 한 번에 하나: 접속 제한 시간, 무수신 제한 시간, 재접속 대기
   private failures = 0;
   private stopped = true;
+  private open = false; // 지금 소켓이 열렸는지 (onopen 뒤)
 
   constructor(
     private readonly url: string,
@@ -66,6 +68,20 @@ export class GwConnection {
     this.disarm();
     this.dropSocket();
     this.connect({ cause: "resync" });
+  }
+
+  /**
+   * 열린 연결로 텍스트 하나를 보낸다 (IF-03 command). 열린 연결이 없으면 보내지 않고 false.
+   * 재송신·대기열은 두지 않는다: 연결이 끊기면 그 결과를 어떻게 할지는 호출자가 정한다 (ICD 7.2)
+   */
+  send(text: string): boolean {
+    if (this.socket === null || !this.open) return false;
+    try {
+      this.socket.send(text);
+      return true;
+    } catch {
+      return false; // 닫히는 중 등: 보내지 못함
+    }
   }
 
   stop(): void {
@@ -91,6 +107,7 @@ export class GwConnection {
   private dropSocket(): void {
     const s = this.socket;
     this.socket = null;
+    this.open = false;
     if (!s) return;
     s.onopen = s.onclose = s.onmessage = s.onerror = null;
     try {
@@ -113,6 +130,7 @@ export class GwConnection {
     this.arm(CONNECT_TIMEOUT_MS, () => this.fail("connect timeout"));
     s.onopen = () => {
       this.failures = 0;
+      this.open = true;
       this.handlers.onState({ state: "OPEN" });
       this.arm(IDLE_TIMEOUT_MS, () => this.fail("idle timeout"));
     };
@@ -153,6 +171,11 @@ export function browserSocket(url: string): SocketLike {
     onclose: null,
     onmessage: null,
     onerror: null,
+    send: (text) => {
+      // CLOSING·CLOSED에서 브라우저는 예외 없이 버린다: 보내지 못했음을 호출자가 알도록 던진다
+      if (ws.readyState !== WebSocket.OPEN) throw new Error(`WebSocket not open (readyState ${ws.readyState})`);
+      ws.send(text);
+    },
     close: () => ws.close(),
   };
   ws.onopen = (ev) => s.onopen?.(ev);

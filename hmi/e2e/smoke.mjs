@@ -1,4 +1,4 @@
-// HMI 시연 점검 (STP 수준 D: TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01, TC-HMI-006-11)
+// HMI 시연 점검 (STP 수준 D: TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01, TC-HMI-006-11, TC-CMD-001-08·09, TC-CMD-004-02)
 // 실제 GW + SIM + HMI(vite dev)를 띄우고 브라우저(Playwright chromium)로 화면을 확인한다.
 //
 //   node e2e/smoke.mjs [--screenshot <png>] [--clock-skew <ms>]
@@ -72,14 +72,18 @@ async function startGateway(ports, wsPort) {
     "--sim-port", String(ports.sim), "--ws-port", String(wsPort),
   ]);
   gw.stdout.resume(); // IF-03 stdout은 버린다 (파이프가 차서 GW가 막히지 않도록)
+  // 진단(stderr)은 모아 둔다: 명령이 실제로 SIM에 나갔는지(`cmd sent`)를 화면이 아니라 GW 기록으로 확인
+  let log = "";
+  gw.stderr.on("data", (d) => (log += d));
   const m = await waitOutput(gw, "stderr", /ws:\/\/[^:]+:(\d+)\/ws/, "GW");
-  gw.stderr.resume();
-  return { proc: gw, wsPort: Number(m[1]) };
+  /** 이 GW가 SIM에 보낸 명령의 req_id, 처음 보낸 순서대로 (`cmd sent`는 재전송마다 찍히므로 같은 req_id는 하나로) */
+  const sentReqIds = () => [...new Set([...log.matchAll(/cmd sent req="([^"]*)"/g)].map((x) => x[1]))];
+  return { proc: gw, wsPort: Number(m[1]), sentReqIds };
 }
 
-function startSim(ports) {
-  // SIM은 GW의 HEARTBEAT를 sim 포트로 받고 TELEMETRY를 vehicle 포트로 보낸다 (HEARTBEAT가 없으면 3초 뒤 Failsafe 정지)
-  const sim = run("python3", ["-m", "ugvc_sim", "--port", String(ports.sim), "--gw-port", String(ports.vehicle)], {
+function startSim(ports, extraArgs = []) {
+  // SIM은 GW의 HEARTBEAT·COMMAND를 sim 포트로 받고 TELEMETRY·ACK를 vehicle 포트로 보낸다 (HEARTBEAT가 없으면 3초 뒤 Failsafe 정지)
+  const sim = run("python3", ["-m", "ugvc_sim", "--port", String(ports.sim), "--gw-port", String(ports.vehicle), ...extraArgs], {
     cwd: resolve(REPO, "sim"),
     env: { ...process.env, PYTHONPATH: `${resolve(REPO, "python")}:.` },
   });
@@ -173,7 +177,7 @@ async function scenario(browser) {
   checkPageErrors();
 
   step("2. SIM 10Hz 송신: 차량 링크 CONNECTED, 유실률·모드·배터리 표시, 마커와 궤적 이동, 차량 값 진하게");
-  const sim = startSim(ports);
+  let sim = startSim(ports);
   await expectText(page, "link-state-VEHICLE", "CONNECTED");
   await expectText(page, "loss-VEHICLE", "0.0%", 3000); // GW stats가 반영됨
   await expectText(page, "age-VEHICLE", /^0\.\ds 전$/); // 시계 차와 무관하게 0.x초 (음수·수 초가 아님)
@@ -191,7 +195,6 @@ async function scenario(browser) {
   await page.waitForTimeout(3000);
   const n2 = await drawnPoints();
   if (!(n2 >= n1 + 20)) throw new Error(`궤적이 늘지 않음: ${n1} -> ${n2} (3초, 10Hz)`);
-  if (screenshot) await page.screenshot({ path: screenshot });
   checkPageErrors();
 
   step("2b. 연결 중 HMI 시계 +3초 계단 변화: 데이터 지연 → 기준선 재설정(재접속 1회, 연결 끊김 표시 없음) → 다시 ok");
@@ -218,9 +221,84 @@ async function scenario(browser) {
   if (seen.some((t) => t.startsWith("GW 연결 끊김"))) throw new Error(`2b: 기준선 재설정을 연결 끊김으로 표시함: ${seen.join(" | ")}`);
   checkPageErrors();
 
-  step("3. SIM 중지: 차량 링크 LOST, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok");
+  step("2c. 명령: 버튼은 확인만 연다(취소하면 SIM에 아무것도 안 감), 보내기를 눌러야 송신, 결과 ACCEPTED 표시");
+  await expectAttr(page, "cmd-panel", "data-blocked", "false");
+  const firstRow = () => page.getByTestId("cmd-row").first();
+  /** 맨 위(가장 최근) 명령의 상태가 status가 될 때까지 기다린다 */
+  const expectRow = async (status, timeout = 3000) => {
+    const deadline = Date.now() + timeout;
+    let actual = null;
+    while (Date.now() < deadline) {
+      actual = await firstRow().getAttribute("data-status", { timeout: 100 }).catch(() => null);
+      if (actual === status) return;
+      await page.waitForTimeout(50);
+    }
+    throw new Error(`맨 위 명령 기대 ${status}, 실제 ${actual ?? "(없음)"}`);
+  };
+  await page.getByTestId("cmd-STOP").click();
+  await expectText(page, "cmd-confirm-text", "정지 (STOP)");
+  await page.getByTestId("cmd-cancel").click();
+  await page.waitForTimeout(1500);
+  if (gw.sentReqIds().length !== 0) throw new Error(`확인 없이 COMMAND가 나감: ${gw.sentReqIds()}`);
+  if ((await page.getByTestId("cmd-row").count()) !== 0) throw new Error("취소한 명령이 기록됨");
+  await page.getByTestId("cmd-STOP").click();
+  await page.getByTestId("cmd-send").click();
+  await expectRow("ACCEPTED");
+  await expectText(page, "cmd-row-text", "수락 (송신 1회)");
+  await page.getByTestId("wp-lat").fill("36.5");
+  await page.getByTestId("wp-lon").fill("127.25");
+  await page.getByTestId("cmd-WAYPOINT").click();
+  await expectText(page, "cmd-confirm-text", "경로점 이동 (WAYPOINT) 36.5000000, 127.2500000");
+  await page.getByTestId("cmd-send").click();
+  await expectRow("ACCEPTED");
+  const acceptedIds = await page.getByTestId("cmd-row").evaluateAll((els) => els.map((e) => e.dataset.reqId));
+  if (JSON.stringify(gw.sentReqIds()) !== JSON.stringify([...acceptedIds].reverse())) {
+    throw new Error(`GW 송신 기록 ${gw.sentReqIds()}과 화면 ${acceptedIds}이 다름`);
+  }
+  if (screenshot) await page.screenshot({ path: screenshot });
+  checkPageErrors();
+
+  step("2d. 결과 전에 GW 끊김: '결과 미확인', 새 GW에 자동 재송신 없음, 다시 시도는 경고가 붙은 새 확인 절차로 새 req_id, ACK가 없으면 TIMEOUT");
+  // ACK가 없는 SIM: 받은 COMMAND를 버린다(--drop-first). 차량 LOST를 거쳐 다시 띄워야 GW가 seq 기준값을 새로 잡는다
   await stop(sim);
   await expectText(page, "link-state-VEHICLE", "LOST", 3000);
+  sim = startSim(ports, ["--drop-first", "100"]);
+  await expectText(page, "link-state-VEHICLE", "CONNECTED", 5000);
+  await expectAttr(page, "cmd-panel", "data-blocked", "false");
+  await page.getByTestId("cmd-RTB").click();
+  await page.getByTestId("cmd-send").click();
+  await expectRow("PENDING", 1000);
+  await expectText(page, "cmd-row-text", /^결과 대기 중 · \d+초$/);
+  const lostReqId = await firstRow().getAttribute("data-req-id");
+  await stop(gw.proc);
+  await expectRow("UNCONFIRMED");
+  gw = await startGateway(ports, gw.wsPort);
+  await expectAttr(page, "connection-banner", "data-level", "ok", 8000);
+  await expectText(page, "link-state-VEHICLE", "CONNECTED");
+  await page.waitForTimeout(2000);
+  if (gw.sentReqIds().length !== 0) throw new Error(`새 GW에 자동 재송신함: ${gw.sentReqIds()}`);
+  await expectRow("UNCONFIRMED");
+  await page.getByTestId("cmd-RTB").click(); // 다시 시도: 새 명령
+  await expectText(page, "cmd-confirm-text", "복귀 (RTB)");
+  await expectText(page, "cmd-confirm-warning", "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음");
+  if (gw.sentReqIds().length !== 0) throw new Error("확인 없이 송신함");
+  await page.getByTestId("cmd-send").click();
+  await expectRow("TIMEOUT", 6000);
+  await expectText(page, "cmd-row-text", "응답 없음 (송신 4회)");
+  const resent = gw.sentReqIds();
+  const newReqId = await firstRow().getAttribute("data-req-id");
+  if (resent.length !== 1 || resent[0] !== newReqId || newReqId === lostReqId) {
+    throw new Error(`다시 시도 req_id: 화면 ${newReqId}, 이전 ${lostReqId}, GW 송신 ${resent}`);
+  }
+  checkPageErrors();
+
+  step("3. SIM 중지: 차량 링크 LOST, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok, 명령 버튼 비활성과 사유");
+  await stop(sim);
+  await expectText(page, "link-state-VEHICLE", "LOST", 3000);
+  await expectText(page, "cmd-blocked", "차량 링크 LOST · 명령을 보낼 수 없음");
+  for (const b of ["cmd-STOP", "cmd-RTB", "cmd-WAYPOINT"]) {
+    if (!(await page.getByTestId(b).isDisabled())) throw new Error(`${b}가 LOST에서 활성`);
+  }
   await expectAttr(page, "vehicle", "data-stale", "true");
   await expectAttr(page, "connection-banner", "data-level", "ok");
   checkPageErrors();
@@ -230,6 +308,7 @@ async function scenario(browser) {
   await expectAttr(page, "connection-banner", "data-level", "bad", 3000);
   await expectText(page, "banner-text", /^GW 연결 끊김 · (\d+초 후 재접속|재접속 중)$/);
   await expectAttr(page, "status-panel", "data-stale", "true");
+  await expectText(page, "cmd-blocked", "GW와 연결되지 않아 명령을 보낼 수 없음");
   checkPageErrors();
 
   step("5. GW 재시작(같은 포트): 자동 재접속, 새 stats로 다시 FRESH");

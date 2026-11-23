@@ -4,14 +4,17 @@
 // App.vue는 onChange로 받은 View를 그리기만 한다.
 
 import { GwConnection, type ConnEvent, type Deps } from "../net/gwConnection";
+import { commandText, type CommandSpec } from "../if03/messages";
+import { cancelDraft, commandSent, draftCommand } from "../state/commands";
 import {
   connectionLost, connectionOpened, initialState, needsResync, receiveText, resyncStarted, type HmiState,
 } from "../state/hmiState";
-import { present, type ConnView, type Presented } from "../state/view";
+import { commandBlock, present, type ConnView, type Presented } from "../state/view";
 
 export interface ControllerDeps extends Deps {
   now(): number; // HMI 벽시계 (ms): 메시지 수신 시각, 신선도
-  monotonic(): number; // 단조 시계 (ms): 재접속 카운트다운
+  monotonic(): number; // 단조 시계 (ms): 재접속 카운트다운, 명령 결과 대기 경과
+  newReqId(): string; // 명령마다 유일한 req_id (ICD 7.2). 보낼 때마다 새로 발급
 }
 
 export type View = { state: HmiState; conn: ConnView } & Presented;
@@ -57,6 +60,32 @@ export class HmiController {
     this.onChange(this.view());
   }
 
+  /** 명령 버튼: 확인 절차를 시작한다. 아직 보내지 않는다 (REQ-CMD-001). 다시 시도도 새 명령으로 이 경로다 */
+  requestCommand(spec: CommandSpec): void {
+    this.update({ ...this.state, commands: draftCommand(this.state.commands, spec) });
+  }
+
+  cancelCommand(): void {
+    this.update({ ...this.state, commands: cancelDraft(this.state.commands) });
+  }
+
+  /**
+   * 운용자 확인: 확인을 기다리던 명령을 새 req_id로 보낸다. 지금 보낼 수 없으면(REQ-CMD-004: GW 연결 없음,
+   * 차량 링크 LOST) 보내지 않고 확인 단계에 그대로 둔다. 같은 req_id로 다시 보내는 경로는 없다 (이슈 #27)
+   */
+  confirmCommand(): void {
+    const draft = this.state.commands.draft;
+    if (draft === null || commandBlock(this.state, this.conn) !== null) return;
+    const reqId = this.deps.newReqId();
+    if (!this.connection.send(commandText(reqId, draft))) return;
+    this.update({ ...this.state, commands: commandSent(this.state.commands, reqId, this.deps.monotonic()) });
+  }
+
+  private update(state: HmiState): void {
+    this.state = state;
+    this.onChange(this.view());
+  }
+
   private onText(text: string): void {
     this.state = receiveText(this.state, text, this.deps.now());
     this.onChange(this.view());
@@ -77,7 +106,8 @@ export class HmiController {
       case "CONNECTING":
         switch (ev.cause) {
           case "resync":
-            // 재설정은 연결 끊김이 아니다: 연결 범위만 버린다 (궤적은 텔레메트리 seq 간격으로 apply()가 정한다)
+            // 재설정은 연결 끊김이 아니다: 궤적은 끊지 않는다(텔레메트리 seq 간격으로 apply()가 정한다).
+            // 연결 범위는 버리고, 명령은 결과 미확인·확인 단계 닫힘 (resyncStarted)
             this.state = resyncStarted(this.state);
             break;
           case "first":
@@ -90,4 +120,14 @@ export class HmiController {
     }
     this.onChange(this.view());
   }
+}
+
+/**
+ * 명령 req_id: 128비트 난수의 16진 32자 (ICD 7.2: 1~64바이트, 명령마다 유일).
+ * crypto.randomUUID는 보안 맥락(https, localhost)에서만 있으므로, 다른 PC에서 http로 연 HMI에서도 되는
+ * getRandomValues를 쓴다
+ */
+export function randomReqId(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
