@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.4.1 (초안) |
+| 버전 | v0.4.2 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.18, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.19, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -30,6 +30,7 @@
 | v0.3.3 | 2026-11-14 | 6.1 PR #24 3차 리뷰 반영: 거절 기록을 `rejected_`로 분리(상한 따로), 늦은 판정 규칙 `due = max(due + 1.0s, now + 1.0s − kJudgePeriod)`, `kJudgePeriod`를 tracker 헤더로. 관련 문서 버전 갱신 |
 | v0.4 | 2026-11-20 | 6.2 SIM을 한 프로세스로(`python -m ugvc_sim`, 단일 스레드): 순수 `Simulator`(차량 상태 + HEARTBEAT 감시 + 명령 처리, 시각 주입), 명령을 주행 모사에 반영(`apply_command`), Failsafe 진입·해제(REQ-SAFE-001·002, ICD v0.15 6.5). `CommandResponder`·`telemetry_sender`는 `Simulator`·`app`으로 대체. 2장 그림, 7장 표 |
 | v0.4.1 | 2026-11-20 | 6.2 PR #36 1차 리뷰 반영: `app`은 송신 OSError를 기록만 하고 계속 돎(GW 주소는 시작 때 한 번 해석), 한 주기 넘게 늦으면 몰아 보내지 않음, 두절 중 STOP은 `execute = None`, 경과 시간은 처리 시각 기준이라는 한계, 시작 상태(명령 없이 MISSION 주행)는 시연용 선택. 6장 시퀀스의 SIM 처리 이름 정정 |
+| v0.4.2 | 2026-11-23 | 6.2 PR #36 2차 리뷰 반영: 주기 중간에 받은 명령은 그때까지 이전 상태로 진행한 뒤 적용, 수신 오류는 실패 시작에만 기록하고 소켓이 없어진 오류(EBADF·ENOTSOCK)는 종료, 시작 시 설정 오류 검사(루프백 바인드에 외부 GW, 이름 해석의 UnicodeError, `--rate`는 유한한 0 초과 1000 이하) |
 
 ---
 
@@ -226,7 +227,7 @@ stateDiagram-v2
   - **시작 상태는 시연용 선택이다.** SIM은 명령 없이 MISSION(경로 없이 방위 87.25° 직진, 4.5 m/s)으로 시작한다(시연 점검이 진행 방향·궤적을 이것으로 확인). HEARTBEAT가 한 번도 오지 않으면 3.0s 동안 약 13 m 간 뒤 Failsafe로 멈춘다. 기동 시 운용자 명령 없이 출발해도 되는지는 규격에 없으며, STANDBY로 시작해 명령으로 출발하게 할지는 이슈로 남긴다.
   - `step`: MISSION은 첫 경로점 방향으로 4.5 m/s, 도착하면 그 점에 붙고 다음 점으로, 마지막이면 STANDBY. 경로가 없는 MISSION(시작 상태)은 고정 방위로 직진하는 시연 구간이다. RTB는 출발 지점 도착 시 STANDBY. STOPPED·STANDBY는 움직이지 않고 배터리만 닳는다.
   - STOP·RTB·Failsafe가 경로를 비우는 것은 SIM의 선택이다(ICD에 없음). 정지 뒤 받은 WAYPOINT가 예전 경로 뒤에 붙어 운용자가 모르는 곳으로 가지 않게 한다.
-- **`app.run`**: TELEMETRY와 ACK는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 각자 seq 스트림(0부터)을 쓴다. 첫 TELEMETRY는 시작 상태 그대로이고, 그 뒤 상태는 실제 경과 시간만큼 진행한다. 한 주기 넘게 늦으면 밀린 TELEMETRY를 몰아 보내지 않고 지금부터 다시 잰다. **송신 실패(OSError: 경로 없음 등)는 기록만 하고 계속 돈다.** 두절 상황에서 SIM이 죽으면 Failsafe가 사라지기 때문이다(실패 시작·회복 때만 `send_error`·`send_ok` 한 줄). GW 주소는 시작 때 한 번 해석해 실행 중 이름 해석 실패가 없다. stdout에는 사건마다 JSON 한 줄(`command`, `heartbeat`, `reject`, `drop`)과 전이(`failsafe`, `mode`)를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
+- **`app.run`**: TELEMETRY와 ACK는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 각자 seq 스트림(0부터)을 쓴다. 첫 TELEMETRY는 시작 상태 그대로이고, 그 뒤 상태는 실제 경과 시간만큼 진행한다. 한 주기 넘게 늦으면 밀린 TELEMETRY를 몰아 보내지 않고 지금부터 다시 잰다. **송신 실패(OSError: 경로 없음 등)는 기록만 하고 계속 돈다.** 두절 상황에서 SIM이 죽으면 Failsafe가 사라지기 때문이다(실패 시작·회복 때만 `send_error`·`send_ok` 한 줄). GW 주소는 시작 때 한 번 해석해 실행 중 이름 해석 실패가 없다. 시작 때 고칠 수 없는 설정(이름 해석 실패, `--host`가 루프백인데 GW가 루프백이 아님, `--rate`가 유한한 0 초과 1000 이하가 아님)은 실행 전에 오류로 끝낸다. 수신 오류도 실패 시작에만 `recv_error` 한 줄을 쓰고 계속 돌며, 소켓 자체가 없어진 경우(EBADF·ENOTSOCK)만 종료한다. 주기 중간에 받은 COMMAND는 받은 시각까지 이전 상태로 진행한 뒤 적용한다(STOP 전 이동이 사라지거나 RTB가 주기 시작부터 적용되지 않게). stdout에는 사건마다 JSON 한 줄(`command`, `heartbeat`, `reject`, `drop`)과 전이(`failsafe`, `mode`)를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
 
 ## 7. 시험 용이성을 위한 설계
 
