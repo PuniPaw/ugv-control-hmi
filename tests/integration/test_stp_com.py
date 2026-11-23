@@ -6,7 +6,7 @@ import pytest
 
 from ugvc_proto.frame import MsgType, Reject, check_frame, encode_frame
 
-from ugvc_sim.telemetry_sender import START
+from ugvc_sim.vehicle import START
 from ugvc_sim.vehicle import step, to_telemetry
 
 

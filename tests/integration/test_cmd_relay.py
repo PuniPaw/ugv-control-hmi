@@ -1,6 +1,6 @@
 """명령 중계·재전송 (REQ-CMD-002·003·005·006, ICD 6.3·6.4·7.1 cmd_result·7.2 command).
 
-실제 GW와 실제 SIM 수신부(`ugvc_sim.uplink`)를 띄우고, Python WebSocket 클라이언트를 HMI로 써서 확인한다.
+실제 GW와 실제 SIM(`python -m ugvc_sim`)을 띄우고, Python WebSocket 클라이언트를 HMI로 써서 확인한다.
 SIM은 GW의 HEARTBEAT·COMMAND 포트(`--sim-port`)에서 받고, ACK는 GW 차량 포트(`--vehicle-port`)로 보낸다.
 """
 import asyncio
@@ -8,6 +8,7 @@ import json
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -29,12 +30,12 @@ def _ws_url(gateway):
 
 @pytest.fixture
 def sim_uplink(gateway):
-    """SIM 수신부를 띄우는 함수. drop_first: 처음 받은 COMMAND N개를 무시한다 (첫 송신 유실 재현)."""
+    """SIM을 띄우는 함수. drop_first: 처음 받은 COMMAND N개를 무시한다 (첫 송신 유실 재현)."""
     procs = []
 
     def start(drop_first: int = 0, gw_port: int | None = None):
         p = subprocess.Popen(
-            [sys.executable, "-m", "ugvc_sim.uplink", "--port", str(gateway.sim_port),
+            [sys.executable, "-m", "ugvc_sim", "--port", str(gateway.sim_port),
              "--gw-port", str(gateway.vehicle_port if gw_port is None else gw_port), "--drop-first", str(drop_first)],
             cwd=REPO / "sim", env=_sim_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         procs.append(p)
@@ -223,23 +224,49 @@ def test_REQ_CMD_003_restarted_gw_does_not_reuse_cmd_ids(gateway, sim_uplink, re
         (first["data"]["cmd_id"], True), (second["data"]["cmd_id"], True)]
 
 
+def _keep_vehicle_link_connected(gateway, stop: threading.Event) -> threading.Thread:
+    """차량 포트로 TELEMETRY를 10Hz로 계속 보내 SIM을 다시 시작하는 동안에도 차량 링크를 CONNECTED로 둔다.
+
+    seq를 SIM보다 훨씬 큰 값에서 시작하므로 SIM의 TELEMETRY는 order로 버려지고, 링크는 이 송신기로만 유지된다.
+    그래서 GW가 차량 링크 LOST 뒤 기준값 재설정으로 새 SIM의 ACK seq 0을 우연히 받아 주는 일이 없다.
+    """
+    from ugvc_proto.frame import MsgType, encode_frame
+    from ugvc_sim.vehicle import START, to_telemetry
+
+    def send():
+        payload = to_telemetry(START).to_payload()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            seq = 1_000_000
+            while not stop.is_set():
+                s.sendto(encode_frame(MsgType.TELEMETRY, seq, int(time.time() * 1000), payload),
+                         ("127.0.0.1", gateway.vehicle_port))
+                seq += 1
+                stop.wait(0.1)
+
+    t = threading.Thread(target=send, daemon=True)
+    t.start()
+    return t
+
+
 def test_REQ_CMD_002_restarted_sim_uplink_acks_are_accepted(gateway, sim_uplink):
-    """텔레메트리로 차량 링크가 CONNECTED인 채 SIM 수신부만 다시 시작해 ACK seq가 0부터 시작해도 결과가 온다."""
-    tel = subprocess.Popen(
-        [sys.executable, "-m", "ugvc_sim.telemetry_sender", "--port", str(gateway.vehicle_port)],
-        cwd=REPO / "sim", env=_sim_env(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """차량 링크가 CONNECTED인 채로 SIM만 다시 시작해 ACK seq가 0부터 시작해도 결과가 온다 (ACK는 seq 검증 제외)."""
+    stop = threading.Event()
+    sender = _keep_vehicle_link_connected(gateway, stop)
     try:
         sim = sim_uplink()
         for i in range(3):
             r, _ = _run(gateway, {"req_id": f"a{i}", "cmd_type": "STOP"}, 3.0)
             assert r is not None and r["data"]["result"] == "ACCEPTED"
         _sim_commands(sim)
+        gateway.drain()
         sim_uplink()  # 다시 시작: ACK seq 0부터
         r, _ = _run(gateway, {"req_id": "after-restart", "cmd_type": "STOP"}, 3.0)
         assert r is not None and r["data"]["result"] == "ACCEPTED" and r["data"]["attempts"] == 1
+        reports = gateway.messages("link_status", 2, timeout_s=2.5, pred=lambda m: m["data"]["source"] == "VEHICLE")
+        assert reports and all(m["data"]["state"] == "CONNECTED" for m in reports), reports  # 재시작 내내 CONNECTED
     finally:
-        tel.terminate()
-        tel.wait(timeout=5)
+        stop.set()
+        sender.join(timeout=2)
 
 
 def test_REQ_CMD_002_invalid_command_with_pending_req_id_does_not_give_a_second_result(gateway, sim_uplink):
@@ -310,3 +337,62 @@ def test_REQ_CMD_002_corrected_command_with_a_rejected_req_id_is_not_sent(gatewa
     assert _sim_commands(sim) == []
     assert _stderr_lines(gateway, 'cmd ignored req="X" reason=req_id used by a recent invalid command', 1)
     assert _stderr_lines(gateway, 'cmd result req="X"', 2)[-1].rstrip().endswith("(repeated)")
+
+
+async def _telemetry_for(ws, seconds: float) -> list[dict]:
+    """seconds 동안 받은 IF-03 telemetry의 data 전부."""
+    out, deadline = [], time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            m = json.loads(await asyncio.wait_for(ws.recv(), deadline - time.monotonic()))
+        except asyncio.TimeoutError:
+            break
+        if m["type"] == "telemetry":
+            out.append(m["data"])
+    return out
+
+
+def _is_failsafe(d: dict) -> bool:
+    return d["mode"] == "STOPPED" and d["speed_mps"] == 0 and "FAILSAFE_ACTIVE" in d["flags"]
+
+
+def test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command(gateway, sim_uplink):
+    """GW가 3초 넘게 없으면 SIM이 정지한다. GW가 돌아와 HEARTBEAT가 이어져도 정지·FAILSAFE_ACTIVE가 유지되고,
+    HMI의 RTB 명령으로만 ACCEPTED와 함께 주행(RTB)을 재개한다 (REQ-SAFE-001, REQ-SAFE-002)."""
+    sim_uplink()
+    ports = [gateway.vehicle_port, gateway.detector_port, gateway.sim_port]
+
+    async def first_telemetry():
+        async with websockets.connect(_ws_url(gateway)) as ws:
+            return await _telemetry_for(ws, 1.0)
+
+    before = asyncio.run(first_telemetry())
+    assert before and all(d["mode"] == "MISSION" and "FAILSAFE_ACTIVE" not in d["flags"] for d in before)
+
+    stop_gateway(gateway)
+    time.sleep(3.8)  # SIM은 HEARTBEAT를 3.0초 넘게 못 받는다
+    gw2 = start_gateway(ports)
+    try:
+        async def after_restart():
+            async with websockets.connect(_ws_url(gw2)) as ws:
+                stopped = await _telemetry_for(ws, 1.6)  # GW와 HEARTBEAT가 돌아온 뒤에도
+                await ws.send(json.dumps({"type": "command", "data": {"req_id": "resume", "cmd_type": "RTB"}}))
+                deadline = time.monotonic() + 3.0
+                result, resumed = None, []
+                while time.monotonic() < deadline and not (result and resumed):
+                    try:
+                        m = json.loads(await asyncio.wait_for(ws.recv(), max(0.0, deadline - time.monotonic())))
+                    except asyncio.TimeoutError:
+                        break
+                    if m["type"] == "cmd_result" and m["data"]["req_id"] == "resume":
+                        result = m["data"]
+                    elif m["type"] == "telemetry" and result and m["data"]["mode"] == "RTB":
+                        resumed.append(m["data"])
+                return stopped, result, resumed
+
+        stopped, result, resumed = asyncio.run(after_restart())
+    finally:
+        stop_gateway(gw2)
+    assert len(stopped) >= 10 and all(_is_failsafe(d) for d in stopped), stopped[:2]
+    assert result is not None and result["result"] == "ACCEPTED", result
+    assert resumed and all("FAILSAFE_ACTIVE" not in d["flags"] and d["speed_mps"] > 0 for d in resumed)

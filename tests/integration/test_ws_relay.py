@@ -12,7 +12,7 @@ import websockets
 
 from ugvc_proto.frame import MsgType, encode_frame
 
-from ugvc_sim.telemetry_sender import START
+from ugvc_sim.vehicle import START
 from ugvc_sim.vehicle import step, to_telemetry
 
 

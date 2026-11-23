@@ -12,7 +12,7 @@ import pytest
 from conftest import GATEWAY_BIN, GW_TEST_ARGS, REPO, free_udp_port
 from ugvc_proto.frame import MsgType, encode_frame
 
-from ugvc_sim.telemetry_sender import START
+from ugvc_sim.vehicle import START
 from ugvc_sim.vehicle import to_telemetry
 
 

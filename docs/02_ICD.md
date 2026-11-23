@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-ICD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.14 |
+| 버전 | v0.15 |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, ADR-001 (영상 경로), ADR-002 (수치 표현·바이트 순서) |
 
@@ -26,6 +26,7 @@
 | v0.12 | 2026-11-14 | 명령 중계 PR #24 1차 리뷰 반영: 7.3 cmd_id 시작값을 0.1초 단위 시각으로(GW 재시작 뒤 번호 재사용 방지), 재전송 시각은 예정 시각 기준. 7.2 req_id 규칙(대기 중·최근 60초 결과가 있는 req_id는 다시 보내지 않음, 같은 명령이면 같은 결과를 다시 알림, 그 밖은 무시하고 기록), req_id 길이는 바이트. 9장 규칙 ⑨에서 ACK 스트림 제외. 표 6-5 정리, REJECTED_STATE 사용 시점 |
 | v0.13 | 2026-11-14 | 명령 중계 PR #24 2차 리뷰 반영: 7.2 형식 오류로 거절한 req_id도 기억(같은 형식 오류에는 같은 거절을 다시, 고친 명령은 무시), 재시도는 새 req_id로, 기억은 GW 프로세스 안에만 있다는 한계와 HMI 규칙(새 연결 뒤 자동 재송신 금지). 7.3 판정이 1.0s 이상 늦으면 그 시각부터 1.0s를 기다림, 몰아 보낸 명령 직후 GW 재시작의 실패 형태. 9장 ACK 스트림은 유실 계산에서도 제외하고 그 결과(같은 ACK 반복도 유효 패킷). 참고: v0.11 행의 절 번호(6.4 → 6.3)는 v0.12 개정 때 그 행 안에서 고쳤다 |
 | v0.14 | 2026-11-14 | 명령 중계 PR #24 3차 리뷰 반영: 7.2 형식 오류 거절 기록은 송신한 명령 기록과 상한(256개)을 따로 씀(거절이 몰려도 실행된 명령의 기억이 밀려나지 않음), "결과는 하나뿐"은 기억하는 동안(60초, 각 256개)으로 한정. 7.3 늦은 판정 규칙을 하나로: 다음 판정 = max(예정 시각 + 1.0s, 실제 송신 + 0.95s) (v0.13의 "1.0s 이상 늦으면" 규칙은 0~1.0s 늦음에서 ACK 대기가 줄었음) |
+| v0.15 | 2026-11-20 | Failsafe 구현 (SRS v0.8 REQ-SAFE-001·002): 표 6-2 FAILSAFE_ACTIVE를 설정·해제하는 시점, 표 6-5 REJECTED_STATE를 SIM이 쓰는 경우(HEARTBEAT 두절 중 받은 RTB·WAYPOINT), 6.5 Failsafe 해제 규칙 |
 
 ---
 
@@ -115,7 +116,7 @@
 | 0 | GPS_VALID | 위치 유효 |
 | 1 | CAMERA_OK | 카메라 정상 |
 | 2 | BATTERY_LOW | 배터리 20% 이하 |
-| 3 | FAILSAFE_ACTIVE | HEARTBEAT 두절로 자율 정지함 (SRS REQ-SAFE-001) |
+| 3 | FAILSAFE_ACTIVE | HEARTBEAT 두절로 자율 정지함 (SRS REQ-SAFE-001). 이 비트가 켜진 동안 mode는 STOPPED다. HEARTBEAT가 다시 와도 꺼지지 않고, 6.5의 해제 규칙에 따라 수락한 COMMAND로만 꺼진다 (SRS REQ-SAFE-002) |
 | 4–15 | 예약 | 0 |
 
 ### 6.2 DETECTION (`0x02`, 17 + 11 × count 바이트)
@@ -183,13 +184,23 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 |---|---|---|
 | 0 | ACCEPTED | 수락 |
 | 1 | REJECTED_INVALID | 필드 값 오류 (범위 밖 좌표 등). SIM은 cmd_id ≥ 1이고 cmd_type·좌표가 6.3 범위를 벗어난 COMMAND를 실행하지 않고 이 값으로 ACK한다. cmd_id가 0이면 응답할 대상이 없으므로 ACK 없이 폐기한다 |
-| 2 | REJECTED_STATE | 현재 상태에서 수행 불가 (FAULT 등). SIM은 아직 이 값을 만들지 않는다. Failsafe 작업(REQ-SAFE-001·002)에서 FAULT 등 수행할 수 없는 상태일 때 쓴다 |
+| 2 | REJECTED_STATE | 현재 상태에서 수행 불가. SIM은 HEARTBEAT를 3.0초 이상 받지 못한 동안 받은 RTB·WAYPOINT를 실행하지 않고 이 값으로 ACK한다(6.5). STOP은 이 경우에도 ACCEPTED다 |
 
 SIM은 ACK를 COMMAND를 보낸 주소가 아니라 GW의 차량 수신 포트(IF-01a, 기본 15001)로 보낸다. ACK는 SIM의 ACK 스트림으로 자기 seq(u32, 0부터)를 쓴다(3장, 스트림 단위 seq). GW는 ACK 스트림에 규칙 ⑨를 적용하지 않는다(9장).
 
 ### 6.5 HEARTBEAT (`0x20`, 0 바이트)
 
-페이로드 없음. SIM은 3.0초 이상 수신하지 못하면 Failsafe 정지한다 (SRS REQ-SAFE-001).
+페이로드 없음. SIM은 3.0초 이상 수신하지 못하면 Failsafe 정지한다 (SRS REQ-SAFE-001). 시작 후 한 번도 받지 못했으면 시작 시각부터 잰다. 정지 전 mode와 상관없이 mode STOPPED, speed 0, FAILSAFE_ACTIVE가 된다.
+
+Failsafe 해제 (SRS REQ-SAFE-002):
+
+| 명령을 받은 때 | STOP | RTB · WAYPOINT |
+|---|---|---|
+| HEARTBEAT 수신 중 (마지막 HEARTBEAT 후 3.0초 미만) | ACCEPTED. FAILSAFE_ACTIVE 해제, STOPPED 유지 | ACCEPTED. FAILSAFE_ACTIVE 해제, 명령대로 주행 (RTB · MISSION) |
+| HEARTBEAT 두절 중 (3.0초 이상) | ACCEPTED. 정지·FAILSAFE_ACTIVE 유지 | REJECTED_STATE. 실행하지 않음 |
+
+- HEARTBEAT가 다시 오는 것만으로는 해제되지 않는다. 운용자가 명령을 보내야 한다.
+- 이미 처리한 cmd_id는 이 표가 아니라 6.3에 따라 첫 result로만 다시 ACK한다. 두절 중 REJECTED_STATE를 받은 cmd_id를 링크 복구 뒤 다시 받아도 REJECTED_STATE다. 운용자가 다시 명령하면 GW가 새 cmd_id를 발급하므로(7.3) 실행된다.
 
 ---
 
