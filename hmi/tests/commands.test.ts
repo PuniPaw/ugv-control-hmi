@@ -62,6 +62,10 @@ it("REQ_CMD_001 confirmation warns about an unresolved command of the same kind 
   expect(sameKindUnresolved(log, { cmd_type: "RTB" })?.reqId).toBe("r2");
   log = resultReceived(send(log, "r3"), accepted("r3"));
   expect(sameKindUnresolved(log, { cmd_type: "RTB" })).toBeNull();
+  // 숨기는 것은 오래된 결과 미확인뿐: 오래된 명령이 아직 결과 대기(GW 재전송 중)면 더 새 명령이 결과를 받아도 경고
+  let pending = send(emptyCommandLog(), "p1");
+  pending = resultReceived(send(pending, "p2"), accepted("p2"));
+  expect(sameKindUnresolved(pending, { cmd_type: "RTB" })?.reqId).toBe("p1");
 });
 
 it("REQ_CMD_001 waypoint input accepts decimal degrees within ICD 7.2 ranges only", () => {

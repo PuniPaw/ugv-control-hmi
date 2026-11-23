@@ -467,3 +467,13 @@ it("REQ_CMD_001 a result lost in the backlog dropped by a baseline resync ends a
   expect(h.view().command.confirm?.warning).toBeNull();
   expect(sentCommands(h).map((m) => m.data.req_id)).toEqual(["r1", "r2"]);
 });
+
+it("REQ_CMD_001 a baseline resync closes an open confirmation so nothing is sent on it", () => {
+  // 리뷰 4차 #1: 데이터가 5초 넘게 늦던 때 연 확인으로 새 연결에서 보내지 않는다
+  const h = readyHarness();
+  resyncByClockStep(h, () => h.c.requestCommand({ cmd_type: "RTB" }));
+  expect(h.view().command.confirm).toBeNull();
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  h.c.confirmCommand();
+  expect(sentCommands(h)).toEqual([]);
+});

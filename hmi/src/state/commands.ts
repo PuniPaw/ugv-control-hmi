@@ -6,7 +6,8 @@
 // 보낸 명령은 결과를 기다리거나(PENDING), 결과를 받았거나(DONE), 결과 전에 연결이 끝나 결과를 받지 못했다
 // (UNCONFIRMED). 연결이 끝나는 것은 IF-03 끊김(GW가 다시 시작돼 req_id 기억이 사라졌을 수도 있다, ICD 7.2 한계)과
 // 기준선 재설정 재접속(밀린 메시지를 버리므로 그 안의 cmd_result를 놓쳤을 수 있다, ICD 7장) 둘이다.
-// GW는 cmd_result를 확정할 때 한 번만 보내므로, 연결이 끝난 뒤에는 그 뒤에 확정된 결과만 받는다.
+// GW는 새 연결에 지난 cmd_result를 스스로 다시 보내지 않는다(같은 req_id가 다시 올 때만 다시 보내는데, HMI는 같은
+// req_id를 다시 보내지 않는다. ICD 7.2). 그래서 연결이 끝난 뒤에는 그 뒤에 확정된 결과만 받는다.
 // 상태는 메시지와 연결 이벤트로만 바뀌고 시간으로는 바뀌지 않는다. GW가 결과를 낼 때까지의 시간은
 // 정해져 있지 않기 때문이다(ICD 7.3 늦은 판정, IF-03 전달 지연). 대기 시간은 화면에 경과 초로만 보인다.
 //
@@ -92,14 +93,19 @@ export function connectionEnded(log: CommandLog): CommandLog {
 }
 
 /**
- * 확인할 명령과 같은 종류의 가장 최근 명령이 결과를 아직 받지 못했으면 그 명령 (확인 단계의 경고). 그 명령은
- * 이미 실행됐거나 실행 중일 수 있으므로 새로 보내면 두 번 실행될 수 있다. 더 새 같은 종류 명령이 결과를 받았으면
- * 그보다 오래된 결과 미확인으로는 경고하지 않는다(결과가 영영 오지 않는 명령 때문에 경고가 늘 켜져 있지 않도록).
+ * 확인할 명령과 같은 종류인데 결과를 아직 받지 못한 명령 (확인 단계의 경고). 그 명령은 이미 실행됐거나
+ * 실행 중일 수 있으므로 새로 보내면 두 번 실행될 수 있다.
+ * - 결과 대기(PENDING) 중인 같은 종류가 있으면 그것(GW가 아직 재전송 중일 수 있다)
+ * - 없으면 같은 종류의 가장 최근 명령이 결과 미확인일 때만 그것. 더 새 같은 종류 명령이 결과를 받았으면 그보다
+ *   오래된 결과 미확인으로는 경고하지 않는다(결과가 영영 오지 않는 명령 때문에 경고가 늘 켜져 있지 않도록)
  * STOP은 두 번 실행돼도 정지 상태 그대로라 경고하지 않는다
  */
 export function sameKindUnresolved(log: CommandLog, spec: CommandSpec): SentCommand | null {
   if (spec.cmd_type === "STOP") return null;
-  const latest = log.sent.find((c) => c.spec.cmd_type === spec.cmd_type);
+  const same = log.sent.filter((c) => c.spec.cmd_type === spec.cmd_type);
+  const pending = same.find((c) => c.status.kind === "PENDING");
+  if (pending) return pending;
+  const latest = same[0];
   return latest && unresolved(latest) ? latest : null;
 }
 

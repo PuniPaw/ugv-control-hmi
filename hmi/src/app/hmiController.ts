@@ -106,7 +106,8 @@ export class HmiController {
       case "CONNECTING":
         switch (ev.cause) {
           case "resync":
-            // 재설정은 연결 끊김이 아니다: 연결 범위만 버린다 (궤적은 텔레메트리 seq 간격으로 apply()가 정한다)
+            // 재설정은 연결 끊김이 아니다: 궤적은 끊지 않는다(텔레메트리 seq 간격으로 apply()가 정한다).
+            // 연결 범위는 버리고, 명령은 결과 미확인·확인 단계 닫힘 (resyncStarted)
             this.state = resyncStarted(this.state);
             break;
           case "first":

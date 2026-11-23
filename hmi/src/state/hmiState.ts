@@ -108,11 +108,11 @@ export function connectionOpened(s: HmiState, at: number): HmiState {
  * 확인 단계는 닫는다 (state/commands.ts).
  */
 export function connectionLost(s: HmiState): HmiState {
-  return { ...s, session: null, lastFixSeq: null, commands: connectionEnded(s.commands) };
+  return { ...resyncStarted(s), lastFixSeq: null }; // 재설정과 다른 것은 궤적을 끊는 것뿐
 }
 
 /**
- * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)만 버린다. IF-03 연결 끊김이 아니므로
+ * 기준선 재설정을 위한 재접속이 시작될 때: 연결 범위(session)를 버리고 명령을 정리한다(아래). IF-03 연결 끊김이 아니므로
  * 여기서는 궤적을 끊지 않는다. 재설정 동안 버린 적체·접속 시간만큼 텔레메트리 seq가 건너뛰므로,
  * 그 간격이 NO_FIX_GAP_SAMPLES 이상이면 다음 유효 위치에서 apply()가 끊는다.
  * 명령은 끊김과 같이 다룬다: 재접속은 밀린 메시지를 버리므로 그 안의 cmd_result를 놓쳤을 수 있다(ICD 7장).
