@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.19 (초안) |
+| 버전 | v0.20 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-SDD-001 v0.4.2, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.7, UGVC-ICD-001 v0.14, UGVC-SDD-001 v0.4.3, ADR-002 |
 
 ## 개정 이력
 
@@ -31,6 +31,7 @@
 | v0.17 | 2026-11-20 | HMI 명령 패널: TC-CMD-001-01~10(운용자 확인 절차, command 텍스트·송신, cmd_result 표시, 연결이 끝난 뒤 자동 재송신 금지와 재시도 새 req_id(이슈 #27), 경로점 입력), TC-CMD-004-01·02(차량 링크 LOST·GW 연결 없음이면 비활성과 사유), TC-HMI-007-06(cmd_result 수신 검증) 추가. 시연 점검에 명령 단계(2c·2d)와 3·4단계의 명령 차단 확인 추가 |
 | v0.18 | 2026-11-20 | PR #35 1차 리뷰 반영: TC-CMD-004-03(재접속·기준선 재설정 뒤 이 연결의 차량 link_status 전에는 차단) 추가, TC-CMD-004-01 기대 결과(첫 link_status 전 사유 "차량 링크 상태 수신 전", IF-03 끊김이면 확인 단계 닫힘). TC-CMD-001-11(기준선 재설정은 결과 대기 유지, 결과 기한 5s 뒤에만 결과 미확인) 추가, TC-CMD-001-05는 진짜 끊김만. TC-CMD-001-03(결과 대기 중 명령은 기록 상한으로 밀리지 않음), 001-06(다시 보내기 경고, 이미 다시 보낸 명령·결과 대기 중 명령은 다시 보내기 없음), 001-07(소수 8자리 거절), 001-09(경고 확인, 이전 행에 다시 보내기 없음, `cmd sent`는 req_id별 하나로 비교), TC-HMI-007-06(TIMEOUT은 attempts 4만) |
 | v0.19 | 2026-11-20 | PR #35 2차 리뷰 반영: 행별 다시 보내기와 결과 기한을 없앰. TC-CMD-001-06을 "다시 시도는 경고가 붙은 새 명령(새 req_id)"으로, TC-CMD-001-11을 "결과가 얼마나 늦어도(30s), 재설정을 넘어도 결과 대기"로 바꿈(결과 기한 경계 시험 삭제), TC-CMD-001-12(경고한 명령의 늦은 결과가 열린 확인 단계를 닫아 송신 0) 추가. TC-CMD-001-03은 결과 미확인도 상한으로 밀리지 않음, 001-05는 끊긴 뒤 새 연결의 결과 반영, 001-09는 smoke 2d를 새 흐름으로 |
+| v0.20 | 2026-11-23 | PR #35 3차 리뷰 반영: 기준선 재설정도 결과 대기 명령을 결과 미확인으로. TC-CMD-001-11(b) 기대 결과를 "재설정 뒤 결과 미확인, 새 연결 뒤 확정된 결과는 반영"으로 바꾸고 시험 이름 변경, TC-CMD-001-13(버린 적체에서 잃은 결과는 결과 미확인, 더 새 같은 종류의 결과로 경고 끝) 추가, TC-CMD-001-06에 같은 종류의 가장 최근 명령만 경고. 없어진 다시 보내기 문구 정리(TC-CMD-001-04 기대 결과, 4장 시연 절차) |
 
 ---
 
@@ -365,15 +366,16 @@ U는 vitest(가짜 소켓·타이머·시계, `HmiController`와 순수 함수 `
 | TC-CMD-001-01 | U | STOP·RTB·WAYPOINT command 텍스트 | ICD 7.2 봉투(`type` command, `data`에 req_id·cmd_type), 좌표는 WAYPOINT만 | `commands.test.ts > REQ_CMD_001 command text follows ICD 7.2 with coordinates only for WAYPOINT` |
 | TC-CMD-001-02 | U | 세 버튼 각각 누르고 취소, 확인할 명령 없이 확인, WAYPOINT 확인 두 번 | 버튼·취소만으로는 송신 0, 확인 단계에 명령 문구(좌표 7자리), 확인하면 한 번만 송신하고 확인 단계가 끝남, 기록은 PENDING | `hmiController.test.ts > REQ_CMD_001 a command button only opens confirmation, cancel sends nothing, confirm sends once` |
 | TC-CMD-001-03 | U | 확인할 명령 없이 송신 기록, 취소 뒤 송신 기록, 결과 전에 25개 송신 후 끊김, 그 뒤 결과를 받고 하나 더 송신 | draft 없으면 기록 없음. 결과를 받지 못한 25개(결과 미확인)는 모두 남고 첫 명령의 늦은 결과도 맞춰짐(상한 20을 넘어도 밀리지 않음). 결과를 받은 것부터 지워져 20개, 최근 것부터 | `commands.test.ts > REQ_CMD_001 a sent record exists only for a confirmed draft and commands without a result are never pushed out` |
-| TC-CMD-001-04 | U | 명령 셋 송신, 결과 ACCEPTED(2회)·TIMEOUT(4회)·REJECTED_INVALID(cmd_id null), 다른 HMI의 req_id 결과, 같은 req_id 결과 재전달 | req_id가 명령마다 다름, 결과 문구·등급·다시 보내기 가능 여부 표시, 다른 HMI의 결과와 재전달은 바꾸지 않음(폐기도 아님) | `hmiController.test.ts > REQ_CMD_001 each confirmed command has its own req_id and shows its cmd_result`, `commands.test.ts > REQ_CMD_001 results match our req_id once, a disconnect leaves pending commands unconfirmed and closes the confirmation` |
+| TC-CMD-001-04 | U | 명령 셋 송신, 결과 ACCEPTED(2회)·TIMEOUT(4회)·REJECTED_INVALID(cmd_id null), 다른 HMI의 req_id 결과, 같은 req_id 결과 재전달 | req_id가 명령마다 다름, 결과 문구·등급 표시, 다른 HMI의 결과와 재전달은 바꾸지 않음(폐기도 아님) | `hmiController.test.ts > REQ_CMD_001 each confirmed command has its own req_id and shows its cmd_result`, `commands.test.ts > REQ_CMD_001 results match our req_id once, a disconnect leaves pending commands unconfirmed and closes the confirmation` |
 | TC-CMD-001-05 | U | 결과 전에 IF-03 끊김(close 1006) 뒤 재접속, 새 연결에서 10s, 이어서 새 연결로 결과. 확인 단계가 열린 채 끊김 | 처음 한 번 말고는 송신 없음(새 소켓으로 보낸 것 0), 기록은 곧바로 "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)", 새 연결로 결과가 오면 결과로 바뀜, 확인 단계는 닫힘 | `hmiController.test.ts > REQ_CMD_001 a command whose result was not received is never resent automatically after a disconnect`, `commands.test.ts > REQ_CMD_001 results match our req_id once, a disconnect leaves pending commands unconfirmed and closes the confirmation` |
-| TC-CMD-001-06 | U | RTB 결과 대기 중에 RTB 확인, 끊겨 결과 미확인인 RTB가 있을 때 RTB 확인 후 보내기, 다른 종류(WAYPOINT)·STOP 확인, 결과를 받은 뒤 확인 | 행별 다시 보내기는 없다. 같은 종류가 결과 전이면 확인 단계에 경고 "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음", 보내면 새 req_id(r1 → r2). 다른 종류·STOP·결과를 받은 뒤에는 경고 없음 | `hmiController.test.ts > REQ_CMD_001 trying again is a new confirmed command with a new req_id, warned while the earlier one has no result`, `commands.test.ts > REQ_CMD_001 confirmation warns about an unresolved command of the same kind except STOP` |
+| TC-CMD-001-06 | U | RTB 결과 대기 중에 RTB 확인, 끊겨 결과 미확인인 RTB가 있을 때 RTB 확인 후 보내기, 다른 종류(WAYPOINT)·STOP 확인, 결과를 받은 뒤 확인 | 같은 종류가 결과 전이면 확인 단계에 경고 "앞서 보낸 복귀 (RTB)의 결과를 아직 받지 못함 · 이미 실행됐을 수 있어 보내면 두 번 실행될 수 있음", 보내면 새 req_id(r1 → r2). 다른 종류·STOP·결과를 받은 뒤에는 경고 없음. 같은 종류의 가장 최근 명령만 봄(결과 미확인 r2 뒤 r3가 결과를 받으면 경고 없음) | `hmiController.test.ts > REQ_CMD_001 trying again is a new confirmed command with a new req_id, warned while the earlier one has no result`, `commands.test.ts > REQ_CMD_001 confirmation warns about an unresolved command of the same kind except STOP` |
 | TC-CMD-001-07 | U | 경로점 입력: 공백 둘레, 경계(90, −180), `.5`·`+1.`, 소수 7자리. 틀린 것: 빈 값, `1e1`, `0x10`, NaN, Infinity, `1,5`, 90.0000001, 180.5, −91, 소수 8자리(36.00000015) | 소수 7자리 이하 십진수 도 단위로 ICD 7.2 범위 안만 WAYPOINT, 나머지는 오류 문구(8자리는 확인 화면과 GW가 싣는 1e-7 정수가 다를 수 있음) | `commands.test.ts > REQ_CMD_001 waypoint input accepts decimal degrees within ICD 7.2 ranges only` |
 | TC-CMD-001-08 | D | SIM 송신·수신부 가동 중 정지 버튼 → 취소, 정지 → 보내기, 경로점(36.5, 127.25) → 보내기 | 취소 뒤 1.5s 동안 GW `cmd sent` 0, 보내기마다 결과 ACCEPTED "수락 (송신 1회)", GW가 보낸 req_id 순서가 화면 기록과 같음, 화면 캡처 | `hmi/e2e/smoke.mjs` 2c단계 |
-| TC-CMD-001-09 | D | SIM 수신부 중지(ACK 없음) 뒤 복귀 송신, 결과 전에 GW 중지 → 같은 포트로 재시작 → 패널의 복귀 → 보내기 | 결과 대기 행은 "결과 대기 중 · N초", 끊기면 "결과 미확인", 새 GW는 2s 동안 `cmd sent` 0, 행별 다시 보내기 버튼 없음, 복귀 확인 단계에 같은 종류 경고(송신 0), 보내면 새 GW가 이전과 다른 req_id 하나로 송신(재전송 줄은 req_id별 하나로 셈), 6s 안에 "응답 없음 (송신 4회)" | `hmi/e2e/smoke.mjs` 2d단계 |
+| TC-CMD-001-09 | D | SIM 수신부 중지(ACK 없음) 뒤 복귀 송신, 결과 전에 GW 중지 → 같은 포트로 재시작 → 패널의 복귀 → 보내기 | 결과 대기 행은 "결과 대기 중 · N초", 끊기면 "결과 미확인", 새 GW는 2s 동안 `cmd sent` 0, 복귀 확인 단계에 같은 종류 경고(송신 0), 보내면 새 GW가 이전과 다른 req_id 하나로 송신(재전송 줄은 req_id별 하나로 셈), 6s 안에 "응답 없음 (송신 4회)" | `hmi/e2e/smoke.mjs` 2d단계 |
 | TC-CMD-001-10 | U | 시작 전·접속 중·열린 뒤·소켓 예외·끊김 뒤·재접속 뒤·정지 뒤 `send()` | 열린 소켓에만 보내고 true, 그 밖은 false. 끊긴 뒤 새 소켓에 이전 텍스트를 다시 보내지 않음(대기열 없음) | `gwConnection.test.ts > REQ_CMD_001 send() writes only to an open socket and never queues or resends` |
-| TC-CMD-001-11 | U | (a) FRESH 연결에서 결과가 첫 송신 30s 뒤에 옴(GW 늦은 판정·IF-03 지연) (b) 기준선 재설정(HMI 시계 +3s 계단 변화) 직전에 RTB 송신, 재설정 뒤 새 연결에서 10s, 이어서 결과 | (a) 결과까지 "결과 대기 중 · 30초", 시간으로 상태가 바뀌지 않음, 결과가 오면 ACCEPTED (b) 재설정 뒤에도 결과 대기, 결과가 오면 ACCEPTED. 두 경우 모두 송신 한 번 | `hmiController.test.ts > REQ_CMD_001 a command keeps waiting for its result however late it comes, also across a baseline resync` |
+| TC-CMD-001-11 | U | (a) FRESH 연결에서 결과가 첫 송신 30s 뒤에 옴(GW 늦은 판정·IF-03 지연) (b) 기준선 재설정(HMI 시계 +3s 계단 변화) 직전에 RTB 송신, 재설정 뒤 새 연결에서 10s, 이어서 결과 | (a) 결과까지 "결과 대기 중 · 30초", 시간으로 상태가 바뀌지 않음, 결과가 오면 ACCEPTED (b) 재설정되면 결과 미확인, 새 연결 뒤에 확정된 결과가 오면 ACCEPTED. 두 경우 모두 송신 한 번 | `hmiController.test.ts > REQ_CMD_001 a command keeps waiting for its result however late it comes, and a result after a resync still counts` |
 | TC-CMD-001-12 | U | 결과 미확인 RTB가 있을 때 RTB 확인 단계(경고) 중 원래 명령의 늦은 ACCEPTED, 이어서 보내기. 다른 종류(STOP) 결과는 RTB 확인 단계 중에 도착 | 경고한 명령의 결과가 오면 확인 단계가 닫혀 보내기 송신 0(이중 실행 없음), 행은 ACCEPTED. 경고와 무관한 결과는 확인 단계를 닫지 않음 | `hmiController.test.ts > REQ_CMD_001 a late result of the warned command closes the open confirmation so nothing is sent on it` |
+| TC-CMD-001-13 | U | 기준선 재설정 직전에 RTB 송신, 그 결과는 재설정이 버린 적체 안이라 오지 않음. 새 연결에서 2분(FRESH), RTB 확인, 보내기(r2), r2 ACCEPTED 뒤 RTB 확인 | 결과 대기로 남지 않고 "결과 미확인 · 이미 실행됐을 수 있음 (자동으로 다시 보내지 않음)", 그 뒤 RTB 확인에는 경고, 더 새 RTB가 결과를 받은 뒤에는 경고 없음. 송신은 r1·r2뿐 | `hmiController.test.ts > REQ_CMD_001 a result lost in the backlog dropped by a baseline resync ends as unconfirmed, and a newer result of the same kind ends the warning` |
 
 ### 3.19 REQ-CMD-004 차량 링크 LOST면 명령 비활성 (HMI)
 
@@ -425,7 +427,7 @@ NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew 3000
 NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew -5000
 ```
 
-3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 8단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → 명령 확인·송신 → 결과 전 GW 재시작과 다시 보내기 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수, GW 진단 기록의 `cmd sent` 줄로 확인한다. 페이지 오류가 하나라도 나면 실패한다.
+3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 8단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → 명령 확인·송신 → 결과 전 GW 재시작과 경고가 붙은 새 명령 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수, GW 진단 기록의 `cmd sent` 줄로 확인한다. 페이지 오류가 하나라도 나면 실패한다.
 4. 합격: 세 번 모두 마지막 줄이 `PASS`이고, 실행 뒤 `ugvc_gateway`·`vite`·`telemetry_sender`·`ugvc_sim.uplink` 프로세스가 남지 않는다. 화면 캡처는 STR(05)에 붙인다.
 
 ---
