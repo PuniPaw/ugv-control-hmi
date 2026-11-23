@@ -6,7 +6,7 @@
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
 | 버전 | v0.4.2 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.19, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.21, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
