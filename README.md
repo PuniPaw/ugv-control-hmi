@@ -68,16 +68,16 @@ nvm install 22 && nvm alias default 22
 node -v && which node npm      # v22.x, 경로가 ~/.nvm/... 이어야 한다
 ```
 
-### 빌드
+### 빌드 (처음 한 번, 코드가 바뀌면 다시)
 
-저장소 루트에서:
+여기서는 아무것도 띄우지 않습니다. GW를 컴파일하고 HMI 의존성 패키지를 설치만 합니다. 저장소 루트에서:
 
 ```bash
 cmake -S gateway -B gateway/build -G Ninja && cmake --build gateway/build
 ```
 
 ```bash
-cd hmi && npm install
+cd hmi && npm install   # HMI 의존성 설치 (실행 아님)
 ```
 
 ### 실행
@@ -96,7 +96,7 @@ cd sim && PYTHONPATH=../python:. python3 -m ugvc_sim  # 터미널 2: SIM
 cd hmi && npm run dev                               # 터미널 3: HMI
 ```
 
-브라우저에서 http://127.0.0.1:5173 을 엽니다. SIM은 방위 87.25°로 직진하는 MISSION 모드로 시작합니다.
+브라우저에서 http://127.0.0.1:5173 을 엽니다. HMI는 GW가 늦게 떠도 스스로 다시 접속하므로 HMI 순서는 엄격하지 않지만, GW → SIM 순서는 지켜야 합니다. SIM은 방위 87.25°로 직진하는 MISSION 모드로 시작합니다.
 
 ### 화면에서 확인할 것
 
