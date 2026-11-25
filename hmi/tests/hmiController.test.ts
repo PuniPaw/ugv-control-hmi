@@ -477,3 +477,68 @@ it("REQ_CMD_001 a baseline resync closes an open confirmation so nothing is sent
   h.c.confirmCommand();
   expect(sentCommands(h)).toEqual([]);
 });
+
+// ---- 경고 체계 (REQ-HMI-003·004) ----
+
+const alertsOf = (h: ReturnType<typeof harness>) => h.view().alerts.map((a) => [a.kind, a.state]);
+
+it("REQ_HMI_004 the vehicle LOST warning is in the view emitted for the link_status LOST itself", () => {
+  const h = readyHarness();
+  expect(alertsOf(h)).toEqual([]);
+  h.live().onmessage?.({ data: vehicleLink("LOST") });
+  // h.view()는 onChange로 마지막에 받은 View: 다른 tick이나 판정 없이 그 메시지로 낸 화면에 이미 있다
+  expect(h.view().alerts).toEqual([
+    { id: 1, kind: "VEHICLE_LOST", level: "WARNING", state: "ACTIVE", text: "차량 링크 LOST", ackable: true },
+  ]);
+});
+
+it("REQ_HMI_004 the GW delay caution appears within one 250ms tick after the data turns stale", () => {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  let lastStatsAt = 0;
+  while (h.quarter() < 12) lastStatsAt = h.step() ?? lastStatsAt;
+  h.pause(true); // GW가 보낸 것이 닿지 않음
+  while (!alertsOf(h).some(([k]) => k === "GW_DELAY") && h.mono() - lastStatsAt < 10_000) h.step();
+  expect(h.mono() - lastStatsAt).toBeGreaterThan(2000); // ICD 7장: 마지막 stats부터 2초 넘음
+  expect(h.mono() - lastStatsAt).toBeLessThanOrEqual(2000 + QUARTER_MS);
+  expect(alertsOf(h)).toEqual([["GW_DELAY", "ACTIVE"]]);
+});
+
+it("REQ_HMI_004 a GW disconnect raises a warning and the vehicle alerts stay from the last received values", () => {
+  const h = readyHarness();
+  h.live().onmessage?.({ data: vehicleLink("LOST") });
+  h.live().onclose?.({ code: 1006 });
+  expect(alertsOf(h)).toEqual([["GW_DISCONNECTED", "ACTIVE"], ["VEHICLE_LOST", "ACTIVE"]]);
+  h.timers.filter((t) => !t.done).at(-1)!.fn(); // 재접속 대기 끝
+  expect(alertsOf(h)).toEqual([["GW_DISCONNECTED", "ACTIVE"], ["VEHICLE_LOST", "ACTIVE"]]); // 재시도 접속 중도 끊김
+  h.live().onopen?.({});
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  // 재접속하면 GW 끊김도, 차량 LOST도 풀린다. 확인 전이라 해제됨으로 남는다
+  expect(alertsOf(h)).toEqual([["GW_DISCONNECTED", "CLEARED"], ["VEHICLE_LOST", "CLEARED"]]);
+});
+
+it("REQ_HMI_003 the operator acknowledges an alert through the controller", () => {
+  const h = readyHarness();
+  h.live().onmessage?.({ data: vehicleLink("LOST") });
+  const id = h.view().alerts[0]!.id;
+  h.c.acknowledgeAlert(id);
+  expect(alertsOf(h)).toEqual([["VEHICLE_LOST", "ACKED"]]);
+  h.live().onmessage?.({ data: vehicleLink("CONNECTED") });
+  expect(alertsOf(h)).toEqual([]);
+});
+
+it("REQ_HMI_004 a command TIMEOUT and an unconfirmed command each raise a caution", () => {
+  const h = readyHarness();
+  h.c.requestCommand({ cmd_type: "RTB" });
+  h.c.confirmCommand();
+  h.c.requestCommand({ cmd_type: "STOP" });
+  h.c.confirmCommand();
+  h.live().onmessage?.({ data: resultText("r1", "TIMEOUT", 4) });
+  expect(alertsOf(h)).toEqual([["CMD_FAILED", "ACTIVE"]]);
+  reconnect(h); // r2는 결과 전에 끊김
+  expect(h.view().alerts.filter((a) => a.level === "CAUTION").map((a) => a.text)).toEqual([
+    "명령 결과 미확인: 정지 (STOP) · 이미 실행됐을 수 있음",
+    "명령 실패: 복귀 (RTB) · 응답 없음 (TIMEOUT)",
+  ]);
+});
