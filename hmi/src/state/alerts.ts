@@ -12,7 +12,7 @@
 //
 // 경고는 조건의 key로 맞춘다: 조건마다 1개(key = 종류), 명령 결과 조건은 명령마다 1개(key = 종류:req_id).
 //
-// 이번 범위 밖(DET 연결 주에 추가): 탐지 노드 링크 LOST·DEGRADED, 신규 표적 탐지 (SDD 8.8).
+// 이번 범위 밖(DET 연결 주에 추가): 탐지 노드 링크 LOST·DEGRADED, 신규 표적 탐지 (SDD 8.7).
 
 import type { Freshness, HmiState } from "./hmiState";
 import type { SentCommand } from "./commands";

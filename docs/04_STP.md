@@ -443,7 +443,7 @@ U는 vitest(순수 함수 `state/alerts.ts`, `HmiController`), D는 시연 점�
 
 ### 3.23 REQ-HMI-004 경고 발생 조건과 차량 LOST 경고 2.0s (HMI)
 
-**범위:** 표 3-1 중 탐지 노드 링크 LOST·DEGRADED와 신규 표적 탐지는 DET 연결(12월 3주)에서 TC를 추가한다(SDD 8.8). RTM에서 이 부분은 미검증으로 보인다.
+**범위:** 표 3-1 중 탐지 노드 링크 LOST·DEGRADED와 신규 표적 탐지는 DET 연결(12월 3주)에서 TC를 추가한다(SDD 8.7). RTM에서 이 부분은 미검증으로 보인다.
 
 **2.0s 측정 구간과 방법:**
 - 구간: GW가 차량의 마지막 유효 패킷을 받은 시각 → HMI 화면에 차량 LOST 경고가 ACTIVE로 들어간 시각. 시작 시각은 GW가 보낸 VEHICLE `link_status` LOST의 `last_rx_ts`(GW 시계, ICD 7.1)이고, 끝 시각은 페이지 안 `MutationObserver`가 `data-kind="VEHICLE_LOST"`·`data-state="ACTIVE"` 요소를 처음 본 시각(시계 차를 옮기지 않은 페이지 시계)이다. GW와 브라우저가 같은 PC라 두 시계가 같다.
@@ -456,7 +456,7 @@ U는 vitest(순수 함수 `state/alerts.ts`, `HmiController`), D는 시연 점�
 | TC-HMI-004-01 | U | 조건별 입력: 차량 링크 LOST·DEGRADED, 모드 FAULT, FAILSAFE_ACTIVE, BATTERY_LOW, GW 재시도 대기·재시도 접속, 기준선 재설정 접속, STALE, 명령 TIMEOUT·REJECTED_STATE·ACCEPTED·결과 대기·결과 미확인 | 차량 LOST·FAULT·Failsafe·GW 끊김은 WARNING, GW 지연·배터리·명령 실패·결과 미확인은 CAUTION, DEGRADED는 ADVISORY. 수락과 결과 대기는 경고 없음, 명령 결과 경고는 명령마다 하나(보낸 순서로 번호) | `alerts.test.ts > REQ_HMI_004 each table 3-1 condition in scope raises an alert of its level` |
 | TC-HMI-004-02 | U | link_status·텔레메트리를 받기 전, 첫 접속 중·열린 직후 | 경고 없음 (받지 않은 값과 첫 접속은 조건이 아님) | `alerts.test.ts > REQ_HMI_004 no alert comes from values never received or from the first connection attempt` |
 | TC-HMI-004-03 | U | 차량 LOST·Failsafe·배터리 부족을 받은 뒤 GW 끊김 / HmiController에서 LOST 뒤 close 1006 → 재시도 → 재접속·CONNECTED | 차량 경고는 마지막으로 받은 값으로 유지되고 GW 끊김 WARNING이 더해짐 / 재시도 접속 중도 끊김, 재접속 뒤 둘 다 해제됨 | `alerts.test.ts > REQ_HMI_004 vehicle conditions keep the last received values while the GW is down`, `hmiController.test.ts > REQ_HMI_004 a GW disconnect raises a warning and the vehicle alerts stay from the last received values` |
-| TC-HMI-004-04 | U | HmiController에 VEHICLE link_status LOST 하나 | 그 메시지로 `onChange`에 낸 화면에 차량 LOST WARNING ACTIVE (HMI 쪽 추가 지연 0) | `hmiController.test.ts > REQ_HMI_004 the vehicle LOST warning is in the view emitted for the link_status itself` |
+| TC-HMI-004-04 | U | HmiController에 VEHICLE link_status LOST 하나 | 그 메시지로 `onChange`에 낸 화면에 차량 LOST WARNING ACTIVE (HMI 쪽 추가 지연 0) | `hmiController.test.ts > REQ_HMI_004 the vehicle LOST warning is in the view emitted for the link_status LOST itself` |
 | TC-HMI-004-05 | U | FRESH 연결에서 GW 메시지가 끊김(가짜 시계, 250ms tick) | 마지막 stats 수신 후 2000ms 초과 2250ms 이하에 GW 지연 CAUTION | `hmiController.test.ts > REQ_HMI_004 the GW delay caution appears within one 250ms tick after the data turns stale` |
 | TC-HMI-004-06 | U | HmiController에서 RTB 송신 → TIMEOUT, STOP 송신 → 결과 전 끊김 | 명령 실패 CAUTION, 이어서 결과 미확인 CAUTION(문구에 명령 이름) | `hmiController.test.ts > REQ_HMI_004 a command TIMEOUT and an unconfirmed command each raise a caution` |
 | TC-HMI-004-07 | D | 실제 GW·SIM·HMI: SIM 중지(위 측정 방법), GW 중지, GW 재시작 | 마지막 유효 패킷 수신 → LOST 경고 표시 0ms 초과 2000ms 이하(값 출력), GW 중지 시 GW 끊김 WARNING과 차량 LOST WARNING ACTIVE, 재시작 뒤 GW 끊김은 해제됨 | `hmi/e2e/smoke.mjs` 3·4·5단계 |

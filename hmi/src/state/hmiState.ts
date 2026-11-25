@@ -46,7 +46,7 @@ export interface Session {
 
 export interface HmiState {
   // 송신원별 마지막으로 받은 link_status. 받은 적이 없으면 null (GW의 초기값 LOST와 구분: 받지 않은 값으로
-  // 경고하지 않는다, 8.8)
+  // 경고하지 않는다, SDD 8.7)
   link: Record<Source, LinkView | null>;
   stats: Record<Source, StatsData | null>;
   vehicle: TelemetryData | null; // 마지막 텔레메트리 (위치가 무효일 수 있음)
