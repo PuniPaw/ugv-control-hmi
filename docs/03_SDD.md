@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.6 (초안) |
+| 버전 | v0.6.1 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.9, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.27, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.10, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.27, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -37,6 +37,7 @@
 | v0.5.3 | 2026-11-23 | 8.6 PR #35 3차 리뷰 반영: 기준선 재설정도 명령은 끊김과 같이 다룸(`connectionEnded`: 결과 대기 → 결과 미확인, 확인 단계 닫힘). 버린 적체 안의 cmd_result를 잃으면 영원히 결과 대기로 남던 결함을 고침. 결과를 잃는 두 경우(끊김, 재설정의 버린 적체)를 나눠 적음. 같은 종류 경고는 그 종류의 가장 최근 명령만 봄. v0.5.2에서 설계 본문에 있던 행별 다시 보내기의 이력 문단은 개정 이력(v0.5.2 행)에만 둠 |
 | v0.5.4 | 2026-11-23 | 8.6 PR #35 4차 리뷰 반영: 같은 종류에 결과 대기 명령이 있으면 그것을 경고(더 새 명령의 결과로 숨기는 것은 오래된 결과 미확인뿐), "한 번만 보냄"을 "새 연결에 지난 결과를 스스로 다시 보내지 않음"으로, 8.2 재설정 서술(명령도 `connectionEnded`). `main`(PR #36) merge로 이 PR의 이력 행을 v0.5~v0.5.3으로 다시 매기고 관련 문서(SRS v0.8, ICD v0.15, STP v0.26) 갱신. 8.7 시연 점검은 한 프로세스 SIM 사용 |
 | v0.6 | 2026-11-25 | 8.7 HMI 경고 체계 신설(REQ-HMI-003·004, SRS v0.9 표 3-1·3-2): 조건 집합 `alertConditions`(기존 판정이 입력)와 수명 규칙 `reconcile`·`acknowledge`(순수 함수), 명령 결과 경고는 풀리지 않음, 등급별 자리와 확인 버튼, 차량 LOST 경고 2.0s 구성. 탐지 노드 조건·신규 표적은 DET 연결 주로 미룸. 받은 적 없는 링크 상태는 LOST가 아니라 `null`(8.3). 8.1 모듈 표, 8.4 마지막 항목, 시험 절을 8.8로, 9장 REQ-HMI-004 측정 행 정리 |
+| v0.6.1 | 2026-11-25 | 8.7 PR #49 1차 리뷰 반영: GW 연결 분류를 `view.ts`의 `gwHealth()` 하나로 모아 배너와 경고가 같이 씀(8.4 문구를 실제대로), 확인 가능 여부를 술어 하나(`canAcknowledge`)로, WARNING·CAUTION을 한 띠에 두고 위아래로 나눈 것을 위치 구분으로 보는 근거, GW 재시작 직후 재접속하면 차량 LOST가 잠깐 떴다가 해제됨으로 남는 한계(이슈 #51). 관련 문서 SRS v0.10 |
 
 ---
 
@@ -342,7 +343,7 @@ stateDiagram-v2
     | OPEN, FRESH | GW 연결됨 | ok |
   - 흐림: GW 연결이 끊겼거나 신선도가 FRESH가 아니면 패널 전체를, 그에 더해 차량 링크가 CONNECTED가 아니면 차량 섹션("이전 값")과 지도 마커를 흐리게 한다
   - 배터리 경고색은 SIM이 정한 `BATTERY_LOW` 플래그(20% 이하)를 따른다. HMI가 따로 문턱을 두지 않는다
-  - 경고(REQ-HMI-003·004)는 이 판정들(연결 상태, 신선도)을 입력으로 쓴다(8.7). 배너와 경고는 같은 판정에서 나오므로 어긋나지 않는다
+  - 연결 상태와 신선도를 끊김·지연·접속 중·대기·정상으로 나누는 분류는 `gwHealth(conn, fresh)` 하나다. 배너(문구에 카운트다운·재설정 여부를 더함)와 경고(8.7)가 이것을 같이 쓰므로 둘이 어긋나지 않는다
 
 ### 8.5 지도
 
@@ -411,8 +412,8 @@ stateDiagram-v2
    | 차량 링크 LOST | WARNING | 마지막으로 받은 VEHICLE `link_status` |
    | 차량 모드 FAULT | WARNING | 마지막 텔레메트리 `mode` |
    | 차량 Failsafe 정지 | WARNING | 마지막 텔레메트리 `flags`의 `FAILSAFE_ACTIVE` |
-   | GW 연결 끊김 | WARNING | `ConnView`가 WAITING_RETRY 또는 CONNECTING retry (배너 "GW 연결 끊김"과 같음) |
-   | GW 데이터 지연 | CAUTION | `ConnView`가 CONNECTING resync, 또는 OPEN이고 `freshness()`가 STALE (배너 "GW 데이터 지연"과 같음) |
+   | GW 연결 끊김 | WARNING | `gwHealth()`가 DISCONNECTED: WAITING_RETRY 또는 CONNECTING retry (배너와 같은 분류) |
+   | GW 데이터 지연 | CAUTION | `gwHealth()`가 DELAYED: CONNECTING resync, 또는 OPEN이고 `freshness()`가 STALE (배너와 같은 분류) |
    | 명령 결과 TIMEOUT·REJECTED | CAUTION | `commands.sent`의 DONE이고 결과가 ACCEPTED가 아님. 명령마다(req_id) |
    | 명령 결과 미확인 | CAUTION | `commands.sent`의 UNCONFIRMED. 명령마다(req_id) |
    | 배터리 20% 이하 | CAUTION | 마지막 텔레메트리 `flags`의 `BATTERY_LOW`(SIM이 20% 이하로 정함, ICD 표 6-2. HMI는 따로 문턱을 두지 않는다) |
@@ -440,8 +441,9 @@ stateDiagram-v2
 - **확인한 명령 결과 경고를 다시 띄우지 않는 방법:** 결과 미확인 명령은 GW가 다시 시작되면 영원히 결과 미확인이다(8.6). 확인할 때 경고를 지우면 다음 판정에서 같은 조건으로 새 경고가 생긴다. 그래서 확인하면 ACKED로 두고 화면에서만 숨기며, 그 명령이 기록에서 사라지거나 상태가 바뀌어 조건이 입력에서 사라질 때 지운다. 결과를 받지 못한 기록은 지우지 않으므로(8.6, 이슈 #44의 기록 상한) 숨긴 경고도 그만큼 남는다. 상한은 이슈 #44에서 기록 상한과 함께 정한다.
 - **멱등:** 같은 조건 목록으로 다시 부르면 같은 객체를 돌려준다. 그래서 `HmiController.view()`가 화면을 판정할 때마다 부른다. 상태가 바뀔 때(메시지, 연결 이벤트, 명령)와 `tick`(250ms)마다 불리므로, 메시지로 바뀌는 조건(차량 링크, 텔레메트리, 명령 결과, 연결 이벤트)은 그 메시지로 낸 화면에, 시간으로 바뀌는 조건(신선도 STALE)은 250ms 안에 경고가 된다.
 - 경고 목록은 `HmiState`가 아니라 `HmiController`가 가진다. 연결 상태(`ConnView`)와 시각에 따른 판정(신선도)이 입력이라, 메시지만으로 바뀌는 `HmiState`의 성질(`apply`가 메시지 하나의 함수)을 깨지 않기 위해서다.
-- **자리와 색(REQ-HMI-003):** WARNING·CAUTION은 배너 바로 아래 전체 폭에 WARNING이 위로 오게 놓는다(붉은색·호박색, 같은 등급은 최근 것부터). ADVISORY는 오른쪽 패널 맨 위에 파란색으로 놓는다. 화면 요소는 `data-kind`·`data-level`·`data-state`를 가져 시연 점검이 문구가 아니라 속성으로 판정한다.
+- **자리와 색(REQ-HMI-003):** WARNING·CAUTION은 배너 바로 아래 전체 폭에 WARNING이 위로 오게 놓는다(붉은색·호박색, 같은 등급은 최근 것부터). ADVISORY는 오른쪽 패널 맨 위에 파란색으로 놓는다. WARNING과 CAUTION을 한 띠에 두고 위아래로만 나눈 것은, 확인이 필요한 경고를 운용자가 한곳에서 보고 처리하게 하려는 것이다. 등급마다 띠를 따로 두면 CAUTION이 늘 때 WARNING 띠의 자리가 움직이지는 않지만 지도가 더 줄어든다. 등급 사이의 위치 구분은 "WARNING은 늘 CAUTION보다 위"로 하고, 색과 등급 표지로 함께 구분한다. 확인이 필요 없는 ADVISORY는 다른 자리(오른쪽 패널)에 둔다. 화면 요소는 `data-kind`·`data-level`·`data-state`를 가져 시연 점검이 문구가 아니라 속성으로 판정한다.
 - **차량 LOST 경고 2.0s(REQ-HMI-004):** 마지막 유효 패킷부터 GW LOST 판정까지 1.0s + 판정 주기(50ms) 이하, GW는 전이를 그 판정 주기에 `link_status`로 내보낸다. HMI는 그 메시지를 받은 화면에 경고를 낸다(tick을 기다리지 않음). 측정 구간과 방법은 STP 3.23이다. 실측(같은 PC, 시계 차 0·+3s·−5s) 1015·1044·1005ms.
+- **한계 (이슈 #51):** 새로 시작한 GW는 SIM 패킷을 받기 전 차량 `link_status` LOST(`last_rx_ts` null)를 보낸다. GW 재시작 직후(약 100ms 안)에 HMI가 재접속하면 차량 LOST WARNING이 떴다가 곧 "해제됨"으로 남아 확인을 요구한다. SIM 없이 접속했을 때의 LOST 경고는 의도한 동작이라, `last_rx_ts` null인 LOST를 일괄로 무시하지 않는다.
 - **이번 범위 밖(DET 연결 주, 12월 3주):** 탐지 노드 링크 LOST(CAUTION)·DEGRADED(ADVISORY), 신규 표적 탐지(ADVISORY). 탐지 노드는 아직 GW에 아무것도 보내지 않아 DETECTOR 링크가 늘 LOST다. 지금 넣으면 시연 내내 CAUTION 하나가 늘 떠 있어 경고의 뜻이 흐려지고, "신규 표적"은 표적을 무엇으로 셀지(같은 표적의 프레임 간 대응, class_id 목록 TBD-02)가 DET 출력이 나와야 정해진다. 조건은 `alertConditions`에 줄을 더하고 `KINDS`에 종류를 더하면 들어간다(수명 규칙은 그대로).
 
 ### 8.8 시험
