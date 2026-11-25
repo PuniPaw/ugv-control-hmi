@@ -75,7 +75,7 @@ std::optional<codec::Command> CommandTracker::submit(const CommandRequest& req) 
 
   const codec::Command cmd{issue_id(), static_cast<std::uint8_t>(req.type), req.lat, req.lon};
   pending_.push_back({req, cmd, 1, clock_.now() + kAckTimeout});
-  events_.push_back(CommandSent{req.req_id, cmd.cmd_id, req.type, 1});
+  events_.push_back(CommandSent{req.req_id, cmd.cmd_id, req.type, 1, cmd.lat, cmd.lon});
   return cmd;
 }
 
@@ -138,7 +138,8 @@ std::vector<codec::Command> CommandTracker::poll() {
       it->due = std::max(it->due + kAckTimeout, now + kAckTimeout - kJudgePeriod);
       resend.push_back(it->command);
       events_.push_back(CommandSent{it->request.req_id, it->command.cmd_id,
-                                    static_cast<codec::CmdType>(it->command.cmd_type), it->sends});
+                                    static_cast<codec::CmdType>(it->command.cmd_type), it->sends,
+                                    it->command.lat, it->command.lon});
       ++it;
     } else {
       it = finish(it, CmdResult::Timeout);

@@ -6,6 +6,8 @@
 // IF-03 JSON(ICD 7.1)은 같은 메시지를 두 곳에 보낸다: WebSocket(기본 127.0.0.1:8080 /ws, HMI)과
 // stdout(한 줄에 하나, JSON Lines, 통합 시험·기록용). REQ-COM-008.
 // 진단(링크 전이, 오류, 버림 보고)은 stderr에 쓴다. 둘 다 LineSink를 거쳐 io 스레드를 막지 않는다.
+// --db를 주면 유효 TELEMETRY·DETECTION과 이벤트(링크 전이, 명령)를 PostgreSQL에도 저장한다 (REQ-LOG-001).
+// 저장은 DbSink의 전용 스레드가 하고, DB가 없거나 느리면 기록을 버리고 원인별로 센다 (REQ-LOG-003).
 
 #include <boost/asio.hpp>
 
@@ -20,6 +22,8 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -33,12 +37,15 @@
 #include "ugvc/core/clock.hpp"
 #include "ugvc/core/overloaded.hpp"
 #include "ugvc/core/periodic.hpp"
+#include "ugvc/dblog/row.hpp"
 #include "ugvc/gateway/command_tracker.hpp"
 #include "ugvc/gateway/gateway.hpp"
 #include "ugvc/gateway/heartbeat.hpp"
 #include "ugvc/if03/command.hpp"
 #include "ugvc/if03/messages.hpp"
+#include "db_sink.hpp"
 #include "line_sink.hpp"
+#include "pg_session.hpp"
 #include "ws_server.hpp"
 
 namespace asio = boost::asio;
@@ -57,6 +64,8 @@ constexpr std::size_t kMaxWsSessions = 8;      // 관제 HMI는 한두 개. 넘�
 constexpr auto kMaxHmiLag = std::chrono::seconds(2);  // ping 후 이 안에 응답이 없으면 끊는다 (REQ-COM-008)
 constexpr std::size_t kMaxWsConnecting = 16;  // 요청 헤더를 아직 다 보내지 않은 연결. 넘치면 바로 닫는다
 constexpr const char* kWsPath = "/ws";         // ICD 2장 IF-03
+constexpr std::size_t kMaxDbQueued = 5000;     // 시연 부하(초당 약 25건)로 3분 남짓. 넘치면 queue_full로 버린다
+constexpr std::size_t kMaxDbBatch = 500;       // 한 트랜잭션에 넣는 최대 행 수
 
 struct Options {
   std::uint16_t vehicle_port = 15001;
@@ -65,6 +74,7 @@ struct Options {
   std::uint16_t sim_port = 15010;
   std::string ws_host = "127.0.0.1";  // 다른 PC의 HMI를 받으려면 0.0.0.0
   std::uint16_t ws_port = 8080;
+  std::optional<std::string> db;  // libpq 접속 문자열. 없으면 DB 저장을 하지 않는다
 };
 
 // 1~65535 정수가 아니면 예외. static_cast만 하면 70001이 조용히 4465가 된다.
@@ -96,6 +106,7 @@ Options parse_options(int argc, const char* const argv[]) {
     else if (key == "--sim-port") o.sim_port = parse_port(key, value);
     else if (key == "--ws-host") o.ws_host = value;
     else if (key == "--ws-port") o.ws_port = parse_port(key, value, /*allow_any=*/true);
+    else if (key == "--db") o.db = value;
     else throw std::invalid_argument("unknown option: " + key);
   }
   return o;
@@ -169,9 +180,14 @@ class GatewayApp {
             {[this] { return snapshot_texts(); },
              [this](const std::string& m) { on_hmi_message(m); },
              [this](const std::string& line) { log_.publish(line); }}),
+        db_(o.db ? std::make_unique<app::DbSink>(std::make_unique<app::PgSession>(*o.db),
+                                                  app::DbSink::Config{kMaxDbQueued, kMaxDbBatch})
+                 : nullptr),
         timer_(io, asio::steady_timer::clock_type::now()) {
     diag(log_, "ugvc_gateway: vehicle UDP ", o.vehicle_port, ", detector UDP ", o.detector_port,
          ", heartbeat -> ", o.sim_host, ':', o.sim_port, ", IF-03 ws://", o.ws_host, ':', ws_.port(), kWsPath);
+    // 접속 문자열은 찍지 않는다 (비밀번호가 들어 있을 수 있다). 접속 결과는 DB 스레드가 알린다
+    diag(log_, "db log: ", db_ ? "enabled" : "disabled (no --db)");
     tick();
   }
 
@@ -182,8 +198,14 @@ class GatewayApp {
     if (!accepted) return;
     const auto& [frame, rx_ts] = *accepted;
     std::visit(core::overloaded{
-                   [&](const codec::Telemetry& t) { publish(if03::telemetry(frame.header, t, rx_ts)); },
-                   [&](const codec::Detection& d) { publish(if03::detection(d, rx_ts)); },
+                   [&](const codec::Telemetry& t) {
+                     publish(if03::telemetry(frame.header, t, rx_ts));
+                     if (db_) db_->publish(dblog::telemetry_row(frame.header, t, rx_ts));
+                   },
+                   [&](const codec::Detection& d) {
+                     publish(if03::detection(d, rx_ts));
+                     if (db_) db_->publish(dblog::detection_row(frame.header, d, rx_ts));
+                   },
                    [&](const codec::Ack& a) {
                      commands_.on_ack(a);
                      drain_command_events();
@@ -197,6 +219,7 @@ class GatewayApp {
       diag(log_, "link ", ingress::to_string(t.source), ' ', link::to_string(t.change.from), " -> ",
            link::to_string(t.change.to));
       publish(if03::link_status(t));
+      if (db_) db_->publish(dblog::link_row(t));
     }
   }
 
@@ -209,6 +232,7 @@ class GatewayApp {
     if (stats_period_.due()) {
       for (const auto& msg : if03::snapshot(gateway_, clock_.epoch_ms())) publish(msg);
       report_drops();
+      report_db();
     }
     // 직전 예정 시각 + 50ms: 처리 시간만큼 판정 주기가 조금씩 밀리지 않게 한다
     timer_.expires_at(timer_.expiry() + kJudgePeriod);
@@ -264,6 +288,7 @@ class GatewayApp {
   // 추적기가 모은 사건을 기록(REQ-CMD-005)하고, 결과는 HMI에도 보낸다.
   void drain_command_events() {
     for (const auto& e : commands_.take_events()) {
+      if (db_) db_->publish(dblog::command_row(e, clock_.epoch_ms()));
       std::visit(core::overloaded{
                      [&](const gateway::CommandSent& s) {
                        diag(log_, "cmd sent req=", quoted(s.req_id), " id=", s.cmd_id, " type=", codec::name_of(s.cmd_type),
@@ -298,6 +323,21 @@ class GatewayApp {
     }
   }
 
+  // DB 접속·끊김 알림과 버린 기록 수(원인별, 직전 보고 이후 늘어난 만큼)를 진단에 남긴다 (REQ-LOG-003).
+  void report_db() {
+    if (!db_) return;
+    for (auto& n : db_->take_notices()) log_.publish(std::move(n));
+    const auto now = db_->stats();
+    const auto& was = reported_db_;
+    if (now.dropped() != was.dropped()) {
+      diag(log_, "db log dropped ", now.dropped() - was.dropped(), " records (queue_full +",
+           now.queue_full - was.queue_full, ", db_down +", now.db_down - was.db_down, ", write_error +",
+           now.write_error - was.write_error, "; total queue_full ", now.queue_full, ", db_down ", now.db_down,
+           ", write_error ", now.write_error, ")");
+    }
+    reported_db_ = now;
+  }
+
   core::SystemClock clock_;
   app::LineSink out_;  // out_·log_는 이들을 참조하는 수신기보다 먼저 선언한다 (선언 순서대로 생성)
   app::LineSink log_;
@@ -313,6 +353,8 @@ class GatewayApp {
   udp::socket sim_socket_;
   udp::endpoint sim_endpoint_;
   app::WsServer ws_;
+  std::unique_ptr<app::DbSink> db_;  // --db가 없으면 nullptr (저장하지 않음)
+  app::DbStats reported_db_;
   asio::steady_timer timer_;
 };
 

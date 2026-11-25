@@ -64,6 +64,8 @@ struct CommandSent {
   std::uint32_t cmd_id;
   codec::CmdType cmd_type;
   int attempt;  // 1 = 최초 송신
+  std::int32_t lat = 0;  // 1e-7 deg. WAYPOINT만 의미 있음 (DB 이벤트 기록, REQ-LOG-001)
+  std::int32_t lon = 0;
 };
 
 struct CommandResult {
