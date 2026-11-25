@@ -101,7 +101,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 - TC ID: `TC-<영역>-<요구사항 번호>-<순번>` (예: `TC-COM-003-02`)
 - 테스트 이름: 요구사항 ID를 포함한다. 예: `TEST(LinkMonitor, REQ_COM_003_degraded_at_500ms)`, `def test_REQ_COM_001_10hz_no_loss()`, `it("REQ_HMI_001 track keeps ...")`
 - 3장 TC 표의 "테스트" 열(머리 행의 열 이름으로 찾는다)에 적은 백틱 항목은 모두 시험 이름(gtest·pytest·vitest) 또는 시연 점검 참조여야 한다. 해석하지 못한 항목이 있으면 `check_stp_tests.py`가 실패한다
-- vitest 시험은 3장 표에 "파일 이름 > 시험 이름"으로 적는다 (예: `hmiState.test.ts > REQ_HMI_002 starts with both links LOST like the GW`). HMI 시험 파일은 `describe`를 쓰지 않아 it 제목이 곧 시험 이름이다. `check_stp_tests.py`는 `vitest list --json`의 실제 목록과 비교한다
+- vitest 시험은 3장 표에 "파일 이름 > 시험 이름"으로 적는다 (예: `hmiState.test.ts > REQ_HMI_002 starts with no link state until the GW reports one`). HMI 시험 파일은 `describe`를 쓰지 않아 it 제목이 곧 시험 이름이다. `check_stp_tests.py`는 `vitest list --json`의 실제 목록과 비교한다
 - 시험 이름에는 모두 REQ ID를 단다 (RTM grep에서 빠지지 않도록). 예외: 검사 도구 자체 시험(`tools/tests/`)은 제품 요구사항의 증거가 아니므로 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 도구만 바꾸는 커밋도 같은 이유로 REQ ID 없이 `test(tools):`·`fix(tools):`로 쓴다
 - 예외: SIM 차량 운동 모사 자체의 정확도 시험(`sim/tests/test_vehicle.py`: 직진, 경로점·복귀 주행, 도착 뒤 STANDBY, 배터리)은 시험 장비(차량 모사기)의 동작이라 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 명령·Failsafe가 차량 상태에 미치는 영향 중 요구사항에 해당하는 것(정지 유지, 재개 금지·해제)은 `Simulator` 시험(TC-SAFE)으로 추적한다
 - 시험 하나는 요구사항 하나의 증거다. 시험 이름에는 REQ ID를 하나만 단다(같은 ID를 되풀이한 것은 하나로 본다). 서로 다른 ID가 둘 이상이면 RTM grep이 한 시험을 두 요구사항에 이어 아래의 TC와 시험 1:1 규칙이 깨지므로, `check_stp_tests.py`가 실패한다. 이름의 ID는 모두 SRS와 대조한다. 다른 요구사항도 증명해야 하면 그 요구사항의 TC와 시험을 따로 둔다. 앞으로 만들 RTM 생성 스크립트도 시험마다 이름의 ID 하나로 요구사항을 이어야 한다
@@ -268,7 +268,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-HMI-002-01 | U | 초기 상태 | 두 송신원 모두 LOST (GW 초기값과 같음), 차량 정보 없음 | `hmiState.test.ts > REQ_HMI_002 starts with both links LOST like the GW` |
+| TC-HMI-002-01 | U | 초기 상태 | 두 송신원 모두 링크 상태 없음(GW가 link_status를 보내기 전, 화면 "—"), 차량 정보 없음 | `hmiState.test.ts > REQ_HMI_002 starts with no link state until the GW reports one` |
 | TC-HMI-002-02 | U | VEHICLE link_status(DEGRADED)와 stats 반영 | VEHICLE만 바뀌고 DETECTOR는 그대로, 유실률 반영 | `hmiState.test.ts > REQ_HMI_002 link_status and stats update per source` |
 | TC-HMI-002-03 | D | GW 접속 → SIM 송신 → SIM 중지 | 차량 링크 LOST → CONNECTED(유실률 0.0%, 경과 0.x초) → 3s 안에 LOST, 모드·배터리 표시 | `hmi/e2e/smoke.mjs` 1~3단계 |
 | TC-HMI-002-04 | U | HMI 시계가 GW보다 5s 늦을 때 링크 경과 시간 | 0.8s (음수가 아님), 수신 전이면 "수신 없음" | `view.test.ts > REQ_HMI_002 link age uses the connection baseline, not the raw GW clock` |

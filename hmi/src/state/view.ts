@@ -62,12 +62,12 @@ export function banner(conn: ConnView, fresh: Freshness, monoNow: number): Banne
  */
 export function staleness(s: HmiState, conn: ConnView, fresh: Freshness): { all: boolean; vehicle: boolean } {
   const all = conn.state !== "OPEN" || fresh !== "FRESH";
-  return { all, vehicle: all || s.link.VEHICLE.state !== "CONNECTED" };
+  return { all, vehicle: all || s.link.VEHICLE?.state !== "CONNECTED" };
 }
 
 /** 링크 마지막 수신 후 경과 시간. GW 시각을 기준선(GLOSSARY)으로 HMI 시각으로 바꿔 계산 (시계 차 무관) */
 export function linkAgeText(s: HmiState, src: Source, now: number): string {
-  const gwTs = s.link[src].lastRxTs;
+  const gwTs = s.link[src]?.lastRxTs ?? null;
   if (gwTs === null) return "수신 없음";
   const local = toLocalTime(s, gwTs);
   if (local === null) return "—";
@@ -90,7 +90,7 @@ export function positionText(v: TelemetryData): string {
 /** 상태 패널 한 줄: 송신원 링크 */
 export interface LinkRow {
   source: Source;
-  state: LinkState;
+  state: LinkState | null; // link_status를 받은 적이 없으면 null
   loss: string;
   age: string;
 }
@@ -117,7 +117,7 @@ export const COMMAND_ROWS_SHOWN = 5;
 export function commandBlock(s: HmiState, conn: ConnView): string | null {
   if (conn.state !== "OPEN" || s.session === null) return "GW와 연결되지 않아 명령을 보낼 수 없음";
   if (!s.session.vehicleLinkSeen) return "차량 링크 상태 수신 전 · 명령을 보낼 수 없음";
-  if (s.link.VEHICLE.state === "LOST") return "차량 링크 LOST · 명령을 보낼 수 없음";
+  if (s.link.VEHICLE?.state === "LOST") return "차량 링크 LOST · 명령을 보낼 수 없음";
   return null;
 }
 
@@ -218,7 +218,7 @@ export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented 
     fixValid: v !== null && gpsValid(v),
     links: SOURCES.map((source) => ({
       source,
-      state: s.link[source].state,
+      state: s.link[source]?.state ?? null,
       loss: lossText(s.stats[source]),
       age: linkAgeText(s, source, clocks.wall),
     })),

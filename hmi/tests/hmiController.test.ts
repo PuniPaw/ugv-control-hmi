@@ -207,7 +207,7 @@ it("REQ_HMI_002 the status panel rows come from the same judgement as the banner
   const v = h.c.view();
   expect(v.links.map((l) => l.source)).toEqual(["VEHICLE", "DETECTOR"]);
   expect(v.links[0]).toEqual({ source: "VEHICLE", state: "CONNECTED", loss: "0.0%", age: "0.3s 전" });
-  expect(v.links[1]).toMatchObject({ state: "LOST", loss: "—", age: "수신 없음" });
+  expect(v.links[1]).toMatchObject({ state: null, loss: "—", age: "수신 없음" }); // DETECTOR link_status를 받은 적 없음
   expect(v.vehicle).toMatchObject({ mode: "MISSION", battery: "50%", batteryLevel: "ok", speed: "1.0 m/s" });
   expect(v.vehicle?.position).toMatch(/^36\.\d{6}, 127\.000000$/);
 });

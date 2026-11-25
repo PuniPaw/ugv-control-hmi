@@ -26,10 +26,10 @@ const run = (msgs: Array<[If03Message, number]>, s: HmiState = initialState()) =
 /** 연결을 at에 연 상태 */
 const opened = (at = 0) => connectionOpened(initialState(), at);
 
-it("REQ_HMI_002 starts with both links LOST like the GW", () => {
+it("REQ_HMI_002 starts with no link state until the GW reports one", () => {
   const s = initialState();
-  expect(s.link.VEHICLE.state).toBe("LOST");
-  expect(s.link.DETECTOR.state).toBe("LOST");
+  expect(s.link.VEHICLE).toBeNull();
+  expect(s.link.DETECTOR).toBeNull();
   expect(s.vehicle).toBeNull();
 });
 
@@ -83,7 +83,7 @@ it("REQ_HMI_002 link_status and stats update per source", () => {
     [stats(10), 20],
   ]);
   expect(s.link.VEHICLE).toEqual({ state: "DEGRADED", lastRxTs: 7 });
-  expect(s.link.DETECTOR.state).toBe("LOST");
+  expect(s.link.DETECTOR).toBeNull();
   expect(s.stats.VEHICLE?.loss_rate_10s).toBe(0.1);
   expect(s.stats.DETECTOR).toBeNull();
 });

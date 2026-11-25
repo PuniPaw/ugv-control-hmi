@@ -45,7 +45,9 @@ export interface Session {
 }
 
 export interface HmiState {
-  link: Record<Source, LinkView>;
+  // 송신원별 마지막으로 받은 link_status. 받은 적이 없으면 null (GW의 초기값 LOST와 구분: 받지 않은 값으로
+  // 경고하지 않는다, 8.8)
+  link: Record<Source, LinkView | null>;
   stats: Record<Source, StatsData | null>;
   vehicle: TelemetryData | null; // 마지막 텔레메트리 (위치가 무효일 수 있음)
   fix: Fix | null; // 마지막 유효 위치. GPS_VALID가 없는 텔레메트리는 이것을 바꾸지 않는다
@@ -62,10 +64,7 @@ export interface HmiState {
 
 export function initialState(): HmiState {
   return {
-    link: {
-      VEHICLE: { state: "LOST", lastRxTs: null }, // GW와 같은 초기값: 첫 패킷 전은 LOST
-      DETECTOR: { state: "LOST", lastRxTs: null },
-    },
+    link: { VEHICLE: null, DETECTOR: null }, // 접속 직후 GW가 현재 link_status를 보낸다 (ICD 7장)
     stats: { VEHICLE: null, DETECTOR: null },
     vehicle: null,
     fix: null,
