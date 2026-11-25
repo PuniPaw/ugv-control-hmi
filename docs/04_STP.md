@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.26 (초안) |
+| 버전 | v0.27 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.8, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.5.4, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.9, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.6, ADR-002 |
 
 ## 개정 이력
 
@@ -38,6 +38,7 @@
 | v0.24 | 2026-11-20 | PR #35 2차 리뷰 반영: 행별 다시 보내기와 결과 기한을 없앰. TC-CMD-001-06을 "다시 시도는 경고가 붙은 새 명령(새 req_id)"으로, TC-CMD-001-11을 "결과가 얼마나 늦어도(30s), 재설정을 넘어도 결과 대기"로 바꿈(결과 기한 경계 시험 삭제), TC-CMD-001-12(경고한 명령의 늦은 결과가 열린 확인 단계를 닫아 송신 0) 추가. TC-CMD-001-03은 결과 미확인도 상한으로 밀리지 않음, 001-05는 끊긴 뒤 새 연결의 결과 반영, 001-09는 smoke 2d를 새 흐름으로 |
 | v0.25 | 2026-11-23 | PR #35 3차 리뷰 반영: 기준선 재설정도 결과 대기 명령을 결과 미확인으로. TC-CMD-001-11(b) 기대 결과를 "재설정 뒤 결과 미확인, 새 연결 뒤 확정된 결과는 반영"으로 바꾸고 시험 이름 변경, TC-CMD-001-13(버린 적체에서 잃은 결과는 결과 미확인, 더 새 같은 종류의 결과로 경고 끝) 추가, TC-CMD-001-06에 같은 종류의 가장 최근 명령만 경고. 없어진 다시 보내기 문구 정리(TC-CMD-001-04 기대 결과, 4장 시연 절차) |
 | v0.26 | 2026-11-23 | PR #35 4차 리뷰 반영과 `main`(PR #36) merge: TC-CMD-001-13에 "재설정이 열린 확인 단계를 닫아 송신 0" 시험 추가, TC-CMD-001-06에 "같은 종류에 결과 대기 명령이 있으면 더 새 명령이 결과를 받아도 경고". PR #36이 SIM을 한 프로세스로 합쳐 시연 점검 2c는 SIM 자체의 ACK를, 2d는 SIM을 `--drop-first`로 다시 띄워 ACK 없는 상태를 씀(TC-CMD-001-08·09). 이 PR의 이력 행을 v0.22~v0.25, 절을 3.20·3.21로 다시 매김 |
+| v0.27 | 2026-11-25 | DB 로그 저장: TC-LOG-001-01~08(행 변환, 실제 PostgreSQL 저장 내용·이벤트), TC-LOG-003-01~12(재접속 간격, `DbSink` 비차단·원인별 버림·재접속·종료, 저장 끄기, 없는 DB, DB 재시작, DB 서버 정지). 2.3 이벤트 확인을 실제 구조(반환값 `take_transitions`·`take_events`, DB 저장은 TC-LOG)로 고침(`IEventSink`·`FakeEventSink`는 만들지 않았다). 2.8 PostgreSQL 통합 시험 환경과 skip 규칙. 3.16 머리말(PostgreSQL 저장은 TC-LOG-001-08). 1.2 범위에 LOG |
 
 ---
 
@@ -55,7 +56,8 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | CMD (REQ-CMD-001~006) | v0.13, 001·004는 v0.22 | |
 | SAFE (REQ-SAFE-001·002) | v0.19 | |
 | HMI (REQ-HMI-001·002 뼈대, 006, 007) | v0.5~0.6 | 경로점(REQ-HMI-001), 지연 시간(REQ-HMI-002)은 해당 기능 구현 시 |
-| HMI-003~005, AI, LOG, PERF | | 해당 기능 구현 시 |
+| LOG (REQ-LOG-001·003) | v0.27 | REQ-LOG-002 사후 재생 (고도화) |
+| HMI-003~005, AI, PERF | | 해당 기능 구현 시 |
 
 ### 1.3 용어
 용어는 루트 `GLOSSARY.md`를 따른다. 특히 **스트림**(송신원 + msg_type), **유효 패킷**, **유실**, **역순 도착**, **유실률**의 정의에 주의한다.
@@ -82,7 +84,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 - 링크 판정 주기는 SDD에서 50ms로 정하는 것을 가정한다. 통합 수준에서는 판정 지연 ≤ 판정 주기를 허용한다.
 
 ### 2.3 이벤트 확인
-상태 전이 등 이벤트는 GW의 `IEventSink`로 내보낸다. 단위 시험은 `FakeEventSink`에 쌓인 이벤트를 확인한다. DB 저장은 REQ-LOG-001 TC에서 따로 검증한다.
+GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gateway::take_transitions()`, 명령 사건은 `CommandTracker::take_events()`로 꺼낸다(SDD 4장·6.1). 단위 시험은 꺼낸 값을 확인한다. 이 값을 DB 행으로 바꾸는 것(`dblog::link_row`·`command_row`)은 TC-LOG-001 단위 시험이, 실제 DB 저장은 TC-LOG-001 통합 시험이 따로 검증한다.
 
 ### 2.4 공용 테스트 벡터
 - 위치: `testdata/vectors/*.json`. 항목마다 `name`, 필드 값, 기대 바이트(`hex`), 기대 결과(수락 또는 오류 계수 이름)를 둔다.
@@ -107,6 +109,13 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 - 시험 하나는 요구사항 하나의 증거다. 시험 이름에는 REQ ID를 하나만 단다(같은 ID를 되풀이한 것은 하나로 본다). 서로 다른 ID가 둘 이상이면 RTM grep이 한 시험을 두 요구사항에 이어 아래의 TC와 시험 1:1 규칙이 깨지므로, `check_stp_tests.py`가 실패한다. 이름의 ID는 모두 SRS와 대조한다. 다른 요구사항도 증명해야 하면 그 요구사항의 TC와 시험을 따로 둔다. 앞으로 만들 RTM 생성 스크립트도 시험마다 이름의 ID 하나로 요구사항을 이어야 한다
 - 시험 이름에서 `req`·`REQ` 뒤에 영역 이름과 숫자가 바로 오는 약어(예: `req_cmd_3`)는 REQ ID와 구분할 수 없어 형식 오류로 걸린다. 이런 약어는 쓰지 않는다(`request_cmd_3`처럼 풀어 쓴다)
 - TC와 테스트는 1:1로 대응하며, 대응 관계는 3장 표의 "테스트" 열이 정본이다.
+
+
+### 2.8 PostgreSQL 통합 시험 환경
+- REQ-LOG 통합 시험(`tests/integration/test_db_log.py`)은 시험 파일마다 한 번 임시 디렉터리에 `initdb`로 클러스터를 만들고 유닉스 소켓으로만 띄운다(`tests/integration/pg_cluster.py`, TCP 포트를 열지 않음). 시험마다 빈 DB를 만들고 GW가 접속하며 스키마를 만든다. 저장 내용은 `psql`로 읽는다.
+- root로 실행하면 `postgres` 사용자로 서버를 띄운다(`initdb`는 root로 실행할 수 없다). 서버 프로그램 위치는 `/usr/lib/postgresql/*/bin`, 다르면 `UGVC_PG_BIN`으로 준다.
+- PostgreSQL 서버·`psql`·`postgres` 사용자(root일 때)가 없으면 PostgreSQL이 필요한 시험만 skip하고, 사유를 pytest 요약 끝의 "환경 때문에 skip한 시험" 절에 출력한다. TC-LOG-003-09·10은 PostgreSQL 없이도 돈다.
+- 필요한 패키지(Ubuntu): 빌드 `libpq-dev`, 시험 `postgresql`(서버), `postgresql-client`.
 
 ---
 
@@ -349,7 +358,7 @@ U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`python -m ugvc_sim`)과 Web
 
 ### 3.16 REQ-CMD-005 명령 이벤트 기록 (GW)
 
-PostgreSQL 저장(REQ-LOG)은 로그 작업 때 추가한다. 지금은 GW 진단 기록(stderr)에 남는 것을 확인한다.
+여기서는 GW 진단 기록(stderr)에 남는 것을 확인한다. 같은 사건의 PostgreSQL 저장은 TC-LOG-001-04·08(3.22)이 확인한다.
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
@@ -424,6 +433,40 @@ U는 vitest(가짜 소켓·타이머·시계, `HmiController`와 순수 함수 `
 | TC-CMD-004-01 | U | 접속 전, 열린 직후(첫 link_status 전), LOST, CONNECTED, 확인 단계 중 LOST, 다시 CONNECTED, 확인 단계 중 IF-03 끊김 | 사유 "GW와 연결되지 않아 명령을 보낼 수 없음" / "차량 링크 상태 수신 전 · 명령을 보낼 수 없음" / "차량 링크 LOST · 명령을 보낼 수 없음" / 없음. LOST 동안 확인해도 송신 0(확인 단계는 남음), CONNECTED로 돌아오면 확인으로 송신. 끊기면 확인 단계가 닫히고 송신 0 | `hmiController.test.ts > REQ_CMD_004 vehicle link LOST or no GW connection disables commands with the reason and confirm sends nothing` |
 | TC-CMD-004-02 | D | SIM 중지(차량 LOST), GW 중지 | 정지·복귀·경로점 버튼 비활성, 사유 문구 "차량 링크 LOST · 명령을 보낼 수 없음" / "GW와 연결되지 않아 명령을 보낼 수 없음" | `hmi/e2e/smoke.mjs` 3·4단계 |
 | TC-CMD-004-03 | U | 차량 CONNECTED인 연결이 (a) 끊겼다가 재접속 (b) 기준선 재설정 재접속. 새 연결의 첫 link_status 전에 확인, 이어서 LOST 수신 | 이전 연결의 CONNECTED로 보내지 않음: 사유 "차량 링크 상태 수신 전 · 명령을 보낼 수 없음", 송신 0, LOST를 받으면 LOST 사유 | `hmiController.test.ts > REQ_CMD_004 after a reconnect commands stay disabled until the new connection reports the vehicle link` |
+
+### 3.22 REQ-LOG-001 유효 패킷·이벤트 DB 저장 (GW)
+
+경고 원인 중 GW가 아는 것(링크 전이, 명령 송신·재전송·결과, TELEMETRY mode·status_flags)은 아래 기록에 들어 있다(SRS REQ-LOG-001). 통합 시험 환경은 2.8.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-LOG-001-01 | U | TELEMETRY 행 (헤더 timestamp u64 최댓값, 음수 lat) | ICD 정수 값 그대로 10열(rx_ts, seq, tx_ts, lat, lon, heading, speed, battery, mode, status_flags), u64 최댓값 그대로 | `DbRow.REQ_LOG_001_telemetry_row_keeps_raw_icd_values` |
+| TC-LOG-001-02 | U | DETECTION 행 (물체 2개, frame_id 40억) | 머리 값 그대로, objects jsonb에 물체 전부 | `DbRow.REQ_LOG_001_detection_row_keeps_every_object` |
+| TC-LOG-001-03 | U | 링크 전이 (DETECTOR DEGRADED→LOST, 첫 패킷 전이) | event kind `link`, source DETECTOR, detail from·to·last_rx_ts(첫 전이는 null) | `DbRow.REQ_LOG_001_link_transition_is_an_event_with_source` |
+| TC-LOG-001-04 | U | 명령 사건 4종 (WAYPOINT·STOP 송신, 형식 오류 결과, 무시, 모르는 ACK) | kind `cmd_sent`·`cmd_result`·`cmd_ignored`·`cmd_unknown_ack`, source NULL, WAYPOINT만 lat·lon | `DbRow.REQ_LOG_001_every_command_event_kind_is_stored` |
+| TC-LOG-001-05 | U | NUL 문자가 든 req_id | detail에 `\u0000`이 없고 U+FFFD로 바뀜 (PostgreSQL이 NUL을 거부해 배치가 깨지지 않게) | `DbRow.REQ_LOG_001_nul_in_req_id_is_replaced_before_storing` |
+| TC-LOG-001-06 | U | 세 테이블 행의 값 개수 | INSERT 문의 매개변수 수와 같음 | `DbRow.REQ_LOG_001_row_width_matches_insert_statement` |
+| TC-LOG-001-07 | I | 실제 PostgreSQL. 유효 TELEMETRY 20개, CRC 오류 1개, DETECTION(물체 2개) 1개 | telemetry 20행, 값이 보낸 값과 같고 rx_ts가 IF-03 `rx_ts`와 같음. CRC 오류는 저장 안 됨. detection 1행, 물체 2개 | `test_REQ_LOG_001_valid_telemetry_and_detection_are_stored` |
+| TC-LOG-001-08 | I | 실제 PostgreSQL. TELEMETRY 3개 뒤 중단, 받는 SIM 없이 STOP 명령(req_id에 NUL) | event에 VEHICLE 링크 LOST→CONNECTED→DEGRADED→LOST, `cmd_sent` attempt 1~4(같은 cmd_id), `cmd_result` TIMEOUT attempts 4, req_id는 U+FFFD로. 버림 0 | `test_REQ_LOG_001_link_transitions_and_command_events_are_stored` |
+
+### 3.23 REQ-LOG-003 DB 저장이 중계를 막지 않음, 버림 계수, 재접속 (GW)
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-LOG-003-01 | U | 재접속 시각, 가짜 시계 | 첫 시도는 바로. 실패 뒤 499ms는 아직, 500ms에 다시 시도 | `ReconnectSchedule.REQ_LOG_003_first_attempt_is_immediate_and_retry_waits_500ms` |
+| TC-LOG-003-02 | U | 접속 실패 100회 | 간격 0.5·1·2·4·5·5s…, 100회째도 5s 뒤 다시 시도 (포기하지 않음) | `ReconnectSchedule.REQ_LOG_003_retry_interval_doubles_up_to_5s_and_never_stops` |
+| TC-LOG-003-03 | U | 실패 2회 뒤 성공, 다시 실패 | 성공하면 처음 간격(0.5s)으로 | `ReconnectSchedule.REQ_LOG_003_success_resets_retry_interval` |
+| TC-LOG-003-04 | U | `DbSink`, 가짜 세션 정상 | 50건이 넣은 순서대로 저장, 버림 0 | `DbSink.REQ_LOG_003_writes_records_in_order_when_db_is_up` |
+| TC-LOG-003-05 | U | 저장 호출이 멈춘 동안 1만 건 publish (상한 100) | 200ms 안에 끝남(막히지 않음), queue_full = 1만 − 100. 풀리면 101건 저장, 저장 + 버림 = 넣은 수 | `DbSink.REQ_LOG_003_publish_does_not_block_while_db_write_hangs` |
+| TC-LOG-003-06 | U | DB가 없는 동안 30건, 이후 DB 복구 | db_down 30, 재접속 5회 이상인데 알림은 `db unavailable` 1회, 복구 뒤 `db connected`와 저장 | `DbSink.REQ_LOG_003_records_while_db_is_down_are_dropped_and_reconnect_continues` |
+| TC-LOG-003-07 | U | 저장 중인 배치(1건) 실패, 대기열 5건 | write_error 1, db_down 5, 알림 `db write failed, dropped 1 records`, 다시 접속해 저장 이어감 | `DbSink.REQ_LOG_003_write_failure_drops_batch_and_reconnects` |
+| TC-LOG-003-08 | U | 저장 호출이 멈춘 채 `DbSink` 소멸 | 1.5s 안에 끝남 (GW 종료가 DB에 막히지 않음) | `DbSink.REQ_LOG_003_shutdown_does_not_wait_for_a_hung_db` |
+| TC-LOG-003-09 | I | `--db` 없이 기동, TELEMETRY 5개 | 중계 5개, 진단 `db log: disabled (no --db)` 외 DB 진단 없음 | `test_REQ_LOG_003_gateway_relays_without_db_option` |
+| TC-LOG-003-10 | I | 없는 DB(소켓 없는 디렉터리)로 기동, 10Hz TELEMETRY 30개 | 기동·중계 30개, HEARTBEAT 간격 ≤ 1.1s, `db unavailable` 1회, db_down ≥ 31(TELEMETRY + 링크 전이), 다른 원인 0 | `test_REQ_LOG_003_unreachable_db_does_not_stop_relay_and_drops_are_counted` |
+| TC-LOG-003-11 | I | 실제 PostgreSQL. 10Hz TELEMETRY 90개 중 1s에 DB 중지, 2.5s 뒤 재시작 | 중계 90개 순서대로, HEARTBEAT 간격 ≤ 1.1s, `db write failed` 또는 `db unavailable`, 버림 계수 > 0, `db connected` 두 번째, 중지 전(seq < 10)과 재접속 뒤(seq ≥ 85) 저장, 90행 미만 | `test_REQ_LOG_003_db_restart_keeps_relay_and_reconnects` |
+| TC-LOG-003-12 | I | 실제 PostgreSQL. GW를 맡은 서버 프로세스 SIGSTOP 동안 10Hz TELEMETRY 30개 | 중계 30개가 3.6s 안에, HEARTBEAT 간격 ≤ 1.1s. 풀면 31행 모두 저장, 버림 0 | `test_REQ_LOG_003_hung_db_does_not_delay_relay` |
+
+- 막히지 않음의 판정: TC-LOG-003-12에서 `DbSink::publish`를 저장 완료까지 기다리게 바꾸면(동기 저장 변이) 중계가 2개에서 멈춰 실패함을 확인했다.
 
 ---
 

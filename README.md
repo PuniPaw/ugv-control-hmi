@@ -45,11 +45,19 @@ Ubuntu 24.04(WSL 포함) 기준입니다. GW·SIM·HMI를 각각 터미널에 �
 |---|---|---|
 | CMake, Ninja, C++17 컴파일러 | CMake 3.20+, GCC 9+ | GW 빌드 |
 | Boost 헤더 | 1.83+ | GW (Asio·Beast) |
+| libpq 헤더 (`libpq-dev`) | PostgreSQL 12+ | GW 빌드 (DB 로그 저장) |
+| PostgreSQL 서버 | 12+ (선택) | DB 로그 저장, DB 통합 시험. 없으면 그 시험만 skip |
 | Python | 3.10+ | SIM, 시험 |
 | Node.js | **22.12+** (nvm 권장) | HMI (vite, vitest) |
 
 ```bash
-sudo apt-get install -y build-essential cmake ninja-build git libboost-dev python3 python3-venv
+sudo apt-get install -y build-essential cmake ninja-build git libboost-dev libpq-dev python3 python3-venv
+```
+
+DB 로그 저장을 쓰거나 DB 통합 시험을 돌리려면 PostgreSQL도 설치합니다(선택):
+
+```bash
+sudo apt-get install -y postgresql postgresql-client
 ```
 
 Node는 apt 패키지(Ubuntu 24.04는 v18)가 아니라 nvm으로 설치합니다. apt의 Node는 HMI 도구가 요구하는 버전보다 낮고, apt의 npm은 전역 설치(`npm install -g`)에 sudo가 필요합니다.
@@ -97,6 +105,22 @@ cd hmi && npm run dev                               # 터미널 3: HMI
 ```
 
 브라우저에서 http://127.0.0.1:5173 을 엽니다. HMI는 GW가 늦게 떠도 스스로 다시 접속하므로 HMI 순서는 엄격하지 않지만, GW → SIM 순서는 지켜야 합니다. SIM은 방위 87.25°로 직진하는 MISSION 모드로 시작합니다.
+
+#### DB 로그 저장 (선택)
+
+GW에 `--db <libpq 접속 문자열>`을 주면 TELEMETRY·DETECTION·이벤트(링크 전이, 명령)를 PostgreSQL에 저장합니다. 빈 DB를 하나 만들어 두면 GW가 접속하면서 테이블을 만듭니다(스키마는 SDD 5.1).
+
+```bash
+sudo -u postgres createuser -s "$USER" && createdb ugvc   # 처음 한 번
+```
+
+```bash
+gateway/build/ugvc_gateway --db "dbname=ugvc"       # 터미널 1: GW (DB 저장 켬)
+```
+
+- `--db`가 없으면 저장하지 않고 그대로 중계합니다. DB가 꺼져 있거나 멈춰도 GW는 중계를 계속하고, 버린 기록 수를 stderr에 `db log dropped ...`로 남기며 다시 접속을 시도합니다.
+- 비밀번호는 명령줄에 넣지 말고 `~/.pgpass`나 `PGPASSWORD`로 줍니다(명령줄은 `ps`로 보입니다).
+- 저장된 내용 보기: `psql ugvc -c "SELECT kind, source, detail FROM event ORDER BY id DESC LIMIT 10"`
 
 ### 화면에서 확인할 것
 
@@ -161,12 +185,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-필요 도구: CMake 3.20+, C++17 컴파일러(GCC 9+ / Clang 10+ / MSVC 2019+), Boost 1.83+ 헤더(Asio·Beast), Git(nlohmann/json·GoogleTest를 FetchContent로 받음).
+필요 도구: CMake 3.20+, C++17 컴파일러(GCC 9+ / Clang 10+ / MSVC 2019+), Boost 1.83+ 헤더(Asio·Beast), libpq 헤더(DB 로그 저장), Git(nlohmann/json·GoogleTest를 FetchContent로 받음).
 
-Ubuntu에서 Boost 설치:
+Ubuntu에서 Boost·libpq 설치:
 
 ```bash
-sudo apt-get install -y libboost-dev
+sudo apt-get install -y libboost-dev libpq-dev
 ```
 
 ## 정적 분석 (gateway)
@@ -206,6 +230,8 @@ cd sim && python3 -m pytest
 ```bash
 cd tests && python3 -m pytest
 ```
+
+DB 로그 시험(`test_db_log.py`)은 임시 PostgreSQL 클러스터를 띄웁니다. PostgreSQL 서버가 없으면 그 시험만 skip하고 요약 끝에 사유를 출력합니다(STP 2.8).
 
 STP 통합 TC(10Hz 600개 × 3회, HEARTBEAT 주기)는 약 3.5분 걸려 기본 실행에서 빠집니다:
 
