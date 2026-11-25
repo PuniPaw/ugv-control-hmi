@@ -322,7 +322,7 @@ def test_REQ_LOG_003_hung_db_does_not_delay_relay(pg, start_gw):
 
 
 def test_REQ_LOG_003_rejected_record_does_not_cost_other_records(pg, start_gw):
-    """TC-LOG-003-13: 서버 인코딩이 EUC_KR인 DB. 한글 req_id 명령은 그대로 저장되고(접속 인코딩 UTF8),
+    """TC-LOG-003-15: 서버 인코딩이 EUC_KR인 DB. 한글 req_id 명령은 그대로 저장되고(접속 인코딩 UTF8),
     EUC_KR로 바꿀 수 없는 문자(이모지)가 든 req_id 명령의 이벤트만 rejected로 버린다.
     같은 시간에 보낸 TELEMETRY는 모두 저장되고, 연결은 끊기지 않는다 (PR #50 리뷰 1)."""
     db = pg.new_database(encoding="EUC_KR")

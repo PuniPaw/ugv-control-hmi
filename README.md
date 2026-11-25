@@ -119,6 +119,7 @@ gateway/build/ugvc_gateway --db "dbname=ugvc"       # 터미널 1: GW (DB 저장
 ```
 
 - `--db`가 없으면 저장하지 않고 그대로 중계합니다. DB가 꺼져 있거나 멈춰도 GW는 중계를 계속하고, 버린 기록 수를 stderr에 `db log dropped ...`로 남기며 다시 접속을 시도합니다.
+- 접속 사용자에게 테이블 생성 권한이 필요합니다(GW가 접속할 때마다 `CREATE TABLE IF NOT EXISTS`를 실행). PostgreSQL 15부터는 DB 소유자로 접속하거나 `GRANT CREATE ON SCHEMA public`을 줍니다.
 - 비밀번호는 명령줄에 넣지 말고 `~/.pgpass`나 `PGPASSWORD`로 줍니다(명령줄은 `ps`로 보입니다).
 - 저장된 내용 보기: `psql ugvc -c "SELECT kind, source, detail FROM event ORDER BY id DESC LIMIT 10"`
 

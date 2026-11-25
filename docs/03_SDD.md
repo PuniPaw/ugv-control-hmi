@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.6 (초안) |
+| 버전 | v0.6.1 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.9, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.27, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.9, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.28, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -37,6 +37,7 @@
 | v0.5.3 | 2026-11-23 | 8.6 PR #35 3차 리뷰 반영: 기준선 재설정도 명령은 끊김과 같이 다룸(`connectionEnded`: 결과 대기 → 결과 미확인, 확인 단계 닫힘). 버린 적체 안의 cmd_result를 잃으면 영원히 결과 대기로 남던 결함을 고침. 결과를 잃는 두 경우(끊김, 재설정의 버린 적체)를 나눠 적음. 같은 종류 경고는 그 종류의 가장 최근 명령만 봄. v0.5.2에서 설계 본문에 있던 행별 다시 보내기의 이력 문단은 개정 이력(v0.5.2 행)에만 둠 |
 | v0.5.4 | 2026-11-23 | 8.6 PR #35 4차 리뷰 반영: 같은 종류에 결과 대기 명령이 있으면 그것을 경고(더 새 명령의 결과로 숨기는 것은 오래된 결과 미확인뿐), "한 번만 보냄"을 "새 연결에 지난 결과를 스스로 다시 보내지 않음"으로, 8.2 재설정 서술(명령도 `connectionEnded`). `main`(PR #36) merge로 이 PR의 이력 행을 v0.5~v0.5.3으로 다시 매기고 관련 문서(SRS v0.8, ICD v0.15, STP v0.26) 갱신. 8.7 시연 점검은 한 프로세스 SIM 사용 |
 | v0.6 | 2026-11-25 | 5.1 DB 로그 저장 신설(REQ-LOG-001·003): 9장 미정 "PostgreSQL 저장 방식"을 비동기(전용 DB 스레드, `DbSink`)·트랜잭션 배치(최대 500행)로 확정. 클라이언트 libpq(근거), 스키마(`telemetry`·`detection`·`event`, 인덱스), `--db` 접속 설정, 상한 5000건과 원인별 버림 계수(queue_full·db_down·write_error), 재접속 0.5s→5s(`ReconnectSchedule`, 시계 주입). 2장 모듈 표에 `dblog`, 5장 스레드 수, 6.1 명령 이벤트 저장(`CommandSent`에 WAYPOINT 좌표), 7장 표 |
+| v0.6.1 | 2026-11-25 | 5.1 PR #50 1차 리뷰 반영: 저장 실패를 연결 오류와 데이터 오류(`WriteError::Kind`)로 나눔. 행 하나가 거절돼도 연결을 버려 같은 배치의 유효 기록을 잃던 결함 때문에, v0.6의 트랜잭션 배치를 행마다 자동 확정(`synchronous_commit=off`)으로 바꾸고 데이터 오류는 그 행만 `rejected`(새 원인)로 셈. 접속 기본값 `client_encoding=UTF8`. 연결을 잃으면 그 행 `write_error`, 나머지 `db_down`, 재접속은 바로. 알림은 종류 있는 `DbNotice`(문구는 io 스레드), 사유가 바뀌면 다시 알림, 종료 때 남은 기록 계수와 마지막 보고, DB 스레드 예외 처리. 스키마 생성 권한, 접속 시간 상한의 한계, `write_error` 의미, req_id 없는 거부 메시지는 DB에 남지 않음을 적음 |
 
 ---
 
@@ -178,37 +179,46 @@ flowchart LR
         rep["1Hz report_db"]
     end
     pub --> q[("대기열 ≤ 5000건")]
-    q --> th["DB 스레드<br/>접속·재접속·배치 저장"]
-    th -->|"libpq, 트랜잭션 ≤ 500행"| pg[("PostgreSQL")]
+    q --> th["DB 스레드<br/>접속·재접속·행 저장"]
+    th -->|"libpq, 행마다 자동 확정"| pg[("PostgreSQL")]
     th -.->|"알림·계수 (잠금)"| rep
     rep --> err["stderr (LineSink)"]
 ```
 
-**저장 방식: 비동기, 전용 스레드, 트랜잭션 배치 (9장 미정 사항 확정).**
+**저장 방식: 비동기, 전용 스레드, 행마다 확정 (9장 미정 사항 확정).**
 
 - io 스레드는 기록을 `dblog::Row`(테이블 + 매개변수 텍스트 값)로 바꿔 대기열에 넣기만 한다. 행 변환은 순수 함수라 단위 시험한다. DB 호출(접속, 저장)은 모두 DB 스레드가 하고, 그동안 잠금을 놓는다. 그래서 DB가 느리거나 응답하지 않거나 없어도 수신·검증·링크 판정·중계·재전송·HEARTBEAT는 기다리지 않는다. 구조는 `LineSink`와 같다(5장 출력 표).
 - 동기 저장(io 스레드에서 `INSERT`)은 쓰지 않는다. DB가 한 번 멈추면 io 스레드가 함께 멈추고, 3.0초면 SIM이 Failsafe에 들어간다(REQ-SAFE-001). 비동기 libpq API(`PQsendQuery` + 소켓을 Asio에 등록)는 io 스레드를 막지 않지만, 접속 단계의 이름 해석·TLS 협상까지 비동기로 다뤄야 해 코드가 훨씬 커진다. 스레드 하나로 같은 성질을 얻는다.
-- DB 스레드는 대기열에서 한 번에 최대 500행을 꺼내 한 트랜잭션(`BEGIN` … 준비된 문장 `PQexecPrepared` … `COMMIT`)으로 저장한다. 시연 부하(초당 약 25건)에서는 거의 한 행씩 바로 저장되고, 밀렸을 때는 한 번에 모아 왕복을 줄인다.
-- **버림과 원인별 계수(`DbStats`).** 다음 세 경우 기록을 버리고 센다. 대기열을 무한정 키우면 DB가 오래 멈춘 동안 메모리가 끝없이 늘기 때문이다.
+- DB 스레드는 대기열에서 한 번에 최대 500행을 꺼내(잠금 횟수를 줄이려고) 한 행씩 준비된 문장(`PQexecPrepared`)으로 저장하고 행마다 자동 확정한다. 확정마다 디스크 동기화를 기다리지 않도록 세션에 `synchronous_commit = off`를 건다. 서버가 죽으면 마지막 1초 미만의 기록을 잃을 수 있지만 DB가 깨지지는 않는다. 로그 용도에 맞는 선택이다. 시연 부하(초당 약 25건)는 행 단위로 충분히 감당한다.
+- **저장 실패는 두 종류다(`WriteError::Kind`).** 실패한 뒤 연결 상태(`PQstatus`)로 가른다.
+  - 데이터 오류(`Data`): 연결은 살아 있고 DB가 그 행만 거절했다(예: 서버 인코딩으로 바꿀 수 없는 문자). 그 행만 버리고 같은 연결로 다음 행을 저장한다. 행마다 확정하므로 앞뒤 행은 영향을 받지 않는다.
+  - 연결 오류(`Connection`): 연결을 잃었다. 연결을 닫고 바로 다시 접속한다.
+  - 배치를 한 트랜잭션으로 묶고 모든 실패를 연결 끊김으로 보면, 행 하나 때문에 같은 배치의 유효 기록을 모두 잃고 재접속 동안 들어온 기록까지 DB가 멀쩡한데 `db_down`으로 센다(PR #50 리뷰 1, EUC_KR DB의 한글 req_id로 실제 GW에서 재현). 그래서 행마다 확정하고 오류를 두 종류로 나눈다.
+- **버림과 원인별 계수(`DbStats`).** 다음 네 경우 기록을 버리고 센다. 대기열을 무한정 키우면 DB가 오래 멈춘 동안 메모리가 끝없이 늘기 때문이다.
 
 | 원인 | 언제 |
 |---|---|
 | `queue_full` | 저장이 밀려 대기열(5000건, 시연 부하로 3분 남짓)이 찼을 때 들어온 기록 |
-| `db_down` | 연결이 없을 때 들어온 기록, 연결이 끊기는 순간 대기열에 남아 있던 기록 |
-| `write_error` | 저장하던 배치가 실패했을 때 그 배치 전체 |
+| `db_down` | 연결이 없을 때 들어온 기록, 연결을 잃을 때 아직 저장하지 않은 기록(꺼낸 묶음의 나머지와 대기열), 종료 때 저장하지 못한 기록 |
+| `rejected` | DB가 거절한 행 (데이터 오류) |
+| `write_error` | 저장하던 중 연결을 잃은 그 행. 서버에 닿아 저장됐을 수도 있어, 이 수는 잃은 수의 상한이다 |
 
 - 연결이 없는 동안 대기열은 비어 있다. 다시 접속하면 그 뒤에 들어온 기록부터 저장한다. 기동 직후 첫 접속이 끝나기 전에 들어온 기록도 `db_down`이다.
-- io 스레드는 1Hz로 계수를 읽어, 직전 보고보다 늘었으면 `db log dropped N records (queue_full +a, db_down +b, write_error +c; total queue_full A, db_down B, write_error C)`를 stderr에 쓴다. 버린 수는 GW 진단 기록에만 남긴다. IF-03 `stats`에 넣으려면 ICD를 바꿔야 해 이번 범위에서 뺐다.
-- **진단 문구는 io 스레드가 쓴다.** DB 스레드는 접속(`db connected`)·접속 실패(`db unavailable: <사유> (retry in Nms)`)·저장 실패(`db write failed, dropped N records: <사유> ...`) 문구를 상한 16개 목록에 모으고, io 스레드가 1Hz로 꺼내 `LineSink`에 쓴다. 종료 때 떼어 낸 DB 스레드가 이미 사라진 `LineSink`를 부르는 일이 없게 하기 위해서다. 접속 실패는 끊긴 뒤 처음 한 번만 알린다(재시도마다 되풀이하지 않음). libpq 오류 문구의 개행은 공백으로 바꿔 진단 한 줄을 지킨다.
-- **재접속(`dblog::ReconnectSchedule`).** 첫 시도는 바로 하고, 실패할 때마다 간격을 0.5s → 1s → 2s → 4s → 5s(상한)로 늘린다. 포기하지 않는다. 접속에 성공하면 처음 간격으로 되돌린다. 저장이 실패하면 연결을 닫고(`PQfinish`) 같은 규칙으로 다시 접속한다. 시계를 주입받아 단위 시험은 `FakeClock`으로 경계(499ms / 500ms)를 본다. 시도 한 번은 `connect_timeout=3`으로 3초 안에 끝난다.
+- 쉬는 동안 연결이 끊기면 다음 저장에서야 안다. 그때 잃는 것은 그 행 하나(`write_error`)이고, 곧바로 다시 접속한다.
+- io 스레드는 1Hz로 계수를 읽어, 직전 보고보다 늘었으면 `db log dropped N records (queue_full +a, db_down +b, rejected +c, write_error +d; total queue_full A, db_down B, rejected C, write_error D)`를 stderr에 쓴다. 버린 수는 GW 진단 기록에만 남긴다. IF-03 `stats`에 넣으려면 ICD를 바꿔야 해 이번 범위에서 뺐다.
+- **진단 문구는 io 스레드가 만든다.** DB 스레드는 일어난 일을 종류 있는 알림 `DbNotice{kind, reason}`(접속, 접속 실패, 연결 유실, 행 거절)으로 상한 16개 목록에 모은다. io 스레드가 1Hz로 꺼내 문구(`db connected`, `db unavailable: <사유> (retry in Nms)`, `db connection lost: <사유> (reconnecting)`, `db rejected a record: <사유>`)를 만들어 `LineSink`에 쓴다. 종료 때 떼어 낸 DB 스레드가 이미 사라진 `LineSink`를 부르는 일이 없게 하기 위해서다. 접속 실패와 행 거절은 사유가 직전 알림과 다를 때만 알린다. 재시도마다 되풀이하지 않으면서, 끊긴 뒤 사유가 인증 실패처럼 바뀌면 알 수 있게 한다. 알림이 상한을 넘으면 버리지만 버린 기록 수는 계수에 남는다. libpq 오류 문구의 개행은 공백으로 바꿔 진단 한 줄을 지킨다.
+- **DB 스레드의 예외.** 메모리 부족 같은 예외를 잡아 GW를 내리지 않고 DB 저장만 멈춘다(`db connection lost: db thread stopped: ...`). 그 뒤 기록은 `db_down`으로 센다.
+- **재접속(`dblog::ReconnectSchedule`).** 첫 시도는 바로 하고, 실패할 때마다 간격을 0.5s → 1s → 2s → 4s → 5s(상한)로 늘린다. 포기하지 않는다. 접속에 성공하면 처음 간격으로 되돌린다. 저장 중 연결을 잃으면 연결을 닫고(`PQfinish`) 바로 다시 시도하고, 그 시도가 실패하면 위 간격을 따른다. 시계를 주입받아 단위 시험은 `FakeClock`으로 경계(499ms / 500ms)를 본다. 시도 한 번은 `connect_timeout=3`으로 접속 대기를 3초로 묶는다. 다만 호스트 이름 해석(getaddrinfo)은 이 상한에 들지 않는다. 이름 해석이 오래 걸려도 DB 스레드만 기다린다.
 - **소리 없이 끊긴 연결.** TCP 연결에 `keepalives_idle=5`, `keepalives_interval=2`, `keepalives_count=3`, `tcp_user_timeout=10000`을 기본값으로 준다. 기본값(2시간)이면 네트워크가 끊긴 채 응답을 기다리는 저장이 그만큼 이어지고, 그동안 새 기록은 `queue_full`로 버려진다. 서버 프로세스가 멈춘 경우(시험의 SIGSTOP)는 풀릴 때까지 기다리며, 대기열 상한 안이면 풀린 뒤 모두 저장한다.
-- **종료.** 소멸자는 남은 기록을 저장하도록 최대 500ms 기다리고, 끝나지 않으면 DB 스레드를 떼어 낸다(GW 종료가 DB 때문에 막히지 않게). 대기열과 연결은 DB 스레드와 `shared_ptr`로 공유해 떼어 낸 스레드가 끝날 때까지 살아 있다.
+- **종료.** GW가 끝날 때 `DbSink::close()`가 남은 기록을 저장하도록 최대 500ms 기다리고, 끝나지 않으면 DB 스레드를 떼어 낸다(GW 종료가 DB 때문에 막히지 않게). 그때 대기열에 남은 기록은 `db_down`으로 센다. 이어서 `report_db()`를 한 번 더 불러 마지막 1Hz 보고 이후의 알림과 버림을 남긴다. 대기열과 연결은 DB 스레드와 `shared_ptr`로 공유해 떼어 낸 스레드가 끝날 때까지 살아 있다.
 
-**클라이언트 라이브러리: libpq.** 쓰는 기능은 접속, 준비된 문장, 트랜잭션뿐이다. libpq는 Ubuntu에서 `libpq-dev` 하나로 끝나고(`libpq5`는 PostgreSQL 클라이언트와 함께 이미 깔려 있다), CMake 기본 모듈 `FindPostgreSQL`로 찾는다. libpqxx는 패키지가 하나 더 늘고, 오류를 예외로 던져 이 계층의 규칙("실패하면 사유를 돌려주고 재접속")과 맞지 않는다. libpq의 C 자원은 `std::unique_ptr` + 삭제자(`PQfinish`, `PQclear`)로 감싸 어느 경로로 나가도 해제되게 했다(RAII). libpq 호출은 `PgSession` 한 파일에만 있고, `DbSink`는 `IDbSession`만 알아 단위 시험은 가짜 세션(멈춤·실패·거절)을 쓴다.
+**클라이언트 라이브러리: libpq.** 쓰는 기능은 접속, 준비된 문장, 한 문장 실행뿐이다. libpq는 Ubuntu에서 `libpq-dev` 하나로 끝나고(`libpq5`는 PostgreSQL 클라이언트와 함께 이미 깔려 있다), CMake 기본 모듈 `FindPostgreSQL`로 찾는다. libpqxx는 패키지가 하나 더 늘고, 오류를 예외로 던져 이 계층의 규칙("실패하면 사유를 돌려주고 재접속")과 맞지 않는다. libpq의 C 자원은 `std::unique_ptr` + 삭제자(`PQfinish`, `PQclear`)로 감싸 어느 경로로 나가도 해제되게 했다(RAII). libpq 호출은 `PgSession` 한 파일에만 있고, `DbSink`는 `IDbSession`만 알아 단위 시험은 가짜 세션(멈춤·연결 유실·행 거절·접속 거절)을 쓴다.
 
-**HMI 입력과 DB.** 명령 이벤트의 req_id는 HMI가 보낸 텍스트다. 매개변수로만 넘기므로(`PQexecPrepared`) SQL 주입은 없다. PostgreSQL의 `text`·`jsonb`는 NUL 문자를 받지 않아, NUL이 든 req_id 하나가 배치 전체를 실패시킬 수 있었다. 저장 전에 NUL을 U+FFFD로 바꾼다. 잘못된 UTF-8도 U+FFFD로 바꿔 직렬화한다.
+**문자 인코딩.** GW가 보내는 텍스트는 UTF-8이므로 접속 기본값에 `client_encoding=UTF8`을 둔다. 서버 인코딩이 UTF8이 아니어도(예: EUC_KR) 서버가 바꿔 저장한다. 서버 인코딩에 없는 문자(EUC_KR DB의 이모지 등)가 든 행은 데이터 오류로 그 행만 버린다.
 
-**스키마.** GW가 접속할 때마다 `CREATE TABLE IF NOT EXISTS`·`CREATE INDEX IF NOT EXISTS`로 만든다. 몇 번 실행해도 결과가 같으므로 빈 DB를 주면 된다. 접속 사용자에게 그 DB의 테이블 생성 권한이 필요하다. 정수 필드는 ICD의 LSB 값을 그대로 저장한다(공학 단위 변환은 IF-03 경계에서만, ADR-002). 사후 재생(REQ-LOG-002, 고도화)은 수신 시각으로 구간을 찾으므로 각 테이블에 수신 시각 인덱스를 둔다.
+**HMI 입력과 DB.** 명령 이벤트의 req_id는 HMI가 보낸 텍스트다. 매개변수로만 넘기므로(`PQexecPrepared`) SQL 주입은 없다. PostgreSQL의 `text`·`jsonb`는 NUL 문자를 받지 않아, NUL이 든 req_id 하나가 배치 전체를 실패시킬 수 있었다. 저장 전에 NUL을 U+FFFD로 바꾼다. 잘못된 UTF-8도 U+FFFD로 바꿔 직렬화한다. req_id를 읽지 못해 거부한 HMI 메시지는 명령 사건이 생기지 않으므로 DB에 남지 않고 GW 진단 기록(`ws message rejected`)에만 남는다.
+
+**스키마.** GW가 접속할 때마다 `CREATE TABLE IF NOT EXISTS`·`CREATE INDEX IF NOT EXISTS`로 만든다. 몇 번 실행해도 결과가 같으므로 빈 DB를 주면 된다. 접속 사용자에게 테이블 생성 권한이 필요하다(테이블이 이미 있어도 DDL을 실행한다). PostgreSQL 15부터는 `public` 스키마에 일반 사용자의 생성 권한이 없으므로, DB 소유자로 접속하거나 `GRANT CREATE ON SCHEMA public`을 준다. INSERT 권한만 가진 역할로는 접속 단계에서 실패한다. 정수 필드는 ICD의 LSB 값을 그대로 저장한다(공학 단위 변환은 IF-03 경계에서만, ADR-002). 사후 재생(REQ-LOG-002, 고도화)은 수신 시각으로 구간을 찾으므로 각 테이블에 수신 시각 인덱스를 둔다.
 
 | 테이블 | 열 (모두 NOT NULL, `event.source` 제외) | 인덱스 |
 |---|---|---|
@@ -232,8 +242,8 @@ flowchart LR
 검증:
 - 행 변환(정수 값 그대로, u64 최댓값, DETECTION 물체 전부, 이벤트 종류별 detail, NUL req_id), 문장의 매개변수 수 (`DbRow.*`)
 - 재접속 간격 0.5s 경계, 5s 상한과 100회 뒤에도 계속, 성공 뒤 처음 간격 (`ReconnectSchedule.*`, 가짜 시계)
-- `DbSink`(가짜 세션): 저장이 멈춘 동안 1만 건 publish가 200ms 안에 끝나고 상한 초과는 queue_full, DB 없으면 db_down과 알림 1회·재접속 계속, 저장 실패 → write_error·남은 대기열 db_down·재접속, 멈춘 DB에서도 종료가 막히지 않음
-- 통합(실제 PostgreSQL): 저장 내용이 IF-03과 같음, 링크·명령 이벤트, DB 내렸다 올리기와 서버 프로세스 정지 중 중계·HEARTBEAT 지속, 없는 DB에서 기동·계수 (STP 3.22·3.23)
+- `DbSink`(가짜 세션, 시간 상한이 아니라 완료로 판정): 저장이 멈춘 채로 1만 건 publish가 끝나고 상한 초과는 queue_full, DB 없으면 db_down과 같은 사유 알림 1회·재접속 계속·사유가 바뀌면 다시 알림, 거절 행은 rejected이고 연결·다른 행 유지, 연결 유실 → write_error·나머지 db_down·바로 재접속, 멈춘 DB에서도 close()가 끝나고 남은 기록은 db_down
+- 통합(실제 PostgreSQL): 저장 내용이 IF-03과 같음, 링크·명령 이벤트, DB 내렸다 올리기와 서버 프로세스 정지 중 중계·HEARTBEAT 지속, 없는 DB에서 기동·계수, EUC_KR DB에서 거절 행만 잃음 (STP 3.22·3.23)
 
 ## 6. 명령 재전송 (REQ-CMD-002·003·005·006, ICD 6.3·6.4·7.2·7.3)
 
