@@ -27,31 +27,43 @@ export interface Clocks {
   mono: number; // 단조 시계 ms (재접속 카운트다운)
 }
 
-function connectingBanner(cause: ConnectCause): Banner {
-  switch (cause) {
-    case "first":
-      return { level: "warn", text: "GW 접속 중" };
-    case "retry":
-      return { level: "bad", text: "GW 연결 끊김 · 재접속 중" };
-    case "resync":
-      // 기준선 재설정은 IF-03 연결 끊김이 아니다 (GLOSSARY): 데이터 지연의 회복 과정으로 표시
-      return { level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중" };
+/**
+ * GW 연결 상태 분류 (REQ-HMI-006). 배너와 경고(state/alerts.ts)가 이 판정 하나를 같이 쓴다.
+ * 기준선 재설정 접속은 IF-03 연결 끊김이 아니라 데이터 지연의 회복 과정이다 (GLOSSARY)
+ */
+export type GwHealth = "CONNECTING" | "WAITING" | "OK" | "DISCONNECTED" | "DELAYED";
+
+const CONNECTING_HEALTH: Record<ConnectCause, GwHealth> = { first: "CONNECTING", retry: "DISCONNECTED", resync: "DELAYED" };
+
+export function gwHealth(conn: ConnView, fresh: Freshness): GwHealth {
+  switch (conn.state) {
+    case "CONNECTING":
+      return CONNECTING_HEALTH[conn.cause];
+    case "WAITING_RETRY":
+      return "DISCONNECTED";
+    case "OPEN":
+      return fresh === "WAITING" ? "WAITING" : fresh === "STALE" ? "DELAYED" : "OK";
   }
 }
 
-/** 상단 배너 (ICD 7장, REQ-HMI-006) */
+/** 상단 배너 (ICD 7장, REQ-HMI-006). 분류는 gwHealth, 문구는 대기 중 카운트다운·재설정 여부를 더한다 */
 export function banner(conn: ConnView, fresh: Freshness, monoNow: number): Banner {
-  switch (conn.state) {
+  switch (gwHealth(conn, fresh)) {
     case "CONNECTING":
-      return connectingBanner(conn.cause);
-    case "WAITING_RETRY": {
+      return { level: "warn", text: "GW 접속 중" };
+    case "WAITING":
+      return { level: "warn", text: "GW 연결됨 · 데이터 대기 중" };
+    case "OK":
+      return { level: "ok", text: "GW 연결됨" };
+    case "DISCONNECTED": {
+      if (conn.state !== "WAITING_RETRY") return { level: "bad", text: "GW 연결 끊김 · 재접속 중" };
       const sec = Math.max(0, Math.ceil((conn.retryAtMono - monoNow) / 1000));
       return { level: "bad", text: `GW 연결 끊김 · ${sec}초 후 재접속` };
     }
-    case "OPEN":
-      if (fresh === "WAITING") return { level: "warn", text: "GW 연결됨 · 데이터 대기 중" };
-      if (fresh === "STALE") return { level: "bad", text: "GW 데이터 지연 (2초 이상)" };
-      return { level: "ok", text: "GW 연결됨" };
+    case "DELAYED":
+      return conn.state === "OPEN"
+        ? { level: "bad", text: "GW 데이터 지연 (2초 이상)" }
+        : { level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중" };
   }
 }
 

@@ -16,7 +16,7 @@
 
 import type { Freshness, HmiState } from "./hmiState";
 import type { SentCommand } from "./commands";
-import { commandLabel, type ConnView } from "./view";
+import { commandLabel, gwHealth, type ConnView } from "./view";
 
 export const ALERT_LEVELS = ["WARNING", "CAUTION", "ADVISORY"] as const; // 화면 순서
 export type AlertLevel = (typeof ALERT_LEVELS)[number];
@@ -94,7 +94,7 @@ function commandConditions(c: SentCommand): Condition[] {
 /**
  * 지금 성립한 조건 (SRS 표 3-1). GW 연결이 끊겼거나 데이터가 지연된 동안 차량 조건은 마지막으로 받은 값으로
  * 판정한다(표 3-1 아래 문단). 받은 적 없는 값(link_status 전, 텔레메트리 전)으로는 경고하지 않는다.
- * GW 조건은 배너(REQ-HMI-006)와 같은 판정이다: 첫 접속 중은 끊김이 아니고, 기준선 재설정 접속은 끊김이 아니라 지연이다
+ * GW 조건은 배너(REQ-HMI-006)와 같은 분류 gwHealth()를 쓴다: 첫 접속 중은 끊김이 아니고, 기준선 재설정 접속은 끊김이 아니라 지연이다
  */
 export function alertConditions(s: HmiState, conn: ConnView, fresh: Freshness): Condition[] {
   const out: Condition[] = [];
@@ -105,10 +105,9 @@ export function alertConditions(s: HmiState, conn: ConnView, fresh: Freshness): 
   if (v?.mode === "FAULT") out.push(cond("VEHICLE_FAULT", "차량 모드 FAULT"));
   if (v?.flags.includes("FAILSAFE_ACTIVE")) out.push(cond("FAILSAFE", "차량 Failsafe 정지 (HEARTBEAT 두절)"));
   if (v?.flags.includes("BATTERY_LOW")) out.push(cond("BATTERY_LOW", `배터리 부족 (${v.battery_pct}%)`));
-  const disconnected = conn.state === "WAITING_RETRY" || (conn.state === "CONNECTING" && conn.cause === "retry");
-  const delayed = (conn.state === "CONNECTING" && conn.cause === "resync") || (conn.state === "OPEN" && fresh === "STALE");
-  if (disconnected) out.push(cond("GW_DISCONNECTED", "GW 연결 끊김"));
-  if (delayed) out.push(cond("GW_DELAY", "GW 데이터 지연 (2초 이상)"));
+  const gw = gwHealth(conn, fresh); // 배너와 같은 분류
+  if (gw === "DISCONNECTED") out.push(cond("GW_DISCONNECTED", "GW 연결 끊김"));
+  if (gw === "DELAYED") out.push(cond("GW_DELAY", "GW 데이터 지연 (2초 이상)"));
   // 보낸 순서대로(sent는 최근 것부터): 한 번에 여러 경고가 생겨도 번호가 보낸 순서를 따른다
   for (const c of [...s.commands.sent].reverse()) out.push(...commandConditions(c));
   return out;
@@ -162,6 +161,9 @@ function whileAbsent(a: Alert): Alert | null {
   }
 }
 
+/** 확인 버튼을 둘 경고: WARNING·CAUTION이고 아직 확인하지 않음 (ADVISORY는 확인이 없다) */
+const canAcknowledge = (a: Alert): boolean => a.level !== "ADVISORY" && a.state !== "ACKED";
+
 /**
  * 운용자 확인 (WARNING·CAUTION만, ADVISORY는 확인이 없다). 해제됨이면 사라지고, 조건이 이어지는 중이면 확인됨.
  * 명령 결과 경고는 확인됨이 되어 화면에서 사라지고, 그 명령의 조건이 입력에서 사라질 때 목록에서도 지운다
@@ -169,7 +171,7 @@ function whileAbsent(a: Alert): Alert | null {
  */
 export function acknowledge(list: AlertList, id: number): AlertList {
   const a = list.alerts.find((x) => x.id === id);
-  if (!a || a.level === "ADVISORY" || a.state === "ACKED") return list;
+  if (!a || !canAcknowledge(a)) return list;
   const alerts =
     a.state === "CLEARED" ? list.alerts.filter((x) => x !== a) : list.alerts.map((x) => (x === a ? { ...a, state: "ACKED" as const } : x));
   return { ...list, alerts };
@@ -194,6 +196,6 @@ export function alertRows(list: AlertList): AlertRow[] {
     .sort((x, y) => rank(x) - rank(y) || y.id - x.id)
     .map((a) => ({
       id: a.id, kind: a.kind, level: a.level, state: a.state, text: a.text,
-      ackable: a.level !== "ADVISORY" && a.state !== "ACKED",
+      ackable: canAcknowledge(a),
     }));
 }
