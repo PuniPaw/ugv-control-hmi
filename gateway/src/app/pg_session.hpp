@@ -2,7 +2,7 @@
 
 // PostgreSQL 연결 (libpq). DbSink의 DB 스레드에서만 쓴다 (SDD 5.1).
 //
-// libpq를 고른 이유는 SDD 5.1에 적었다: 쓰는 기능이 접속·준비된 문장·트랜잭션뿐이고,
+// libpq를 고른 이유는 SDD 5.1에 적었다: 쓰는 기능이 접속·준비된 문장·한 문장 실행뿐이고,
 // libpqxx는 패키지가 하나 더 늘고 오류를 예외로 던져 이 계층의 "실패하면 사유를 돌려준다"와 맞지 않는다.
 
 #include <memory>
@@ -25,7 +25,7 @@ class PgSession final : public IDbSession {
   ~PgSession() override;
 
   std::optional<std::string> open() override;
-  std::optional<std::string> write(const std::vector<dblog::Row>& rows) override;
+  std::optional<WriteError> write(const dblog::Row& row) override;
   void close() override;
 
  private:

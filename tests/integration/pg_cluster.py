@@ -42,6 +42,8 @@ def unavailable_reason() -> str | None:
             pwd.getpwnam(user)
         except KeyError:
             return "root로 실행 중인데 postgres 사용자가 없음 (initdb는 root로 실행할 수 없다)"
+        if shutil.which("runuser") is None:
+            return "root로 실행 중인데 runuser가 없음 (postgres 사용자로 서버를 띄울 수 없다)"
     return None
 
 
@@ -86,14 +88,16 @@ class PgCluster:
     def psql(self, sql: str, dbname: str = "postgres") -> list[list[str]]:
         out = subprocess.run(["psql", "-X", "-At", "-F", "\t", "-v", "ON_ERROR_STOP=1",
                               "-h", str(self.sock), "-p", str(PORT), "-U", "postgres", "-d", dbname, "-c", sql],
-                             check=True, capture_output=True, text=True).stdout
+                             check=True, capture_output=True, text=True, encoding="utf-8",
+                             env={**os.environ, "PGCLIENTENCODING": "UTF8"}).stdout  # 서버 인코딩과 무관하게 UTF-8로 받는다
         return [line.split("\t") for line in out.splitlines()]
 
-    def new_database(self) -> str:
-        """시험마다 빈 DB 하나. GW가 접속하면서 스키마를 만든다."""
+    def new_database(self, encoding: str | None = None) -> str:
+        """시험마다 빈 DB 하나. GW가 접속하면서 스키마를 만든다. encoding: 서버 인코딩(예: EUC_KR)."""
         self._db_seq += 1
         name = f"ugvc_t{self._db_seq}"
-        self.psql(f"CREATE DATABASE {name}")
+        opts = f" ENCODING '{encoding}' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0" if encoding else ""
+        self.psql(f"CREATE DATABASE {name}{opts}")
         return name
 
     def gateway_backend_pids(self) -> list[int]:

@@ -15,7 +15,7 @@ namespace ugvc::app {
 namespace {
 
 constexpr auto kFlushTimeout = std::chrono::milliseconds(500);
-constexpr std::size_t kMaxNotices = 16;  // io 스레드가 1Hz로 꺼낸다. 접속 상태가 바뀔 때만 생긴다
+constexpr std::size_t kMaxNotices = 16;  // io 스레드가 1Hz로 꺼낸다. 같은 사유는 되풀이하지 않으므로 드물다
 
 }  // namespace
 
@@ -32,30 +32,49 @@ struct DbSink::State {
 
   mutable std::mutex mutex;
   std::condition_variable wake;      // 새 기록 또는 종료 요청 → DB 스레드
-  std::condition_variable finished;  // DB 스레드 종료 → 소멸자
+  std::condition_variable finished;  // DB 스레드 종료 → close()
   std::deque<dblog::Row> queue;
   DbStats stats;
-  std::vector<std::string> notices;
+  std::vector<DbNotice> notices;
+  std::optional<std::string> told_connect_failure;  // 알린 접속 실패 사유. 같은 사유는 되풀이하지 않는다
+  std::optional<std::string> told_rejection;        // 알린 행 거절 사유
   bool connected = false;
-  bool told_down = false;  // 끊김을 이미 알렸나: 재접속 실패마다 같은 문구를 되풀이하지 않는다
   bool stopping = false;
   bool done = false;
 
-  void notice(std::string text) {
-    if (notices.size() < kMaxNotices) notices.push_back(std::move(text));
+  void notice(DbNotice n) {
+    if (notices.size() < kMaxNotices) notices.push_back(std::move(n));
   }
 
-  void run() {
+  // 연결이 없어졌다: 대기열을 db_down으로 비워 "연결이 없으면 대기열은 비어 있다"를 지킨다.
+  void drop_connection(std::uint64_t also_lost) {
+    stats.db_down += also_lost + queue.size();
+    queue.clear();
+    connected = false;
+  }
+
+  void run() noexcept {
+    try {
+      loop();
+    } catch (const std::exception& e) {
+      // 메모리 부족 등. GW를 내리지 않고 DB 저장만 멈춘다. 이후 기록은 db_down으로 센다
+      std::lock_guard<std::mutex> lock(mutex);
+      drop_connection(0);
+      stopping = true;
+      notice({DbNotice::Kind::ConnectionLost, std::string("db thread stopped: ") + e.what(), {}});
+    }
+    session->close();
+    std::lock_guard<std::mutex> lock(mutex);
+    done = true;
+    finished.notify_all();
+  }
+
+  void loop() {
     std::unique_lock<std::mutex> lock(mutex);
     while (!(stopping && queue.empty())) {
       if (connected) write_batch(lock);
       else try_connect(lock);
     }
-    lock.unlock();
-    session->close();
-    lock.lock();
-    done = true;
-    finished.notify_all();
   }
 
   void try_connect(std::unique_lock<std::mutex>& lock) {
@@ -64,18 +83,18 @@ struct DbSink::State {
       return;
     }
     lock.unlock();
-    const auto error = session->open();
+    auto error = session->open();
     lock.lock();
     if (error) {
       const auto delay = reconnect.failed();
-      if (!told_down) notice("db unavailable: " + *error + " (retry in " + std::to_string(delay.count()) + "ms)");
-      told_down = true;
+      if (told_connect_failure != error) notice({DbNotice::Kind::ConnectFailed, *error, delay});
+      told_connect_failure = std::move(error);
       return;
     }
     reconnect.succeeded();
     connected = true;
-    told_down = false;
-    notice("db connected");
+    told_connect_failure.reset();
+    notice({DbNotice::Kind::Connected, {}, {}});
   }
 
   void write_batch(std::unique_lock<std::mutex>& lock) {
@@ -86,22 +105,39 @@ struct DbSink::State {
                                   std::make_move_iterator(queue.begin() + static_cast<std::ptrdiff_t>(n)));
     queue.erase(queue.begin(), queue.begin() + static_cast<std::ptrdiff_t>(n));
     lock.unlock();
-    const auto error = session->write(batch);
-    if (error) session->close();
-    lock.lock();
-    if (!error) {
-      stats.written += batch.size();
-      return;
+
+    std::size_t tried = 0;
+    std::uint64_t written = 0;
+    std::vector<std::string> rejections;
+    std::optional<std::string> lost;
+    for (const auto& row : batch) {
+      auto error = session->write(row);
+      ++tried;
+      if (!error) {
+        ++written;
+      } else if (error->kind == WriteError::Kind::Data) {
+        rejections.push_back(std::move(error->reason));  // 그 행만 잃고 같은 연결로 이어 간다
+      } else {
+        lost = std::move(error->reason);
+        break;
+      }
     }
-    // 연결을 버리고 다시 접속한다. 남은 대기열도 끊김으로 버려 "연결이 없으면 대기열은 비어 있다"를 지킨다
-    stats.write_error += batch.size();
-    stats.db_down += queue.size();
-    queue.clear();
-    connected = false;
-    told_down = true;
-    const auto delay = reconnect.failed();
-    notice("db write failed, dropped " + std::to_string(batch.size()) + " records: " + *error + " (retry in " +
-           std::to_string(delay.count()) + "ms)");
+    if (lost) session->close();
+
+    lock.lock();
+    stats.written += written;
+    stats.rejected += rejections.size();
+    for (auto& r : rejections) {
+      if (told_rejection == r) continue;
+      notice({DbNotice::Kind::RowRejected, r, {}});
+      told_rejection = std::move(r);
+    }
+    if (lost) {
+      ++stats.write_error;
+      drop_connection(batch.size() - tried);
+      // 재접속 일정은 마지막 성공 상태 그대로라 바로 다시 시도한다 (끊긴 뒤 DB가 이미 살아 있으면 곧 이어 저장)
+      notice({DbNotice::Kind::ConnectionLost, std::move(*lost), {}});
+    }
   }
 };
 
@@ -110,17 +146,22 @@ DbSink::DbSink(std::unique_ptr<IDbSession> session, Config config)
   std::thread([s = state_] { s->run(); }).detach();
 }
 
-DbSink::~DbSink() {
+DbSink::~DbSink() { close(); }
+
+void DbSink::close() {
   std::unique_lock<std::mutex> lock(state_->mutex);
   state_->stopping = true;
   state_->wake.notify_one();
-  state_->finished.wait_for(lock, kFlushTimeout, [this] { return state_->done; });
+  if (!state_->finished.wait_for(lock, kFlushTimeout, [this] { return state_->done; })) {
+    // DB가 멈춰 다 저장하지 못했다. 떼어 낸 스레드에 남기는 기록은 여기서 버린 것으로 센다
+    state_->drop_connection(0);
+  }
 }
 
 void DbSink::publish(dblog::Row row) {
   {
     std::lock_guard<std::mutex> lock(state_->mutex);
-    if (!state_->connected) {
+    if (!state_->connected || state_->stopping) {
       ++state_->stats.db_down;
       return;
     }
@@ -138,7 +179,7 @@ DbStats DbSink::stats() const {
   return state_->stats;
 }
 
-std::vector<std::string> DbSink::take_notices() {
+std::vector<DbNotice> DbSink::take_notices() {
   std::lock_guard<std::mutex> lock(state_->mutex);
   return std::exchange(state_->notices, {});
 }

@@ -191,6 +191,16 @@ class GatewayApp {
     tick();
   }
 
+  // 종료: DB에 남은 기록을 잠깐 저장해 보고(DbSink::close), 마지막 1Hz 보고 이후의 버림·알림까지 남긴다.
+  // log_는 이 뒤에 소멸한다 (먼저 선언됐으므로).
+  ~GatewayApp() {
+    if (!db_) return;
+    db_->close();
+    report_db();
+  }
+  GatewayApp(const GatewayApp&) = delete;
+  GatewayApp& operator=(const GatewayApp&) = delete;
+
  private:
   void on_datagram(Source source, const std::uint8_t* data, std::size_t len) {
     const auto accepted = gateway_.on_datagram(source, data, len);
@@ -323,16 +333,27 @@ class GatewayApp {
     }
   }
 
-  // DB 접속·끊김 알림과 버린 기록 수(원인별, 직전 보고 이후 늘어난 만큼)를 진단에 남긴다 (REQ-LOG-003).
+  // DB 접속·끊김·거절 알림과 버린 기록 수(원인별, 직전 보고 이후 늘어난 만큼)를 진단에 남긴다 (REQ-LOG-003).
+  // 문구는 여기 한 곳에서 만든다. DB 스레드는 종류와 사유만 넘긴다.
   void report_db() {
     if (!db_) return;
-    for (auto& n : db_->take_notices()) log_.publish(std::move(n));
+    for (const auto& n : db_->take_notices()) {
+      switch (n.kind) {
+        case app::DbNotice::Kind::Connected: diag(log_, "db connected"); break;
+        case app::DbNotice::Kind::ConnectFailed:
+          diag(log_, "db unavailable: ", n.reason, " (retry in ", n.retry_in.count(), "ms)");
+          break;
+        case app::DbNotice::Kind::ConnectionLost: diag(log_, "db connection lost: ", n.reason, " (reconnecting)"); break;
+        case app::DbNotice::Kind::RowRejected: diag(log_, "db rejected a record: ", n.reason); break;
+      }
+    }
     const auto now = db_->stats();
     const auto& was = reported_db_;
     if (now.dropped() != was.dropped()) {
       diag(log_, "db log dropped ", now.dropped() - was.dropped(), " records (queue_full +",
-           now.queue_full - was.queue_full, ", db_down +", now.db_down - was.db_down, ", write_error +",
-           now.write_error - was.write_error, "; total queue_full ", now.queue_full, ", db_down ", now.db_down,
+           now.queue_full - was.queue_full, ", db_down +", now.db_down - was.db_down, ", rejected +",
+           now.rejected - was.rejected, ", write_error +", now.write_error - was.write_error,
+           "; total queue_full ", now.queue_full, ", db_down ", now.db_down, ", rejected ", now.rejected,
            ", write_error ", now.write_error, ")");
     }
     reported_db_ = now;
