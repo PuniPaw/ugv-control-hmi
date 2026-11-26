@@ -13,7 +13,7 @@ namespace {
 using nlohmann::json;
 
 // u64 시각(헤더 timestamp, capture_ts)은 bigint(i64)를 넘을 수 있어 numeric(20)에 넣는다.
-// 받은 값이 검증 ⑧을 통과했다면 어떤 값이든 행 하나 때문에 배치 전체가 실패하지 않게 한다.
+// 받은 값이 검증 ⑧을 통과했다면 어떤 값이든 그 행이 저장에 실패하지 않게 한다.
 constexpr const char* kSchema = R"sql(
 CREATE TABLE IF NOT EXISTS telemetry (
   id           bigserial PRIMARY KEY,
@@ -55,7 +55,7 @@ std::string text(std::uint64_t v) { return std::to_string(v); }
 std::string text(std::int64_t v) { return std::to_string(v); }
 
 // PostgreSQL의 text·jsonb는 NUL 문자(JSON "\u0000")를 받지 않는다. HMI가 보낸 req_id에 NUL이 있으면
-// 그 행 때문에 배치 전체가 실패하므로, 저장 전에 U+FFFD로 바꾼다. 다른 문자는 그대로 둔다.
+// 그 행이 늘 저장에 실패하므로, 저장 전에 U+FFFD로 바꾼다. 다른 문자는 그대로 둔다.
 std::string without_nul(const std::string& s) {
   std::string out;
   out.reserve(s.size());
