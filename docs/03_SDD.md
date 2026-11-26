@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.6.1 (초안) |
+| 버전 | v0.7.1 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.9, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.28, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.10, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.29, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -36,8 +36,10 @@
 | v0.5.2 | 2026-11-20 | 8.6 PR #35 2차 리뷰 반영: 행별 다시 보내기와 결과 기한(5s)을 없앰. 두 차례 결함(늦은 결과 뒤 다시 보내기 확인으로 이중 실행, 기한이 GW 늦은 판정·IF-03 지연보다 짧음)이 "시간 기준으로 다시 보내기를 연다"는 같은 전제에서 나왔기 때문. 명령 상태는 메시지·연결 이벤트로만 바뀌고(결과 미확인은 IF-03 끊김만), 결과 대기는 경과 초로 표시. 다시 시도는 새 명령의 확인 절차이며, 같은 종류 명령이 결과 전이면 확인 단계가 경고하고(STOP 제외) 그 명령의 결과가 오면 확인 단계를 닫음 |
 | v0.5.3 | 2026-11-23 | 8.6 PR #35 3차 리뷰 반영: 기준선 재설정도 명령은 끊김과 같이 다룸(`connectionEnded`: 결과 대기 → 결과 미확인, 확인 단계 닫힘). 버린 적체 안의 cmd_result를 잃으면 영원히 결과 대기로 남던 결함을 고침. 결과를 잃는 두 경우(끊김, 재설정의 버린 적체)를 나눠 적음. 같은 종류 경고는 그 종류의 가장 최근 명령만 봄. v0.5.2에서 설계 본문에 있던 행별 다시 보내기의 이력 문단은 개정 이력(v0.5.2 행)에만 둠 |
 | v0.5.4 | 2026-11-23 | 8.6 PR #35 4차 리뷰 반영: 같은 종류에 결과 대기 명령이 있으면 그것을 경고(더 새 명령의 결과로 숨기는 것은 오래된 결과 미확인뿐), "한 번만 보냄"을 "새 연결에 지난 결과를 스스로 다시 보내지 않음"으로, 8.2 재설정 서술(명령도 `connectionEnded`). `main`(PR #36) merge로 이 PR의 이력 행을 v0.5~v0.5.3으로 다시 매기고 관련 문서(SRS v0.8, ICD v0.15, STP v0.26) 갱신. 8.7 시연 점검은 한 프로세스 SIM 사용 |
-| v0.6 | 2026-11-25 | 5.1 DB 로그 저장 신설(REQ-LOG-001·003): 9장 미정 "PostgreSQL 저장 방식"을 비동기(전용 DB 스레드, `DbSink`)·트랜잭션 배치(최대 500행)로 확정. 클라이언트 libpq(근거), 스키마(`telemetry`·`detection`·`event`, 인덱스), `--db` 접속 설정, 상한 5000건과 원인별 버림 계수(queue_full·db_down·write_error), 재접속 0.5s→5s(`ReconnectSchedule`, 시계 주입). 2장 모듈 표에 `dblog`, 5장 스레드 수, 6.1 명령 이벤트 저장(`CommandSent`에 WAYPOINT 좌표), 7장 표 |
-| v0.6.1 | 2026-11-25 | 5.1 PR #50 1차 리뷰 반영: 저장 실패를 연결 오류와 데이터 오류(`WriteError::Kind`)로 나눔. 행 하나가 거절돼도 연결을 버려 같은 배치의 유효 기록을 잃던 결함 때문에, v0.6의 트랜잭션 배치를 행마다 자동 확정(`synchronous_commit=off`)으로 바꾸고 데이터 오류는 그 행만 `rejected`(새 원인)로 셈. 접속 기본값 `client_encoding=UTF8`. 연결을 잃으면 그 행 `write_error`, 나머지 `db_down`, 재접속은 바로. 알림은 종류 있는 `DbNotice`(문구는 io 스레드), 사유가 바뀌면 다시 알림, 종료 때 남은 기록 계수와 마지막 보고, DB 스레드 예외 처리. 스키마 생성 권한, 접속 시간 상한의 한계, `write_error` 의미, req_id 없는 거부 메시지는 DB에 남지 않음을 적음 |
+| v0.6 | 2026-11-25 | 8.7 HMI 경고 체계 신설(REQ-HMI-003·004, SRS v0.9 표 3-1·3-2): 조건 집합 `alertConditions`(기존 판정이 입력)와 수명 규칙 `reconcile`·`acknowledge`(순수 함수), 명령 결과 경고는 풀리지 않음, 등급별 자리와 확인 버튼, 차량 LOST 경고 2.0s 구성. 탐지 노드 조건·신규 표적은 DET 연결 주로 미룸. 받은 적 없는 링크 상태는 LOST가 아니라 `null`(8.3). 8.1 모듈 표, 8.4 마지막 항목, 시험 절을 8.8로, 9장 REQ-HMI-004 측정 행 정리 |
+| v0.6.1 | 2026-11-25 | 8.7 PR #49 1차 리뷰 반영: GW 연결 분류를 `view.ts`의 `gwHealth()` 하나로 모아 배너와 경고가 같이 씀(8.4 문구를 실제대로), 확인 가능 여부를 술어 하나(`canAcknowledge`)로, WARNING·CAUTION을 한 띠에 두고 위아래로 나눈 것을 위치 구분으로 보는 근거, GW 재시작 직후 재접속하면 차량 LOST가 잠깐 떴다가 해제됨으로 남는 한계(이슈 #51). 관련 문서 SRS v0.10 |
+| v0.7 | 2026-11-25 | 5.1 DB 로그 저장 신설(REQ-LOG-001·003): 9장 미정 "PostgreSQL 저장 방식"을 비동기(전용 DB 스레드, `DbSink`)·트랜잭션 배치(최대 500행)로 확정. 클라이언트 libpq(근거), 스키마(`telemetry`·`detection`·`event`, 인덱스), `--db` 접속 설정, 상한 5000건과 원인별 버림 계수(queue_full·db_down·write_error), 재접속 0.5s→5s(`ReconnectSchedule`, 시계 주입). 2장 모듈 표에 `dblog`, 5장 스레드 수, 6.1 명령 이벤트 저장(`CommandSent`에 WAYPOINT 좌표), 7장 표 |
+| v0.7.1 | 2026-11-25 | 5.1 PR #50 1차 리뷰 반영: 저장 실패를 연결 오류와 데이터 오류(`WriteError::Kind`)로 나눔. 행 하나가 거절돼도 연결을 버려 같은 배치의 유효 기록을 잃던 결함 때문에, v0.7의 트랜잭션 배치를 행마다 자동 확정(`synchronous_commit=off`)으로 바꾸고 데이터 오류는 그 행만 `rejected`(새 원인)로 셈. 접속 기본값 `client_encoding=UTF8`. 연결을 잃으면 그 행 `write_error`, 나머지 `db_down`, 재접속은 바로. 알림은 종류 있는 `DbNotice`(문구는 io 스레드), 사유가 바뀌면 다시 알림, 종료 때 남은 기록 계수와 마지막 보고, DB 스레드 예외 처리. 스키마 생성 권한, 접속 시간 상한의 한계, `write_error` 의미, req_id 없는 거부 메시지는 DB에 남지 않음을 적음 |
 
 ---
 
@@ -243,7 +245,7 @@ flowchart LR
 - 행 변환(정수 값 그대로, u64 최댓값, DETECTION 물체 전부, 이벤트 종류별 detail, NUL req_id), 문장의 매개변수 수 (`DbRow.*`)
 - 재접속 간격 0.5s 경계, 5s 상한과 100회 뒤에도 계속, 성공 뒤 처음 간격 (`ReconnectSchedule.*`, 가짜 시계)
 - `DbSink`(가짜 세션, 시간 상한이 아니라 완료로 판정): 저장이 멈춘 채로 1만 건 publish가 끝나고 상한 초과는 queue_full, DB 없으면 db_down과 같은 사유 알림 1회·재접속 계속·사유가 바뀌면 다시 알림, 거절 행은 rejected이고 연결·다른 행 유지, 연결 유실 → write_error·나머지 db_down·바로 재접속, 멈춘 DB에서도 close()가 끝나고 남은 기록은 db_down
-- 통합(실제 PostgreSQL): 저장 내용이 IF-03과 같음, 링크·명령 이벤트, DB 내렸다 올리기와 서버 프로세스 정지 중 중계·HEARTBEAT 지속, 없는 DB에서 기동·계수, EUC_KR DB에서 거절 행만 잃음 (STP 3.22·3.23)
+- 통합(실제 PostgreSQL): 저장 내용이 IF-03과 같음, 링크·명령 이벤트, DB 내렸다 올리기와 서버 프로세스 정지 중 중계·HEARTBEAT 지속, 없는 DB에서 기동·계수, EUC_KR DB에서 거절 행만 잃음 (STP 3.24·3.25)
 
 ## 6. 명령 재전송 (REQ-CMD-002·003·005·006, ICD 6.3·6.4·7.2·7.3)
 
@@ -328,7 +330,7 @@ stateDiagram-v2
 | GW가 IF-03 JSON을 stdout에도 출력 | WebSocket 없이 통합 시험(pytest가 subprocess로 GW 실행) |
 | DB 행 변환은 순수 함수, `DbSink`는 `IDbSession`만 앎, `ReconnectSchedule`에 시계 주입 | DB 없이 저장 내용·버림 계수·재접속을 단위 시험. 실제 PostgreSQL은 통합 시험에서 임시 클러스터로 (5.1) |
 | `tools/check_stp_tests.py` | STP의 테스트 이름이 실제 테스트(C++·Python·HMI vitest)와 어긋나면 실패 (RTM grep의 전제) |
-| HMI: 소켓·타이머 주입, 순수 `apply`/`freshness`/`view`/`trackSync` | 재접속 간격, 신선도 경계, 시계 차, 표시 정책을 브라우저 없이 시험 (8.7) |
+| HMI: 소켓·타이머 주입, 순수 `apply`/`freshness`/`view`/`trackSync` | 재접속 간격, 신선도 경계, 시계 차, 표시 정책을 브라우저 없이 시험 (8.8) |
 
 ## 8. HMI 구조
 
@@ -347,6 +349,7 @@ flowchart LR
     APP -->|"requestCommand · cancelCommand · confirmCommand"| CTRL
     CTRL -->|"send(commandText)"| CONN
     STATE --> VIEW["state/view<br/>banner · staleness · 표시 문구"]
+    CTRL -->|"alertConditions → reconcile · acknowledge"| ALERTS["state/alerts<br/>경고 목록"]
     STATE --> SYNC["map/trackSync<br/>궤적 그리기 계획"]
     VIEW --> UI["ConnectionBanner · StatusPanel · CommandPanel"]
     SYNC --> MAP["MapView (Leaflet)"]
@@ -359,9 +362,10 @@ flowchart LR
 | `src/state/commands.ts` | 명령 확인 절차(`draft`)와 보낸 명령 기록(`CommandLog`): `draftCommand`·`cancelDraft`·`commandSent`·`resultReceived`·`connectionEnded`, 같은 종류 미해결 명령 `sameKindUnresolved`(확인 경고), 경로점 입력 해석 `waypointFromInput` | REQ-CMD-001 |
 | `src/state/hmiState.ts` | `receiveText()`: 파싱 후 반영 또는 폐기 계수. `apply()`: 메시지 하나를 반영한 새 상태. `connectionOpened()`·`connectionLost()`·`resyncStarted()`: 연결 범위 상태(`session`) 시작·폐기(끊김이면 궤적도 끊음, 재설정이면 궤적 유지). `freshness()`: GW 데이터 신선도. `needsResync()`: 기준선 재설정 필요 여부. 전송 층(`net/`)을 모른다 | REQ-HMI-001·002·006·007 |
 | `src/state/view.ts` | 표시 정책: 화면용 연결 상태 `ConnView`, 배너 등급·문구, 흐림 범위, 상태 패널 행(`LinkRow`·`VehicleRows`: 경과 시간·유실률·배터리·위치 문구), 명령 패널(`commandBlock` 송신 가능 판정과 사유, 확인 문구, 결과 행 `CommandRow`), 이를 한 시각으로 묶은 `present()` | REQ-HMI-002·006, REQ-CMD-001·004 |
+| `src/state/alerts.ts` | 경고 체계: 지금 성립한 조건(`alertConditions`, 입력은 기존 판정), 수명 규칙(`reconcile`·`acknowledge`, 표 3-2), 화면 행(`alertRows`). 8.7 | REQ-HMI-003·004 |
 | `src/model/connection.ts` | `net/`과 `state/`가 함께 쓰는 접속 이유 타입(`ConnectAttempt`). 두 층은 서로를 import하지 않는다. 그리기 컴포넌트는 `state/view`의 `Presented`만 받는다 | |
 | `src/map/trackSync.ts` | 이전에 그린 것과 다음 궤적을 비교해 그리기 연산(`clear`·`newLine`·`extend`) 목록을 낸다 | REQ-HMI-001 |
-| `src/app/hmiController.ts` | 연결 + 상태 + 주기 판정 + 화면 판정을 한곳에 묶는다: 텍스트 → `receiveText`, 연결 이벤트 → `connectionOpened`·`connectionLost`·`resyncStarted`와 `ConnView`, `tick()` → `needsResync`면 `resync()`, `view()` → `present()`. 명령: `requestCommand`(확인 단계 시작)·`cancelCommand`·`confirmCommand`(보낼 수 있을 때만 새 req_id로 송신). 벽시계·단조 시계·소켓·타이머·req_id 발급은 주입 | REQ-HMI-006, REQ-CMD-001·004 |
+| `src/app/hmiController.ts` | 연결 + 상태 + 주기 판정 + 화면 판정을 한곳에 묶는다: 텍스트 → `receiveText`, 연결 이벤트 → `connectionOpened`·`connectionLost`·`resyncStarted`와 `ConnView`, `tick()` → `needsResync`면 `resync()`, `view()` → `present()`와 경고 목록 맞추기(`reconcile`), `acknowledgeAlert`(운용자 확인). 명령: `requestCommand`(확인 단계 시작)·`cancelCommand`·`confirmCommand`(보낼 수 있을 때만 새 req_id로 송신). 벽시계·단조 시계·소켓·타이머·req_id 발급은 주입 | REQ-HMI-003·006, REQ-CMD-001·004 |
 | `src/components/*.vue` | 그리기만 한다. 위 모듈의 결과를 그대로 쓰고 판정하지 않는다 | |
 
 판정은 모두 순수 함수(시각은 인자)와 주입받는 `HmiController`에 있고, 실제 시계(`Date.now`, `performance.now`, 250ms 주기 `tick`)와 WebSocket은 `App.vue`에서 주입한다. 화면 판정(신선도·배너·흐림)은 `present()`가 한 시각으로 한 번에 하므로 App.vue와 시험이 같은 경로를 쓴다.
@@ -382,7 +386,7 @@ GW가 보낸 JSON은 `parseIf03`에서만 검사한다.
 - **궤적 구간:** 궤적은 구간의 목록이다. 차량 링크 LOST, IF-03 연결 끊김 뒤의 첫 유효 위치와, GPS 무효가 **10표본(10Hz 약 1초) 이상** 이어진 뒤의 첫 유효 위치는 새 구간을 시작한다. 판정은 마지막 유효 위치의 seq(`lastFixSeq`) 하나로 한다: 다음 유효 위치와의 seq 차이 d(u32 순환)에서 d−1이 그 사이 위치 없이 지난 표본(GPS 무효 + 받지 못한 것) 수이고, 이것이 `NO_FIX_GAP_SAMPLES`(10) 이상이면 끊는다. GPS 무효 표본은 아무것도 바꾸지 않는다. 같은 seq가 다시 오면 위치를 다시 붙이지 않는다. seq가 뒤로 가면(차량 LOST 뒤 GW의 기준값 재설정, SIM 재시작) 순환해 큰 차이가 되어 끊긴다. 그래서 유실, 기준선 재설정 접속 대기, 재설정으로 버린 처리 적체가 모두 같은 10표본 규칙으로 판정된다(7차 리뷰: 접속 시간만 보면 적체를 버린 재설정을 놓친다). 연결 끊김·차량 LOST·처음에는 `lastFixSeq`를 null로 둔다(다음 유효 위치는 새 구간). 끊긴 곳을 직선으로 잇지 않는다. GPS 무효 한두 표본으로 끊지 않는 이유: 깜박임마다 끊으면 점 하나짜리 구간만 남고, Leaflet은 점 하나짜리 선을 그리지 않아 궤적이 보이지 않는다(3차 리뷰 재현). 1초 미만의 무효 구간은 직선으로 잇는다.
 - **계약(trackSync가 의존):** 점이 늘 때 `apply()`는 마지막 구간 배열만 새로 만들고 다른 구간·점 배열은 그대로 옮긴다. 이 계약이 깨지면 매 점이 전체 다시 그리기가 되는데, 6000점 동안 다시 그리기 횟수를 세는 시험이 이를 잡는다.
 - **궤적 상한:** 전체 3000점(10Hz 약 5분). 넘으면 가장 오래된 점부터 300점을 한 번에 지운다. 지도의 다시 그리기를 30초에 한 번으로 묶기 위해서다(8.5). 전체 궤적은 사후 재생(PostgreSQL 로그)에서 본다.
-- 링크 상태의 초기값은 GW와 같은 LOST다. 접속 직후 GW가 현재 link_status를 보내므로 곧 실제 값으로 바뀐다(ICD 7장).
+- 링크 상태는 송신원마다 마지막으로 받은 `link_status`이고, 받은 적이 없으면 `null`이다(상태 패널은 "—"). 접속 직후 GW가 현재 link_status를 보내므로 곧 실제 값이 된다(ICD 7장). v0.6 전에는 GW 초기값과 같은 LOST를 넣어 두었으나, 경고 체계가 받지 않은 값으로 차량 LOST 경고를 띄우게 되어 바꿨다(8.7). 흐림과 명령 차단은 `null`을 CONNECTED가 아닌 것으로 다룬다.
 - **연결 범위 상태(`session`):** 열린 연결 하나에서만 뜻이 있는 값(연 시각, 기준선, 마지막 stats, 늦음 시작 시각)은 `session: {...} | null` 하나로 묶는다. `HmiController`가 연결 이벤트에 따라 OPEN이면 만들고(`connectionOpened`), 재시도 대기·처음·재시도 접속이면 버리며 궤적을 끊고(`connectionLost`), 기준선 재설정 접속이면 버리되 궤적은 끊지 않는다(`resyncStarted`: 재설정은 연결 끊김이 아니다). 두 경우 모두 명령은 `connectionEnded`로 정리한다(결과 대기 → 결과 미확인, 확인 단계 닫힘, 8.6). 재설정 자체로는 궤적을 끊지 않고, 재설정 동안 빠진 표본은 8.3의 seq 간격 규칙이 판정한다. 화면용 연결 상태 `ConnView`는 판별 유니온이며, 재접속 대기는 단조 시계 기준 예정 시각(`retryAtMono`)을 가진다(벽시계가 바뀌어도 카운트다운이 틀리지 않음). 링크·차량·궤적 값은 "이전 값"으로 남는다.
 - **폐기:** `receiveText()`가 파싱에 실패한 메시지를 `discarded`로 센다(상태 패널에 표시).
 
@@ -423,7 +427,7 @@ stateDiagram-v2
     | OPEN, FRESH | GW 연결됨 | ok |
   - 흐림: GW 연결이 끊겼거나 신선도가 FRESH가 아니면 패널 전체를, 그에 더해 차량 링크가 CONNECTED가 아니면 차량 섹션("이전 값")과 지도 마커를 흐리게 한다
   - 배터리 경고색은 SIM이 정한 `BATTERY_LOW` 플래그(20% 이하)를 따른다. HMI가 따로 문턱을 두지 않는다
-  - 정식 경고(REQ-HMI-003·004)는 경고 체계 작업에서 이 판정들을 입력으로 쓴다
+  - 연결 상태와 신선도를 끊김·지연·접속 중·대기·정상으로 나누는 분류는 `gwHealth(conn, fresh)` 하나다. 배너(문구에 카운트다운·재설정 여부를 더함)와 경고(8.7)가 이것을 같이 쓰므로 둘이 어긋나지 않는다
 
 ### 8.5 지도
 
@@ -465,7 +469,7 @@ stateDiagram-v2
   2. 이 연결에서 VEHICLE `link_status`를 아직 받지 않았으면 "차량 링크 상태 수신 전 · 명령을 보낼 수 없음"(`session.vehicleLinkSeen`). 재접속 직후의 `link.VEHICLE`은 이전 연결의 값이라, GW가 재시작해 차량 링크가 실제로 LOST여도 CONNECTED로 남아 있을 수 있다. GW는 접속 직후 link_status를 보내므로(ICD 7장) 보통 곧 풀린다. 기준선 재설정 재접속도 같다.
   3. 차량 링크가 LOST면 "차량 링크 LOST · 명령을 보낼 수 없음".
 
-  버튼과 확인 단계의 보내기가 모두 이 판정으로 비활성되고, `confirmCommand()`도 보내기 직전에 다시 판정한다(확인 단계 중에 LOST가 되면 확인 단계는 남기고 보내지 않음). DEGRADED와 데이터 지연(STALE)은 막지 않는다. SRS는 LOST만 정하고, 지연 중에도 정지 명령은 보낼 수 있어야 하기 때문이다. **남는 위험:** STALE 동안의 링크 값은 2초 넘게 늦은 GW 판정이므로, 그사이 차량이 LOST가 됐어도 CONNECTED로 보고 보낼 수 있다. 그 명령은 GW가 SIM에 보내 TIMEOUT으로 끝난다(경고 체계 작업에서 STALE을 입력으로 다룬다).
+  버튼과 확인 단계의 보내기가 모두 이 판정으로 비활성되고, `confirmCommand()`도 보내기 직전에 다시 판정한다(확인 단계 중에 LOST가 되면 확인 단계는 남기고 보내지 않음). DEGRADED와 데이터 지연(STALE)은 막지 않는다. SRS는 LOST만 정하고, 지연 중에도 정지 명령은 보낼 수 있어야 하기 때문이다. **남는 위험:** STALE 동안의 링크 값은 2초 넘게 늦은 GW 판정이므로, 그사이 차량이 LOST가 됐어도 CONNECTED로 보고 보낼 수 있다. 그 명령은 GW가 SIM에 보내 TIMEOUT으로 끝난다(이때 GW 지연 CAUTION 경고가 떠 있다, 8.7).
 - **req_id:** 보낼 때마다 `deps.newReqId()`로 새로 발급한다. 실제 값은 `crypto.getRandomValues` 128비트의 16진 32자다. `crypto.randomUUID`는 보안 맥락(https, localhost)에서만 있어 다른 PC에서 http로 연 HMI에서 쓸 수 없다.
 - **결과 상태:** 보낸 명령은 PENDING(결과 대기), DONE(cmd_result 받음), UNCONFIRMED(결과 전에 IF-03 연결이 끝남) 중 하나다. 상태는 메시지와 연결 이벤트로만 바뀌고 **시간으로는 바뀌지 않는다.** GW가 결과를 낼 때까지의 시간에는 상한이 없기 때문이다. 늦은 판정은 max(예정 + 1.0s, 실제 송신 + 0.95s)이고(ICD 7.3), IF-03 전달은 2초까지 늦어도 FRESH이며(ICD 7장), 재설정 직전에는 그보다 늦다.
   - `resultReceived()`는 우리 req_id이고 아직 DONE이 아닌 것(PENDING, UNCONFIRMED)만 바꾼다. 다른 HMI의 명령 결과(ICD 7.1: 모든 HMI에 보냄)와 같은 결과의 재전달은 무시한다(형식이 맞으므로 폐기로 세지 않음).
@@ -481,7 +485,52 @@ stateDiagram-v2
 - **송신:** `GwConnection.send()`는 열린 소켓에만 보내고 대기열을 두지 않는다. 열린 연결이 없거나 소켓이 예외를 던지면 false이고, 컨트롤러는 기록을 만들지 않고 확인 단계를 남긴다. 브라우저 WebSocket은 CLOSING·CLOSED에서 예외 없이 버리므로, `browserSocket`은 `readyState`가 OPEN이 아니면 예외를 던져 실패를 알린다. 실패하면 소켓은 닫히는 중이라 곧 끊김으로 처리되고(확인 단계 닫힘, 사유 표시), 따로 실패 문구는 두지 않는다.
 - **경로점 입력:** `waypointFromInput()`은 화면 입력 경계다. 부호와 소수점만 있는 소수 7자리 이하 십진수(지수·16진수·NaN·Infinity·쉼표 불가)이고 위도 −90~90, 경도 −180~180이어야 한다(ICD 7.2, 한계값은 `if03/messages.ts`의 `LAT_LIMIT`·`LON_LIMIT`). 7자리로 제한하는 이유: GW는 1e-7 deg 정수로 반올림해 싣는데(ICD 6.3), 8자리 이상이면 확인 화면(7자리)과 실제로 실리는 값이 1 LSB 다를 수 있다. 지도에서 경로점을 고르고 표시하는 일(REQ-HMI-001 경로점)은 이 범위가 아니다.
 
-### 8.7 시험
+### 8.7 경고 체계 (REQ-HMI-003·004, SRS 표 3-1·3-2)
+
+**구조:** 두 단계로 나눈다. 둘 다 `state/alerts.ts`의 순수 함수다.
+
+1. `alertConditions(state, conn, fresh)`: 지금 성립한 조건의 목록. 이력이 없다. 입력은 이미 있는 판정이다(새 판정을 만들지 않는다).
+
+   | 조건 (표 3-1) | 등급 | 입력 |
+   |---|---|---|
+   | 차량 링크 LOST | WARNING | 마지막으로 받은 VEHICLE `link_status` |
+   | 차량 모드 FAULT | WARNING | 마지막 텔레메트리 `mode` |
+   | 차량 Failsafe 정지 | WARNING | 마지막 텔레메트리 `flags`의 `FAILSAFE_ACTIVE` |
+   | GW 연결 끊김 | WARNING | `gwHealth()`가 DISCONNECTED: WAITING_RETRY 또는 CONNECTING retry (배너와 같은 분류) |
+   | GW 데이터 지연 | CAUTION | `gwHealth()`가 DELAYED: CONNECTING resync, 또는 OPEN이고 `freshness()`가 STALE (배너와 같은 분류) |
+   | 명령 결과 TIMEOUT·REJECTED | CAUTION | `commands.sent`의 DONE이고 결과가 ACCEPTED가 아님. 명령마다(req_id) |
+   | 명령 결과 미확인 | CAUTION | `commands.sent`의 UNCONFIRMED. 명령마다(req_id) |
+   | 배터리 20% 이하 | CAUTION | 마지막 텔레메트리 `flags`의 `BATTERY_LOW`(SIM이 20% 이하로 정함, ICD 표 6-2. HMI는 따로 문턱을 두지 않는다) |
+   | 차량 링크 DEGRADED | ADVISORY | 마지막으로 받은 VEHICLE `link_status` |
+
+   - GW 연결이 끊겼거나 지연된 동안 차량 조건은 마지막으로 받은 값으로 판정한다(표 3-1 아래 문단). 상태가 연결을 넘어 남으므로(8.3) 그대로 된다.
+   - 받은 적 없는 값으로는 경고하지 않는다. 링크 상태를 받기 전은 `null`이고(8.3), 텔레메트리를 받기 전은 `vehicle`이 `null`이다. 첫 접속 중(CONNECTING first)도 끊김이 아니다(배너도 "GW 접속 중"). 이렇게 하지 않으면 HMI를 열 때마다 첫 `link_status` 전 몇 ms 동안의 거짓 LOST가 "해제됨" 경고로 남아 운용자가 확인해야 한다.
+   - 명령 결과 조건은 보낸 순서로 낸다. 한 번에 여러 개가 생겨도(재접속으로 여러 명령이 결과 미확인) 경고 번호가 보낸 순서를 따른다.
+2. `reconcile(이전 목록, 조건)` → 새 목록과 `acknowledge(목록, id)` → 새 목록: 수명 규칙(표 3-2)은 이 둘에만 있다. 경고는 조건의 열쇠(`key`: 조건 종류, 명령 결과는 종류 + req_id)로 맞춘다. 등급과 "풀리지 않음" 여부는 종류별 표(`KINDS`) 하나에서 정한다.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: 조건 성립 (새 번호)
+    ACTIVE --> CLEARED: 조건 풀림 (WARNING·CAUTION)
+    ACTIVE --> [*]: 조건 풀림 (ADVISORY)
+    ACTIVE --> ACKED: 확인 (WARNING·CAUTION)
+    CLEARED --> ACTIVE: 조건 다시 성립 (같은 번호)
+    CLEARED --> [*]: 확인
+    ACKED --> [*]: 조건 풀림
+    note right of ACTIVE: 명령 결과 경고는 조건이 풀려도 ACTIVE.<br/>확인하면 ACKED(화면에 안 보임)가 되고<br/>그 명령의 조건이 입력에서 사라질 때 지운다
+```
+
+- 화면 문구: ACTIVE는 문구만, CLEARED는 "해제됨", ACKED는 "확인됨". ADVISORY는 확인 버튼이 없다.
+- **명령 결과 경고는 풀리지 않는다(표 3-2).** 결과 미확인 명령의 결과가 나중에 와도(UNCONFIRMED → DONE) 그 경고는 남는다. 결과를 확인하지 못했던 때가 있었다는 사실이고, 행의 결과는 명령 패널이 보인다. 결과 미확인 뒤 TIMEOUT이 오면 결과 미확인과 명령 실패는 다른 조건이라 경고가 둘이다.
+- **확인한 명령 결과 경고를 다시 띄우지 않는 방법:** 결과 미확인 명령은 GW가 다시 시작되면 영원히 결과 미확인이다(8.6). 확인할 때 경고를 지우면 다음 판정에서 같은 조건으로 새 경고가 생긴다. 그래서 확인하면 ACKED로 두고 화면에서만 숨기며, 그 명령이 기록에서 사라지거나 상태가 바뀌어 조건이 입력에서 사라질 때 지운다. 결과를 받지 못한 기록은 지우지 않으므로(8.6, 이슈 #44의 기록 상한) 숨긴 경고도 그만큼 남는다. 상한은 이슈 #44에서 기록 상한과 함께 정한다.
+- **멱등:** 같은 조건 목록으로 다시 부르면 같은 객체를 돌려준다. 그래서 `HmiController.view()`가 화면을 판정할 때마다 부른다. 상태가 바뀔 때(메시지, 연결 이벤트, 명령)와 `tick`(250ms)마다 불리므로, 메시지로 바뀌는 조건(차량 링크, 텔레메트리, 명령 결과, 연결 이벤트)은 그 메시지로 낸 화면에, 시간으로 바뀌는 조건(신선도 STALE)은 250ms 안에 경고가 된다.
+- 경고 목록은 `HmiState`가 아니라 `HmiController`가 가진다. 연결 상태(`ConnView`)와 시각에 따른 판정(신선도)이 입력이라, 메시지만으로 바뀌는 `HmiState`의 성질(`apply`가 메시지 하나의 함수)을 깨지 않기 위해서다.
+- **자리와 색(REQ-HMI-003):** WARNING·CAUTION은 배너 바로 아래 전체 폭에 WARNING이 위로 오게 놓는다(붉은색·호박색, 같은 등급은 최근 것부터). ADVISORY는 오른쪽 패널 맨 위에 파란색으로 놓는다. WARNING과 CAUTION을 한 띠에 두고 위아래로만 나눈 것은, 확인이 필요한 경고를 운용자가 한곳에서 보고 처리하게 하려는 것이다. 등급마다 띠를 따로 두면 CAUTION이 늘 때 WARNING 띠의 자리가 움직이지는 않지만 지도가 더 줄어든다. 등급 사이의 위치 구분은 "WARNING은 늘 CAUTION보다 위"로 하고, 색과 등급 표지로 함께 구분한다. 확인이 필요 없는 ADVISORY는 다른 자리(오른쪽 패널)에 둔다. 화면 요소는 `data-kind`·`data-level`·`data-state`를 가져 시연 점검이 문구가 아니라 속성으로 판정한다.
+- **차량 LOST 경고 2.0s(REQ-HMI-004):** 마지막 유효 패킷부터 GW LOST 판정까지 1.0s + 판정 주기(50ms) 이하, GW는 전이를 그 판정 주기에 `link_status`로 내보낸다. HMI는 그 메시지를 받은 화면에 경고를 낸다(tick을 기다리지 않음). 측정 구간과 방법은 STP 3.23이다. 실측(같은 PC, 시계 차 0·+3s·−5s) 1015·1044·1005ms.
+- **한계 (이슈 #51):** 새로 시작한 GW는 SIM 패킷을 받기 전 차량 `link_status` LOST(`last_rx_ts` null)를 보낸다. GW 재시작 직후(약 100ms 안)에 HMI가 재접속하면 차량 LOST WARNING이 떴다가 곧 "해제됨"으로 남아 확인을 요구한다. SIM 없이 접속했을 때의 LOST 경고는 의도한 동작이라, `last_rx_ts` null인 LOST를 일괄로 무시하지 않는다.
+- **이번 범위 밖(DET 연결 주, 12월 3주):** 탐지 노드 링크 LOST(CAUTION)·DEGRADED(ADVISORY), 신규 표적 탐지(ADVISORY). 탐지 노드는 아직 GW에 아무것도 보내지 않아 DETECTOR 링크가 늘 LOST다. 지금 넣으면 시연 내내 CAUTION 하나가 늘 떠 있어 경고의 뜻이 흐려지고, "신규 표적"은 표적을 무엇으로 셀지(같은 표적의 프레임 간 대응, class_id 목록 TBD-02)가 DET 출력이 나와야 정해진다. 조건은 `alertConditions`에 줄을 더하고 `KINDS`에 종류를 더하면 들어간다(수명 규칙은 그대로).
+
+### 8.8 시험
 
 | 대상 | 방법 |
 |---|---|
@@ -490,11 +539,11 @@ stateDiagram-v2
 | `receiveText`, `apply`, `freshness`, `needsResync`, `view`, `trackSync` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계·시계 차·계단 변화를 대기 없이 시험. `planDraw` 연산을 실행한 결과가 상태 궤적과 같은지 무작위 8000메시지로 확인 |
 | `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격, 접속·무수신 제한, 예외, stop·재시작 시험 |
 | 명령 패널 | `state/commands.ts` 순수 함수(확인 없는 기록 불가, 결과 대응, 끊김·재설정 → 결과 미확인과 확인 단계 닫힘, 결과 전 명령은 상한으로 밀리지 않음, 같은 종류 경고, 경로점 입력)와 `HmiController`(가짜 소켓이 받은 텍스트로 송신 여부·req_id 확인: 확인 절차, LOST·GW 끊김·재접속 뒤 link_status 전 차단, 끊김 뒤 10초 동안 재송신 없음, 30초 늦은 결과도 결과 대기 유지, 재설정의 버린 적체에서 잃은 결과는 결과 미확인, 다시 시도는 경고가 붙은 새 명령, 경고한 명령의 결과가 오면 확인 단계 닫힘). 시연 점검은 GW 진단의 `cmd sent` 줄로 실제 송신을 확인한다 |
-| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`, `data-heading`)과 개발 서버 훅(`__ugvcTrackPoints`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치와, 실행 중 시계 +3초 계단 변화 뒤 회복(GW WebSocket 재접속 정확히 1회, `MutationObserver`로 기록한 배너 변화에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음)도 확인. 명령은 SIM(`python3 -m ugvc_sim`)의 ACK로 확인·취소·ACCEPTED, SIM을 `--drop-first`로 다시 띄워 ACK 없는 상태에서 결과 전 GW 재시작 뒤 재송신 없음과 경고가 붙은 새 명령(새 req_id)·TIMEOUT, LOST·GW 끊김 차단을 확인 |
+| 경고 체계 | `state/alerts.ts` 순수 함수(조건별 등급, 받지 않은 값은 경고 아님, 수명 규칙 전이 전부, 명령 결과 경고, 순서)와 `HmiController`(LOST 경고가 그 메시지로 낸 화면에 있음, 데이터 지연은 tick 하나 안, GW 끊김 중 마지막 값, 확인 동작). 기대값은 SRS 표에서 옮긴다 |
+| 화면 | `hmi/e2e/smoke.mjs`: 실제 GW·SIM·HMI(vite)와 Playwright로 시연 점검(STP 수준 D). 화면 속성(`data-level`, `data-stale`, `data-heading`)과 개발 서버 훅(`__ugvcTrackPoints`)으로 판정하고, `--clock-skew`로 시계 차가 있는 배치와, 실행 중 시계 +3초 계단 변화 뒤 회복(GW WebSocket 재접속 정확히 1회, `MutationObserver`로 기록한 배너 변화에 "기준선 재설정 중"이 있고 "GW 연결 끊김"이 없음)도 확인. 명령은 SIM(`python3 -m ugvc_sim`)의 ACK로 확인·취소·ACCEPTED, SIM을 `--drop-first`로 다시 띄워 ACK 없는 상태에서 결과 전 GW 재시작 뒤 재송신 없음과 경고가 붙은 새 명령(새 req_id)·TIMEOUT, LOST·GW 끊김 차단을 확인. 경고는 화면 속성(`data-kind`·`data-state`)으로 해제됨·확인·명령 결과 경고를 확인하고, SIM을 멈춰 차량 LOST 경고 지연(STP 3.23)을 잰다 |
 
 ## 9. 미정 사항
 
 | 항목 | 정할 때 |
 |---|---|
 | HMI 영상·탐지 매칭 버퍼 (ADR-001, frame_id, 0.5s) | 12월 3주 DET 연결 |
-| REQ-HMI-004 2.0s 측정 구간과 방법 | HMI 경고 구현 주, STP에 추가 |

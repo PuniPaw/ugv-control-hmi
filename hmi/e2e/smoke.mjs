@@ -1,4 +1,4 @@
-// HMI 시연 점검 (STP 수준 D: TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01, TC-HMI-006-11, TC-CMD-001-08·09, TC-CMD-004-02)
+// HMI 시연 점검 (STP 수준 D: TC-HMI-001-03, TC-HMI-002-03, TC-HMI-003-08, TC-HMI-004-07, TC-HMI-006-01, TC-HMI-006-11, TC-CMD-001-08·09, TC-CMD-004-02)
 // 실제 GW + SIM + HMI(vite dev)를 띄우고 브라우저(Playwright chromium)로 화면을 확인한다.
 //
 //   node e2e/smoke.mjs [--screenshot <png>] [--clock-skew <ms>]
@@ -131,6 +131,20 @@ async function expectText(page, testId, expected, timeout = 5000) {
   throw new Error(`[${testId}] 기대 ${expected}, 실제 "${text}"`);
 }
 
+/** 경고 하나(data-kind)가 그 상태(data-state)가 될 때까지 기다린다. within: 경고가 있어야 할 자리(testid) */
+async function expectAlert(page, kind, state, timeout = 5000, within = "alerts-urgent") {
+  const sel = `[data-testid="${within}"] [data-testid="alert"][data-kind="${kind}"][data-state="${state}"]`;
+  await page.locator(sel).first().waitFor({ timeout }).catch(async () => {
+    const all = await page.getByTestId("alert").evaluateAll((els) => els.map((e) => `${e.dataset.kind}:${e.dataset.state}`));
+    throw new Error(`경고 ${kind} ${state} 기대, 실제 [${all.join(", ")}]`);
+  });
+}
+
+/** 경고의 확인 버튼을 누른다 */
+async function ackAlert(page, kind) {
+  await page.locator(`[data-testid="alert"][data-kind="${kind}"] [data-testid="alert-ack"]`).first().click();
+}
+
 function checkPageErrors() {
   if (pageErrors.length) throw new Error(`페이지 오류: ${pageErrors.join(" | ")}`);
 }
@@ -152,13 +166,29 @@ async function scenario(browser) {
     window.__clockSkew = skew;
     Date.now = () => real() + window.__clockSkew;
     window.__gwSocketsCreated = 0;
+    // REQ-HMI-004 2.0s 측정 (STP TC-HMI-004-07): GW가 보낸 VEHICLE LOST의 last_rx_ts(GW 시계)와 LOST 경고가 ACTIVE로
+    // DOM에 들어간 시각(옮기지 않은 페이지 시계). GW와 브라우저가 같은 PC라 두 시계는 같다
+    window.__lostLastRx = null;
+    window.__lostAlertAt = null;
     const WS = window.WebSocket;
     window.WebSocket = class extends WS {
       constructor(url, protocols) {
         super(url, protocols);
-        if (String(url).endsWith(gwPath)) window.__gwSocketsCreated += 1;
+        if (!String(url).endsWith(gwPath)) return;
+        window.__gwSocketsCreated += 1;
+        this.addEventListener("message", (e) => {
+          const m = JSON.parse(e.data);
+          if (m.type === "link_status" && m.data.source === "VEHICLE" && m.data.state === "LOST") window.__lostLastRx = m.data.last_rx_ts;
+        });
       }
     };
+    const recordLostAlert = () => {
+      if (window.__lostAlertAt !== null) return;
+      if (document.querySelector('[data-testid="alert"][data-kind="VEHICLE_LOST"][data-state="ACTIVE"]')) window.__lostAlertAt = real();
+    };
+    new MutationObserver(recordLostAlert).observe(document, {
+      subtree: true, childList: true, attributes: true, attributeFilter: ["data-state"],
+    });
     window.__banners = [];
     const record = () => {
       const el = document.querySelector('[data-testid="banner-text"]');
@@ -170,10 +200,12 @@ async function scenario(browser) {
   if (clockSkewMs !== 0) step(`HMI 시계를 GW보다 ${clockSkewMs}ms 옮김`);
   await page.goto(`http://127.0.0.1:${vitePort}/`);
 
-  step("1. GW 접속: 접속 직후 stats로 FRESH(배너 ok), 차량 링크 LOST");
+  step("1. GW 접속: 접속 직후 stats로 FRESH(배너 ok), 차량 링크 LOST와 WARNING 경고");
   await expectAttr(page, "connection-banner", "data-level", "ok");
   await expectText(page, "banner-text", "GW 연결됨");
   await expectText(page, "link-state-VEHICLE", "LOST");
+  await expectAlert(page, "VEHICLE_LOST", "ACTIVE");
+  await expectAttr(page, "alert", "data-level", "WARNING");
   checkPageErrors();
 
   step("2. SIM 10Hz 송신: 차량 링크 CONNECTED, 유실률·모드·배터리 표시, 마커와 궤적 이동, 차량 값 진하게");
@@ -184,6 +216,10 @@ async function scenario(browser) {
   await expectText(page, "mode", "MISSION");
   await expectText(page, "battery", /^\d+%$/);
   await expectAttr(page, "vehicle", "data-stale", "false");
+  // 확인 전에 풀린 경고는 "해제됨"으로 남고, 확인하면 사라진다 (표 3-2)
+  await expectAlert(page, "VEHICLE_LOST", "CLEARED");
+  await ackAlert(page, "VEHICLE_LOST");
+  await page.locator('[data-testid="alert"][data-kind="VEHICLE_LOST"]').waitFor({ state: "detached", timeout: 2000 });
   if ((await page.locator(".vehicle-icon").count()) !== 1) throw new Error("차량 마커가 없음");
   // 진행 방향: 화살표가 heading_deg만큼 회전 (SIM은 87.25°로 직진)
   const heading = await page.getByTestId("map").getAttribute("data-heading");
@@ -219,6 +255,10 @@ async function scenario(browser) {
   if (sockets - socketsBefore !== 1) throw new Error(`2b: 재접속이 1회가 아님 (${sockets - socketsBefore})`);
   if (!seen.includes("GW 데이터 지연 · 기준선 재설정 중")) throw new Error(`2b: 기준선 재설정 표시 없음: ${seen.join(" | ")}`);
   if (seen.some((t) => t.startsWith("GW 연결 끊김"))) throw new Error(`2b: 기준선 재설정을 연결 끊김으로 표시함: ${seen.join(" | ")}`);
+  // 데이터 지연은 CAUTION 경고로 남고(회복했으니 해제됨), 연결 끊김 경고는 없다
+  await expectAlert(page, "GW_DELAY", "CLEARED");
+  if (await page.locator('[data-testid="alert"][data-kind="GW_DISCONNECTED"]').count()) throw new Error("2b: 기준선 재설정에 GW 연결 끊김 경고");
+  await ackAlert(page, "GW_DELAY");
   checkPageErrors();
 
   step("2c. 명령: 버튼은 확인만 연다(취소하면 SIM에 아무것도 안 감), 보내기를 눌러야 송신, 결과 ACCEPTED 표시");
@@ -272,6 +312,8 @@ async function scenario(browser) {
   const lostReqId = await firstRow().getAttribute("data-req-id");
   await stop(gw.proc);
   await expectRow("UNCONFIRMED");
+  await expectAlert(page, "GW_DISCONNECTED", "ACTIVE");
+  await expectAlert(page, "CMD_UNCONFIRMED", "ACTIVE");
   gw = await startGateway(ports, gw.wsPort);
   await expectAttr(page, "connection-banner", "data-level", "ok", 8000);
   await expectText(page, "link-state-VEHICLE", "CONNECTED");
@@ -285,6 +327,12 @@ async function scenario(browser) {
   await page.getByTestId("cmd-send").click();
   await expectRow("TIMEOUT", 6000);
   await expectText(page, "cmd-row-text", "응답 없음 (송신 4회)");
+  await expectAlert(page, "CMD_FAILED", "ACTIVE");
+  await expectAlert(page, "CMD_UNCONFIRMED", "ACTIVE"); // 명령 결과 경고는 풀리지 않는다
+  for (const kind of ["CMD_FAILED", "CMD_UNCONFIRMED"]) {
+    await ackAlert(page, kind);
+    await page.locator(`[data-testid="alert"][data-kind="${kind}"]`).waitFor({ state: "detached", timeout: 2000 });
+  }
   const resent = gw.sentReqIds();
   const newReqId = await firstRow().getAttribute("data-req-id");
   if (resent.length !== 1 || resent[0] !== newReqId || newReqId === lostReqId) {
@@ -292,9 +340,20 @@ async function scenario(browser) {
   }
   checkPageErrors();
 
-  step("3. SIM 중지: 차량 링크 LOST, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok, 명령 버튼 비활성과 사유");
+  step("3. SIM 중지: 차량 링크 LOST 경고가 마지막 유효 패킷 수신 후 2.0초 안에, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok, 명령 버튼 비활성과 사유");
+  await expectText(page, "link-state-VEHICLE", "CONNECTED");
+  await page.evaluate(() => {
+    window.__lostLastRx = null;
+    window.__lostAlertAt = null;
+  });
   await stop(sim);
   await expectText(page, "link-state-VEHICLE", "LOST", 3000);
+  await expectAlert(page, "VEHICLE_LOST", "ACTIVE");
+  const { lastRx, alertAt } = await page.evaluate(() => ({ lastRx: window.__lostLastRx, alertAt: window.__lostAlertAt }));
+  if (lastRx === null || alertAt === null) throw new Error(`3: 측정값 없음 (last_rx_ts ${lastRx}, 경고 ${alertAt})`);
+  const lostLatency = alertAt - lastRx;
+  step(`   마지막 유효 패킷 수신 → LOST 경고 표시 ${lostLatency.toFixed(0)}ms (REQ-HMI-004 기준 2000ms)`);
+  if (!(lostLatency > 0 && lostLatency <= 2000)) throw new Error(`3: LOST 경고 지연 ${lostLatency}ms (기준 0 초과 2000 이하)`);
   await expectText(page, "cmd-blocked", "차량 링크 LOST · 명령을 보낼 수 없음");
   for (const b of ["cmd-STOP", "cmd-RTB", "cmd-WAYPOINT"]) {
     if (!(await page.getByTestId(b).isDisabled())) throw new Error(`${b}가 LOST에서 활성`);
@@ -309,12 +368,16 @@ async function scenario(browser) {
   await expectText(page, "banner-text", /^GW 연결 끊김 · (\d+초 후 재접속|재접속 중)$/);
   await expectAttr(page, "status-panel", "data-stale", "true");
   await expectText(page, "cmd-blocked", "GW와 연결되지 않아 명령을 보낼 수 없음");
+  await expectAlert(page, "GW_DISCONNECTED", "ACTIVE");
+  await expectAlert(page, "VEHICLE_LOST", "ACTIVE"); // 차량 조건은 마지막으로 받은 값으로
+  if (screenshot) await page.screenshot({ path: screenshot.replace(/(\.png)?$/, "-alerts.png") }); // 경고가 보이는 화면
   checkPageErrors();
 
   step("5. GW 재시작(같은 포트): 자동 재접속, 새 stats로 다시 FRESH");
   gw = await startGateway(ports, gw.wsPort);
   await expectAttr(page, "connection-banner", "data-level", "ok", 8000);
   await expectAttr(page, "status-panel", "data-stale", "false");
+  await expectAlert(page, "GW_DISCONNECTED", "CLEARED");
   checkPageErrors();
 }
 

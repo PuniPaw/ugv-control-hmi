@@ -5,6 +5,7 @@
 
 import { GwConnection, type ConnEvent, type Deps } from "../net/gwConnection";
 import { commandText, type CommandSpec } from "../if03/messages";
+import { acknowledge, alertConditions, alertRows, emptyAlerts, reconcile, type AlertList, type AlertRow } from "../state/alerts";
 import { cancelDraft, commandSent, draftCommand } from "../state/commands";
 import {
   connectionLost, connectionOpened, initialState, needsResync, receiveText, resyncStarted, type HmiState,
@@ -17,11 +18,13 @@ export interface ControllerDeps extends Deps {
   newReqId(): string; // 명령마다 유일한 req_id (ICD 7.2). 보낼 때마다 새로 발급
 }
 
-export type View = { state: HmiState; conn: ConnView } & Presented;
+export type View = { state: HmiState; conn: ConnView; alerts: AlertRow[] } & Presented;
 
 export class HmiController {
   private state: HmiState = initialState();
   private conn: ConnView = { state: "CONNECTING", cause: "first" };
+  // 경고는 이력이 있다(확인, 해제됨): 화면을 판정할 때마다 지금 조건으로 맞춘다 (REQ-HMI-003·004, state/alerts.ts)
+  private alerts: AlertList = emptyAlerts();
   private readonly connection: GwConnection;
 
   constructor(
@@ -37,10 +40,16 @@ export class HmiController {
     );
   }
 
-  /** 지금 시각으로 판정한 화면 (App.vue와 시험이 같은 경로를 쓴다) */
+  /**
+   * 지금 시각으로 판정한 화면 (App.vue와 시험이 같은 경로를 쓴다). 경고 목록도 이 판정의 조건으로 맞춘다.
+   * 상태가 바뀔 때마다(메시지, 연결 이벤트, 명령)와 tick(250ms)마다 불리므로, 조건이 생긴 뒤 경고가 화면에
+   * 반영되기까지는 메시지로 바뀌는 조건이면 즉시, 시간으로 바뀌는 조건(신선도)이면 250ms 안이다
+   */
   view(): View {
     const clocks = { wall: this.deps.now(), mono: this.deps.monotonic() };
-    return { state: this.state, conn: this.conn, ...present(this.state, this.conn, clocks) };
+    const p = present(this.state, this.conn, clocks);
+    this.alerts = reconcile(this.alerts, alertConditions(this.state, this.conn, p.fresh));
+    return { state: this.state, conn: this.conn, alerts: alertRows(this.alerts), ...p };
   }
 
   start(): void {
@@ -79,6 +88,12 @@ export class HmiController {
     const reqId = this.deps.newReqId();
     if (!this.connection.send(commandText(reqId, draft))) return;
     this.update({ ...this.state, commands: commandSent(this.state.commands, reqId, this.deps.monotonic()) });
+  }
+
+  /** 운용자가 경고 하나를 확인 (REQ-HMI-003, 표 3-2) */
+  acknowledgeAlert(id: number): void {
+    this.alerts = acknowledge(this.alerts, id);
+    this.onChange(this.view());
   }
 
   private update(state: HmiState): void {

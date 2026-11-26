@@ -27,31 +27,43 @@ export interface Clocks {
   mono: number; // 단조 시계 ms (재접속 카운트다운)
 }
 
-function connectingBanner(cause: ConnectCause): Banner {
-  switch (cause) {
-    case "first":
-      return { level: "warn", text: "GW 접속 중" };
-    case "retry":
-      return { level: "bad", text: "GW 연결 끊김 · 재접속 중" };
-    case "resync":
-      // 기준선 재설정은 IF-03 연결 끊김이 아니다 (GLOSSARY): 데이터 지연의 회복 과정으로 표시
-      return { level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중" };
+/**
+ * GW 연결 상태 분류 (REQ-HMI-006). 배너와 경고(state/alerts.ts)가 이 판정 하나를 같이 쓴다.
+ * 기준선 재설정 접속은 IF-03 연결 끊김이 아니라 데이터 지연의 회복 과정이다 (GLOSSARY)
+ */
+export type GwHealth = "CONNECTING" | "WAITING" | "OK" | "DISCONNECTED" | "DELAYED";
+
+const CONNECTING_HEALTH: Record<ConnectCause, GwHealth> = { first: "CONNECTING", retry: "DISCONNECTED", resync: "DELAYED" };
+
+export function gwHealth(conn: ConnView, fresh: Freshness): GwHealth {
+  switch (conn.state) {
+    case "CONNECTING":
+      return CONNECTING_HEALTH[conn.cause];
+    case "WAITING_RETRY":
+      return "DISCONNECTED";
+    case "OPEN":
+      return fresh === "WAITING" ? "WAITING" : fresh === "STALE" ? "DELAYED" : "OK";
   }
 }
 
-/** 상단 배너 (ICD 7장, REQ-HMI-006) */
+/** 상단 배너 (ICD 7장, REQ-HMI-006). 분류는 gwHealth, 문구는 대기 중 카운트다운·재설정 여부를 더한다 */
 export function banner(conn: ConnView, fresh: Freshness, monoNow: number): Banner {
-  switch (conn.state) {
+  switch (gwHealth(conn, fresh)) {
     case "CONNECTING":
-      return connectingBanner(conn.cause);
-    case "WAITING_RETRY": {
+      return { level: "warn", text: "GW 접속 중" };
+    case "WAITING":
+      return { level: "warn", text: "GW 연결됨 · 데이터 대기 중" };
+    case "OK":
+      return { level: "ok", text: "GW 연결됨" };
+    case "DISCONNECTED": {
+      if (conn.state !== "WAITING_RETRY") return { level: "bad", text: "GW 연결 끊김 · 재접속 중" };
       const sec = Math.max(0, Math.ceil((conn.retryAtMono - monoNow) / 1000));
       return { level: "bad", text: `GW 연결 끊김 · ${sec}초 후 재접속` };
     }
-    case "OPEN":
-      if (fresh === "WAITING") return { level: "warn", text: "GW 연결됨 · 데이터 대기 중" };
-      if (fresh === "STALE") return { level: "bad", text: "GW 데이터 지연 (2초 이상)" };
-      return { level: "ok", text: "GW 연결됨" };
+    case "DELAYED":
+      return conn.state === "OPEN"
+        ? { level: "bad", text: "GW 데이터 지연 (2초 이상)" }
+        : { level: "warn", text: "GW 데이터 지연 · 기준선 재설정 중" };
   }
 }
 
@@ -62,12 +74,12 @@ export function banner(conn: ConnView, fresh: Freshness, monoNow: number): Banne
  */
 export function staleness(s: HmiState, conn: ConnView, fresh: Freshness): { all: boolean; vehicle: boolean } {
   const all = conn.state !== "OPEN" || fresh !== "FRESH";
-  return { all, vehicle: all || s.link.VEHICLE.state !== "CONNECTED" };
+  return { all, vehicle: all || s.link.VEHICLE?.state !== "CONNECTED" };
 }
 
 /** 링크 마지막 수신 후 경과 시간. GW 시각을 기준선(GLOSSARY)으로 HMI 시각으로 바꿔 계산 (시계 차 무관) */
 export function linkAgeText(s: HmiState, src: Source, now: number): string {
-  const gwTs = s.link[src].lastRxTs;
+  const gwTs = s.link[src]?.lastRxTs ?? null;
   if (gwTs === null) return "수신 없음";
   const local = toLocalTime(s, gwTs);
   if (local === null) return "—";
@@ -90,7 +102,7 @@ export function positionText(v: TelemetryData): string {
 /** 상태 패널 한 줄: 송신원 링크 */
 export interface LinkRow {
   source: Source;
-  state: LinkState;
+  state: LinkState | null; // link_status를 받은 적이 없으면 null
   loss: string;
   age: string;
 }
@@ -117,7 +129,7 @@ export const COMMAND_ROWS_SHOWN = 5;
 export function commandBlock(s: HmiState, conn: ConnView): string | null {
   if (conn.state !== "OPEN" || s.session === null) return "GW와 연결되지 않아 명령을 보낼 수 없음";
   if (!s.session.vehicleLinkSeen) return "차량 링크 상태 수신 전 · 명령을 보낼 수 없음";
-  if (s.link.VEHICLE.state === "LOST") return "차량 링크 LOST · 명령을 보낼 수 없음";
+  if (s.link.VEHICLE?.state === "LOST") return "차량 링크 LOST · 명령을 보낼 수 없음";
   return null;
 }
 
@@ -218,7 +230,7 @@ export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented 
     fixValid: v !== null && gpsValid(v),
     links: SOURCES.map((source) => ({
       source,
-      state: s.link[source].state,
+      state: s.link[source]?.state ?? null,
       loss: lossText(s.stats[source]),
       age: linkAgeText(s, source, clocks.wall),
     })),

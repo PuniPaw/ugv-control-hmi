@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.28 (초안) |
+| 버전 | v0.29 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.9, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.6.1, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.10, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.7.1, ADR-002 |
 
 ## 개정 이력
 
@@ -38,8 +38,9 @@
 | v0.24 | 2026-11-20 | PR #35 2차 리뷰 반영: 행별 다시 보내기와 결과 기한을 없앰. TC-CMD-001-06을 "다시 시도는 경고가 붙은 새 명령(새 req_id)"으로, TC-CMD-001-11을 "결과가 얼마나 늦어도(30s), 재설정을 넘어도 결과 대기"로 바꿈(결과 기한 경계 시험 삭제), TC-CMD-001-12(경고한 명령의 늦은 결과가 열린 확인 단계를 닫아 송신 0) 추가. TC-CMD-001-03은 결과 미확인도 상한으로 밀리지 않음, 001-05는 끊긴 뒤 새 연결의 결과 반영, 001-09는 smoke 2d를 새 흐름으로 |
 | v0.25 | 2026-11-23 | PR #35 3차 리뷰 반영: 기준선 재설정도 결과 대기 명령을 결과 미확인으로. TC-CMD-001-11(b) 기대 결과를 "재설정 뒤 결과 미확인, 새 연결 뒤 확정된 결과는 반영"으로 바꾸고 시험 이름 변경, TC-CMD-001-13(버린 적체에서 잃은 결과는 결과 미확인, 더 새 같은 종류의 결과로 경고 끝) 추가, TC-CMD-001-06에 같은 종류의 가장 최근 명령만 경고. 없어진 다시 보내기 문구 정리(TC-CMD-001-04 기대 결과, 4장 시연 절차) |
 | v0.26 | 2026-11-23 | PR #35 4차 리뷰 반영과 `main`(PR #36) merge: TC-CMD-001-13에 "재설정이 열린 확인 단계를 닫아 송신 0" 시험 추가, TC-CMD-001-06에 "같은 종류에 결과 대기 명령이 있으면 더 새 명령이 결과를 받아도 경고". PR #36이 SIM을 한 프로세스로 합쳐 시연 점검 2c는 SIM 자체의 ACK를, 2d는 SIM을 `--drop-first`로 다시 띄워 ACK 없는 상태를 씀(TC-CMD-001-08·09). 이 PR의 이력 행을 v0.22~v0.25, 절을 3.20·3.21로 다시 매김 |
-| v0.27 | 2026-11-25 | DB 로그 저장: TC-LOG-001-01~08(행 변환, 실제 PostgreSQL 저장 내용·이벤트), TC-LOG-003-01~12(재접속 간격, `DbSink` 비차단·원인별 버림·재접속·종료, 저장 끄기, 없는 DB, DB 재시작, DB 서버 정지). 2.3 이벤트 확인을 실제 구조(반환값 `take_transitions`·`take_events`, DB 저장은 TC-LOG)로 고침(`IEventSink`·`FakeEventSink`는 만들지 않았다). 2.8 PostgreSQL 통합 시험 환경과 skip 규칙. 3.16 머리말(PostgreSQL 저장은 TC-LOG-001-08). 1.2 범위에 LOG |
-| v0.28 | 2026-11-25 | PR #50 1차 리뷰 반영: 2.2에 실제 스레드 시험 예외(`LineSink`·`DbSink`, 시간 상한이 아니라 완료·계수로 판정). TC-LOG-003-04 삭제(순서대로 저장은 REQ-LOG-001의 증거라 TC-LOG-001-09로 옮김). TC-LOG-003-05·08은 시간 상한 대신 완료로 판정, TC-LOG-003-07을 "저장 중 연결 유실: 그 행 write_error, 나머지 db_down, 바로 재접속"으로 바꿈(쓰기 실패를 연결 오류와 데이터 오류로 나눔, SDD v0.6.1). TC-LOG-003-13(접속 실패 사유가 바뀌면 다시 알림), 14(거절 행만 rejected, 연결·다른 행 유지), 15(EUC_KR DB 통합) 추가. TC-LOG-001-07은 폐기 프레임 뒤 유효 프레임이 저장된 다음 행을 다시 셈, TC-LOG-003-11은 재접속 뒤 보낸 기록으로 판정. 버림 원인에 rejected |
+| v0.27 | 2026-11-25 | HMI 경고 체계(SRS v0.9 표 3-1·3-2): 3.22 TC-HMI-003-01~08(수명: 해제됨·확인됨·재발·ADVISORY·명령 결과 경고, 등급별 순서, 시연 점검), 3.23 TC-HMI-004-01~07(조건별 등급, 받지 않은 값·첫 접속은 경고 아님, GW 끊김 중 마지막 값, LOST 경고는 그 link_status로 낸 화면에, 데이터 지연은 tick 하나 안, 명령 결과 경고, 시연 점검). REQ-HMI-004 2.0s 측정 구간(GW의 마지막 유효 패킷 수신 시각 `last_rx_ts` → LOST 경고가 DOM에 ACTIVE로 들어간 시각)과 방법을 3.23에 정함. 시연 점검 1·2·2b·2d·3·4·5단계에 경고 확인 추가. 링크 상태를 받기 전은 LOST가 아니라 상태 없음("—")으로 바꿔 TC-HMI-002-01 시험 이름·기대 결과 변경 |
+| v0.28 | 2026-11-25 | DB 로그 저장: TC-LOG-001-01~08(행 변환, 실제 PostgreSQL 저장 내용·이벤트), TC-LOG-003-01~12(재접속 간격, `DbSink` 비차단·원인별 버림·재접속·종료, 저장 끄기, 없는 DB, DB 재시작, DB 서버 정지). 2.3 이벤트 확인을 실제 구조(반환값 `take_transitions`·`take_events`, DB 저장은 TC-LOG)로 고침(`IEventSink`·`FakeEventSink`는 만들지 않았다). 2.8 PostgreSQL 통합 시험 환경과 skip 규칙. 3.16 머리말(PostgreSQL 저장은 TC-LOG-001-08). 1.2 범위에 LOG |
+| v0.29 | 2026-11-25 | PR #50 1차 리뷰 반영: 2.2에 실제 스레드 시험 예외(`LineSink`·`DbSink`, 시간 상한이 아니라 완료·계수로 판정). TC-LOG-003-04 삭제(순서대로 저장은 REQ-LOG-001의 증거라 TC-LOG-001-09로 옮김). TC-LOG-003-05·08은 시간 상한 대신 완료로 판정, TC-LOG-003-07을 "저장 중 연결 유실: 그 행 write_error, 나머지 db_down, 바로 재접속"으로 바꿈(쓰기 실패를 연결 오류와 데이터 오류로 나눔, SDD v0.7.1). TC-LOG-003-13(접속 실패 사유가 바뀌면 다시 알림), 14(거절 행만 rejected, 연결·다른 행 유지), 15(EUC_KR DB 통합) 추가. TC-LOG-001-07은 폐기 프레임 뒤 유효 프레임이 저장된 다음 행을 다시 셈, TC-LOG-003-11은 재접속 뒤 보낸 기록으로 판정. 버림 원인에 rejected |
 
 ---
 
@@ -57,7 +58,7 @@ SRS의 각 요구사항을 어떤 시험으로, 어떤 기준으로 검증하는
 | CMD (REQ-CMD-001~006) | v0.13, 001·004는 v0.22 | |
 | SAFE (REQ-SAFE-001·002) | v0.19 | |
 | HMI (REQ-HMI-001·002 뼈대, 006, 007) | v0.5~0.6 | 경로점(REQ-HMI-001), 지연 시간(REQ-HMI-002)은 해당 기능 구현 시 |
-| LOG (REQ-LOG-001·003) | v0.27 | REQ-LOG-002 사후 재생 (고도화) |
+| LOG (REQ-LOG-001·003) | v0.28 | REQ-LOG-002 사후 재생 (고도화) |
 | HMI-003~005, AI, PERF | | 해당 기능 구현 시 |
 
 ### 1.3 용어
@@ -105,7 +106,7 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 - TC ID: `TC-<영역>-<요구사항 번호>-<순번>` (예: `TC-COM-003-02`)
 - 테스트 이름: 요구사항 ID를 포함한다. 예: `TEST(LinkMonitor, REQ_COM_003_degraded_at_500ms)`, `def test_REQ_COM_001_10hz_no_loss()`, `it("REQ_HMI_001 track keeps ...")`
 - 3장 TC 표의 "테스트" 열(머리 행의 열 이름으로 찾는다)에 적은 백틱 항목은 모두 시험 이름(gtest·pytest·vitest) 또는 시연 점검 참조여야 한다. 해석하지 못한 항목이 있으면 `check_stp_tests.py`가 실패한다
-- vitest 시험은 3장 표에 "파일 이름 > 시험 이름"으로 적는다 (예: `hmiState.test.ts > REQ_HMI_002 starts with both links LOST like the GW`). HMI 시험 파일은 `describe`를 쓰지 않아 it 제목이 곧 시험 이름이다. `check_stp_tests.py`는 `vitest list --json`의 실제 목록과 비교한다
+- vitest 시험은 3장 표에 "파일 이름 > 시험 이름"으로 적는다 (예: `hmiState.test.ts > REQ_HMI_002 starts with no link state until the GW reports one`). HMI 시험 파일은 `describe`를 쓰지 않아 it 제목이 곧 시험 이름이다. `check_stp_tests.py`는 `vitest list --json`의 실제 목록과 비교한다
 - 시험 이름에는 모두 REQ ID를 단다 (RTM grep에서 빠지지 않도록). 예외: 검사 도구 자체 시험(`tools/tests/`)은 제품 요구사항의 증거가 아니므로 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 도구만 바꾸는 커밋도 같은 이유로 REQ ID 없이 `test(tools):`·`fix(tools):`로 쓴다
 - 예외: SIM 차량 운동 모사 자체의 정확도 시험(`sim/tests/test_vehicle.py`: 직진, 경로점·복귀 주행, 도착 뒤 STANDBY, 배터리)은 시험 장비(차량 모사기)의 동작이라 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 명령·Failsafe가 차량 상태에 미치는 영향 중 요구사항에 해당하는 것(정지 유지, 재개 금지·해제)은 `Simulator` 시험(TC-SAFE)으로 추적한다
 - 시험 하나는 요구사항 하나의 증거다. 시험 이름에는 REQ ID를 하나만 단다(같은 ID를 되풀이한 것은 하나로 본다). 서로 다른 ID가 둘 이상이면 RTM grep이 한 시험을 두 요구사항에 이어 아래의 TC와 시험 1:1 규칙이 깨지므로, `check_stp_tests.py`가 실패한다. 이름의 ID는 모두 SRS와 대조한다. 다른 요구사항도 증명해야 하면 그 요구사항의 TC와 시험을 따로 둔다. 앞으로 만들 RTM 생성 스크립트도 시험마다 이름의 ID 하나로 요구사항을 이어야 한다
@@ -279,7 +280,7 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-HMI-002-01 | U | 초기 상태 | 두 송신원 모두 LOST (GW 초기값과 같음), 차량 정보 없음 | `hmiState.test.ts > REQ_HMI_002 starts with both links LOST like the GW` |
+| TC-HMI-002-01 | U | 초기 상태 | 두 송신원 모두 링크 상태 없음(GW가 link_status를 보내기 전, 화면 "—"), 차량 정보 없음 | `hmiState.test.ts > REQ_HMI_002 starts with no link state until the GW reports one` |
 | TC-HMI-002-02 | U | VEHICLE link_status(DEGRADED)와 stats 반영 | VEHICLE만 바뀌고 DETECTOR는 그대로, 유실률 반영 | `hmiState.test.ts > REQ_HMI_002 link_status and stats update per source` |
 | TC-HMI-002-03 | D | GW 접속 → SIM 송신 → SIM 중지 | 차량 링크 LOST → CONNECTED(유실률 0.0%, 경과 0.x초) → 3s 안에 LOST, 모드·배터리 표시 | `hmi/e2e/smoke.mjs` 1~3단계 |
 | TC-HMI-002-04 | U | HMI 시계가 GW보다 5s 늦을 때 링크 경과 시간 | 0.8s (음수가 아님), 수신 전이면 "수신 없음" | `view.test.ts > REQ_HMI_002 link age uses the connection baseline, not the raw GW clock` |
@@ -360,7 +361,7 @@ U는 GoogleTest(가짜 시계), I는 실제 GW·SIM(`python -m ugvc_sim`)과 Web
 
 ### 3.16 REQ-CMD-005 명령 이벤트 기록 (GW)
 
-여기서는 GW 진단 기록(stderr)에 남는 것을 확인한다. 같은 사건의 PostgreSQL 저장은 TC-LOG-001-04·08(3.22)이 확인한다.
+여기서는 GW 진단 기록(stderr)에 남는 것을 확인한다. 같은 사건의 PostgreSQL 저장은 TC-LOG-001-04·08(3.24)이 확인한다.
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
@@ -436,7 +437,42 @@ U는 vitest(가짜 소켓·타이머·시계, `HmiController`와 순수 함수 `
 | TC-CMD-004-02 | D | SIM 중지(차량 LOST), GW 중지 | 정지·복귀·경로점 버튼 비활성, 사유 문구 "차량 링크 LOST · 명령을 보낼 수 없음" / "GW와 연결되지 않아 명령을 보낼 수 없음" | `hmi/e2e/smoke.mjs` 3·4단계 |
 | TC-CMD-004-03 | U | 차량 CONNECTED인 연결이 (a) 끊겼다가 재접속 (b) 기준선 재설정 재접속. 새 연결의 첫 link_status 전에 확인, 이어서 LOST 수신 | 이전 연결의 CONNECTED로 보내지 않음: 사유 "차량 링크 상태 수신 전 · 명령을 보낼 수 없음", 송신 0, LOST를 받으면 LOST 사유 | `hmiController.test.ts > REQ_CMD_004 after a reconnect commands stay disabled until the new connection reports the vehicle link` |
 
-### 3.22 REQ-LOG-001 유효 패킷·이벤트 DB 저장 (GW)
+### 3.22 REQ-HMI-003 경고 3단계 표시·확인 (HMI)
+
+U는 vitest(순수 함수 `state/alerts.ts`, `HmiController`), D는 시연 점검. 기대값은 SRS 표 3-1(등급)·표 3-2(수명)에서 옮긴다(코드의 등급 표를 가져오지 않는다). 화면은 경고마다 `data-testid="alert"`에 `data-kind`(조건 종류)·`data-level`·`data-state`(ACTIVE, CLEARED 해제됨, ACKED 확인됨)를 두고, WARNING·CAUTION은 배너 아래(`alerts-urgent`), ADVISORY는 오른쪽 패널 위(`alerts-advisory`)에 그린다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-HMI-003-01 | U | WARNING 조건 성립 → 확인 전에 풀림 → 확인 | ACTIVE → CLEARED(확인 버튼 있음) → 사라짐 | `alerts.test.ts > REQ_HMI_003 a warning that clears before acknowledgement stays as cleared until acknowledged` |
+| TC-HMI-003-02 | U | CAUTION 조건이 이어지는 중에 확인 → 조건 풀림 | ACKED(확인 버튼 없음)로 남음 → 사라짐 | `alerts.test.ts > REQ_HMI_003 acknowledging while the condition lasts keeps it as acknowledged until the condition clears` |
+| TC-HMI-003-03 | U | 해제됨 동안 같은 조건 재발 / 확인해 사라진 뒤 재발 / 같은 조건 집합으로 다시 판정 | 같은 경고(같은 번호)가 다시 ACTIVE / 새 번호의 새 경고 ACTIVE / 목록 그대로(멱등) | `alerts.test.ts > REQ_HMI_003 a condition back while cleared reactivates the same alert, after it is gone it is a new alert` |
+| TC-HMI-003-04 | U | ADVISORY 조건 성립, 확인 시도, 풀림 | 확인 버튼 없음, 확인해도 그대로, 풀리면 바로 사라짐 | `alerts.test.ts > REQ_HMI_003 an advisory needs no acknowledgement and goes away with its condition` |
+| TC-HMI-003-05 | U | 결과 미확인 명령 둘(r1·r2), r1의 결과가 늦게 옴(조건 사라짐), r2는 계속 결과 미확인인 채 확인, r1 확인 | 명령마다 경고 1개, r1 경고는 풀리지 않고 ACTIVE, 확인한 r2는 조건이 이어져도 다시 뜨지 않음, r1도 확인하면 사라지고 목록에 남는 것 없음 | `alerts.test.ts > REQ_HMI_003 command result alerts are one per command, do not clear, and are gone for good once acknowledged` |
+| TC-HMI-003-06 | U | 등급이 섞인 경고 다섯 개를 두 차례에 걸쳐 | WARNING → CAUTION → ADVISORY 순, 같은 등급은 최근 것부터 | `alerts.test.ts > REQ_HMI_003 rows are WARNING, then CAUTION, then ADVISORY, newest first within a level` |
+| TC-HMI-003-07 | U | HmiController에서 차량 LOST 경고를 `acknowledgeAlert`로 확인, 이어서 CONNECTED | ACKED → 사라짐 | `hmiController.test.ts > REQ_HMI_003 the operator acknowledges an alert through the controller` |
+| TC-HMI-003-08 | D | 실제 GW·SIM·HMI: GW 접속(SIM 없음) → SIM 송신 → 확인 / 시계 +3s 계단 변화로 기준선 재설정 → 확인 / 결과 전 GW 재시작과 TIMEOUT → 명령 결과 경고 확인 | 차량 LOST WARNING이 배너 아래에 ACTIVE → CLEARED → 확인 버튼으로 사라짐 / GW 지연 CAUTION이 CLEARED로 남고 GW 끊김 경고 없음 / 결과 미확인·명령 실패 CAUTION이 결과가 와도 ACTIVE, 확인하면 사라짐 | `hmi/e2e/smoke.mjs` 1·2·2b·2d단계 |
+
+### 3.23 REQ-HMI-004 경고 발생 조건과 차량 LOST 경고 2.0s (HMI)
+
+**범위:** 표 3-1 중 탐지 노드 링크 LOST·DEGRADED와 신규 표적 탐지는 DET 연결(12월 3주)에서 TC를 추가한다(SDD 8.7). RTM에서 이 부분은 미검증으로 보인다.
+
+**2.0s 측정 구간과 방법:**
+- 구간: GW가 차량의 마지막 유효 패킷을 받은 시각 → HMI 화면에 차량 LOST 경고가 ACTIVE로 들어간 시각. 시작 시각은 GW가 보낸 VEHICLE `link_status` LOST의 `last_rx_ts`(GW 시계, ICD 7.1)이고, 끝 시각은 페이지 안 `MutationObserver`가 `data-kind="VEHICLE_LOST"`·`data-state="ACTIVE"` 요소를 처음 본 시각(시계 차를 옮기지 않은 페이지 시계)이다. GW와 브라우저가 같은 PC라 두 시계가 같다.
+- 구성: GW LOST 판정(1.0s + 판정 주기 50ms 이하, TC-COM-003) + IF-03 전달 + HMI 반영. HMI 반영은 그 `link_status`로 낸 화면에 이미 경고가 있음을 U(TC-HMI-004-04)로 보인다(tick을 기다리지 않음).
+- 방법: 시연 점검 3단계에서 SIM을 멈추고 위 두 시각의 차를 출력한다. 4장의 세 번(시계 차 0, +3s, −5s) 모두 0ms 초과 2000ms 이하이면 합격이다. 값은 STR에 적는다.
+- 한계: 끝 시각은 DOM 반영 시각이라 그 뒤 화면 그리기(다음 프레임, 보통 16ms 이하)는 들어가지 않는다. GW와 HMI가 다른 PC인 배치는 두 시계가 달라 이 방법으로 재지 않는다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-HMI-004-01 | U | 조건별 입력: 차량 링크 LOST·DEGRADED, 모드 FAULT, FAILSAFE_ACTIVE, BATTERY_LOW, GW 재시도 대기·재시도 접속, 기준선 재설정 접속, STALE, 명령 TIMEOUT·REJECTED_STATE·ACCEPTED·결과 대기·결과 미확인 | 차량 LOST·FAULT·Failsafe·GW 끊김은 WARNING, GW 지연·배터리·명령 실패·결과 미확인은 CAUTION, DEGRADED는 ADVISORY. 수락과 결과 대기는 경고 없음, 명령 결과 경고는 명령마다 하나(보낸 순서로 번호) | `alerts.test.ts > REQ_HMI_004 each table 3-1 condition in scope raises an alert of its level` |
+| TC-HMI-004-02 | U | link_status·텔레메트리를 받기 전, 첫 접속 중·열린 직후 | 경고 없음 (받지 않은 값과 첫 접속은 조건이 아님) | `alerts.test.ts > REQ_HMI_004 no alert comes from values never received or from the first connection attempt` |
+| TC-HMI-004-03 | U | 차량 LOST·Failsafe·배터리 부족을 받은 뒤 GW 끊김 / HmiController에서 LOST 뒤 close 1006 → 재시도 → 재접속·CONNECTED | 차량 경고는 마지막으로 받은 값으로 유지되고 GW 끊김 WARNING이 더해짐 / 재시도 접속 중도 끊김, 재접속 뒤 둘 다 해제됨 | `alerts.test.ts > REQ_HMI_004 vehicle conditions keep the last received values while the GW is down`, `hmiController.test.ts > REQ_HMI_004 a GW disconnect raises a warning and the vehicle alerts stay from the last received values` |
+| TC-HMI-004-04 | U | HmiController에 VEHICLE link_status LOST 하나 | 그 메시지로 `onChange`에 낸 화면에 차량 LOST WARNING ACTIVE (HMI 쪽 추가 지연 0) | `hmiController.test.ts > REQ_HMI_004 the vehicle LOST warning is in the view emitted for the link_status LOST itself` |
+| TC-HMI-004-05 | U | FRESH 연결에서 GW 메시지가 끊김(가짜 시계, 250ms tick) | 마지막 stats 수신 후 2000ms 초과 2250ms 이하에 GW 지연 CAUTION | `hmiController.test.ts > REQ_HMI_004 the GW delay caution appears within one 250ms tick after the data turns stale` |
+| TC-HMI-004-06 | U | HmiController에서 RTB 송신 → TIMEOUT, STOP 송신 → 결과 전 끊김 | 명령 실패 CAUTION, 이어서 결과 미확인 CAUTION(문구에 명령 이름) | `hmiController.test.ts > REQ_HMI_004 a command TIMEOUT and an unconfirmed command each raise a caution` |
+| TC-HMI-004-07 | D | 실제 GW·SIM·HMI: SIM 중지(위 측정 방법), GW 중지, GW 재시작 | 마지막 유효 패킷 수신 → LOST 경고 표시 0ms 초과 2000ms 이하(값 출력), GW 중지 시 GW 끊김 WARNING과 차량 LOST WARNING ACTIVE, 재시작 뒤 GW 끊김은 해제됨 | `hmi/e2e/smoke.mjs` 3·4·5단계 |
+
+### 3.24 REQ-LOG-001 유효 패킷·이벤트 DB 저장 (GW)
 
 경고 원인 중 GW가 아는 것(링크 전이, 명령 송신·재전송·결과, TELEMETRY mode·status_flags)은 아래 기록에 들어 있다(SRS REQ-LOG-001). 통합 시험 환경은 2.8.
 
@@ -452,7 +488,7 @@ U는 vitest(가짜 소켓·타이머·시계, `HmiController`와 순수 함수 `
 | TC-LOG-001-08 | I | 실제 PostgreSQL. TELEMETRY 3개 뒤 중단, 받는 SIM 없이 STOP 명령(req_id에 NUL) | event에 VEHICLE 링크 LOST→CONNECTED→DEGRADED→LOST, `cmd_sent` attempt 1~4(같은 cmd_id), `cmd_result` TIMEOUT attempts 4, req_id는 U+FFFD로. 버림 0 | `test_REQ_LOG_001_link_transitions_and_command_events_are_stored` |
 | TC-LOG-001-09 | U | `DbSink`, 가짜 세션 정상, 50건 | 넣은 순서대로 모두 저장, 버림 0 | `DbSink.REQ_LOG_001_writes_records_in_order_when_db_is_up` |
 
-### 3.23 REQ-LOG-003 DB 저장이 중계를 막지 않음, 버림 계수, 재접속 (GW)
+### 3.25 REQ-LOG-003 DB 저장이 중계를 막지 않음, 버림 계수, 재접속 (GW)
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
@@ -499,7 +535,7 @@ U는 vitest(가짜 소켓·타이머·시계, `HmiController`와 순수 함수 `
 - **합격 기준**: 30개 간격 모두 1000 ± 100ms, 모든 패킷이 검증 규칙 ①~⑤를 통과
 - **자동화**: `tests/integration/test_stp_com.py::test_REQ_COM_007_heartbeat_interval` (`-m slow`)
 
-### TC-HMI-001-03, TC-HMI-002-03, TC-HMI-006-01, TC-HMI-006-11, TC-CMD-001-08·09, TC-CMD-004-02 시연 점검
+### TC-HMI-001-03, TC-HMI-002-03, TC-HMI-003-08, TC-HMI-004-07, TC-HMI-006-01, TC-HMI-006-11, TC-CMD-001-08·09, TC-CMD-004-02 시연 점검
 
 1. `gateway/build/ugvc_gateway`를 빌드하고 `hmi/`에서 `npm install`을 한다.
 2. 저장소 루트에서 세 번 실행한다:
@@ -516,7 +552,7 @@ NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew 3000
 NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew -5000
 ```
 
-3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 8단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → 명령 확인·송신 → 결과 전 GW 재시작과 경고가 붙은 새 명령 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수, GW 진단 기록의 `cmd sent` 줄로 확인한다. 페이지 오류가 하나라도 나면 실패한다.
+3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 8단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → 명령 확인·송신 → 결과 전 GW 재시작과 경고가 붙은 새 명령 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`, 경고의 `data-kind`·`data-state`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수, GW 진단 기록의 `cmd sent` 줄로 확인한다. 3단계는 차량 LOST 경고 지연(3.23 측정 방법)을 출력한다. 페이지 오류가 하나라도 나면 실패한다.
 4. 합격: 세 번 모두 마지막 줄이 `PASS`이고, 실행 뒤 `ugvc_gateway`·`vite`·`ugvc_sim`(`python3 -m ugvc_sim`) 프로세스가 남지 않는다. 화면 캡처는 STR(05)에 붙인다.
 
 ---
