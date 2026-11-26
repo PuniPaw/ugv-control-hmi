@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-ICD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.15 |
+| 버전 | v0.16 |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-SRS-001, ADR-001 (영상 경로), ADR-002 (수치 표현·바이트 순서) |
 
@@ -27,6 +27,7 @@
 | v0.13 | 2026-11-14 | 명령 중계 PR #24 2차 리뷰 반영: 7.2 형식 오류로 거절한 req_id도 기억(같은 형식 오류에는 같은 거절을 다시, 고친 명령은 무시), 재시도는 새 req_id로, 기억은 GW 프로세스 안에만 있다는 한계와 HMI 규칙(새 연결 뒤 자동 재송신 금지). 7.3 판정이 1.0s 이상 늦으면 그 시각부터 1.0s를 기다림, 몰아 보낸 명령 직후 GW 재시작의 실패 형태. 9장 ACK 스트림은 유실 계산에서도 제외하고 그 결과(같은 ACK 반복도 유효 패킷). 참고: v0.11 행의 절 번호(6.4 → 6.3)는 v0.12 개정 때 그 행 안에서 고쳤다 |
 | v0.14 | 2026-11-14 | 명령 중계 PR #24 3차 리뷰 반영: 7.2 형식 오류 거절 기록은 송신한 명령 기록과 상한(256개)을 따로 씀(거절이 몰려도 실행된 명령의 기억이 밀려나지 않음), "결과는 하나뿐"은 기억하는 동안(60초, 각 256개)으로 한정. 7.3 늦은 판정 규칙을 하나로: 다음 판정 = max(예정 시각 + 1.0s, 실제 송신 + 0.95s) (v0.13의 "1.0s 이상 늦으면" 규칙은 0~1.0s 늦음에서 ACK 대기가 줄었음) |
 | v0.15 | 2026-11-20 | Failsafe 구현 (SRS v0.8 REQ-SAFE-001·002): 표 6-2 FAILSAFE_ACTIVE를 설정·해제하는 시점, 표 6-5 REJECTED_STATE를 SIM이 쓰는 경우(HEARTBEAT 두절 중 받은 RTB·WAYPOINT), 6.5 Failsafe 해제 규칙 |
+| v0.16 | 2026-11-26 | 경로점 표시(SRS v0.13 REQ-HMI-001·REQ-CMD-007·REQ-SAFE-003): 6.6 ROUTE(`0x03`) 신설(SIM이 남은 경로점 목록을 바뀔 때와 1Hz로 보고, 최대 32개), 7.1 `route` 신설, 2장·5장·9장 규칙 ⑥⑦에 ROUTE 추가. 표 6-1 SIM은 STANDBY로 기동. 표 6-4·6-5 경로가 가득 찬 WAYPOINT는 REJECTED_STATE |
 
 ---
 
@@ -38,7 +39,7 @@
 
 | ID | 송신 → 수신 | 프로토콜 | 포트 | 형식 | 메시지 |
 |---|---|---|---|---|---|
-| IF-01a | SIM → GW | UDP | GW 15001 | 바이너리 | TELEMETRY, ACK |
+| IF-01a | SIM → GW | UDP | GW 15001 | 바이너리 | TELEMETRY, ACK, ROUTE |
 | IF-01b | GW → SIM | UDP | SIM 15010 | 바이너리 | COMMAND, HEARTBEAT |
 | IF-02 | DET → GW | UDP | GW 15002 | 바이너리 | DETECTION |
 | IF-03 | GW ↔ HMI | WebSocket | GW 8080 `/ws` | JSON | 7장 참조 |
@@ -79,6 +80,7 @@
 |---|---|---|---|---|
 | `0x01` | TELEMETRY | IF-01a | 10Hz | 16 |
 | `0x02` | DETECTION | IF-02 | 프레임마다 (목표 10Hz) | 17 + 11 × count |
+| `0x03` | ROUTE | IF-01a | 경로가 바뀔 때 + 1Hz | 1 + 8 × count |
 | `0x10` | COMMAND | IF-01b | 이벤트 (재전송 포함) | 13 |
 | `0x11` | ACK | IF-01a | COMMAND 수신 시 | 5 |
 | `0x20` | HEARTBEAT | IF-01b | 1Hz | 0 |
@@ -103,7 +105,7 @@
 
 | 값 | 이름 | 설명 |
 |---|---|---|
-| 0 | STANDBY | 대기 |
+| 0 | STANDBY | 대기. SIM은 이 상태로 기동하며, 운용자 명령 없이 주행을 시작하지 않는다 (SRS REQ-SAFE-003) |
 | 1 | MISSION | 경로점 주행 중 |
 | 2 | STOPPED | 정지 (명령 또는 Failsafe) |
 | 3 | RTB | 복귀 중 |
@@ -167,7 +169,7 @@
 |---|---|---|
 | 0x01 | STOP | 즉시 정지 |
 | 0x02 | RTB | 출발 지점으로 복귀 |
-| 0x03 | WAYPOINT | 경로점 추가 후 MISSION 진입 |
+| 0x03 | WAYPOINT | 경로점을 남은 경로 끝에 추가한 뒤 MISSION 진입. 남은 경로가 이미 32개면 실행하지 않고 REJECTED_STATE (6.6) |
 
 SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전 result로 ACK만 다시 보낸다 (SRS REQ-CMD-003). SIM은 최근 1024개 cmd_id의 결과를 기억한다.
 
@@ -184,7 +186,7 @@ SIM은 이미 처리한 cmd_id를 다시 받으면 재실행하지 않고 이전
 |---|---|---|
 | 0 | ACCEPTED | 수락 |
 | 1 | REJECTED_INVALID | 필드 값 오류 (범위 밖 좌표 등). SIM은 cmd_id ≥ 1이고 cmd_type·좌표가 6.3 범위를 벗어난 COMMAND를 실행하지 않고 이 값으로 ACK한다. cmd_id가 0이면 응답할 대상이 없으므로 ACK 없이 폐기한다 |
-| 2 | REJECTED_STATE | 현재 상태에서 수행 불가. SIM은 HEARTBEAT를 3.0초 이상 받지 못한 동안 받은 RTB·WAYPOINT를 실행하지 않고 이 값으로 ACK한다(6.5). STOP은 이 경우에도 ACCEPTED다 |
+| 2 | REJECTED_STATE | 현재 상태에서 수행 불가. SIM은 HEARTBEAT를 3.0초 이상 받지 못한 동안 받은 RTB·WAYPOINT를 실행하지 않고 이 값으로 ACK한다(6.5). STOP은 이 경우에도 ACCEPTED다. 남은 경로가 이미 32개일 때 받은 WAYPOINT도 이 값이다(6.6) |
 
 SIM은 ACK를 COMMAND를 보낸 주소가 아니라 GW의 차량 수신 포트(IF-01a, 기본 15001)로 보낸다. ACK는 SIM의 ACK 스트림으로 자기 seq(u32, 0부터)를 쓴다(3장, 스트림 단위 seq). GW는 ACK 스트림에 규칙 ⑨를 적용하지 않는다(9장).
 
@@ -201,6 +203,28 @@ Failsafe 해제 (SRS REQ-SAFE-002):
 
 - HEARTBEAT가 다시 오는 것만으로는 해제되지 않는다. 운용자가 명령을 보내야 한다.
 - 이미 처리한 cmd_id는 이 표가 아니라 6.3에 따라 첫 result로만 다시 ACK한다. 두절 중 REJECTED_STATE를 받은 cmd_id를 링크 복구 뒤 다시 받아도 REJECTED_STATE다. 운용자가 다시 명령하면 GW가 새 cmd_id를 발급하므로(7.3) 실행된다.
+
+### 6.6 ROUTE (`0x03`, 1 + 8 × count 바이트)
+
+SIM이 지금 가지고 있는 **남은 경로점 목록**을 보고한다 (SRS REQ-CMD-007). HMI는 이것으로 지도에 경로점을 그린다 (REQ-HMI-001). 경로의 원본은 SIM 하나이므로, 여러 HMI나 다시 접속한 HMI도 같은 경로를 본다.
+
+| 오프셋 | 필드 | 타입 | LSB / 단위 | 범위 | 설명 |
+|---|---|---|---|---|---|
+| 0 | count | u8 | — | 0 ~ 32 | 남은 경로점 수. 0이면 남은 경로 없음 |
+| 1 | waypoints | 8 × count | — | — | 아래 구조 반복. 방문할 순서대로이며 첫 원소가 지금 향하는 경로점 |
+
+**경로점 구조 (8 바이트)**
+
+| 상대 오프셋 | 필드 | 타입 | LSB / 단위 | 범위 |
+|---|---|---|---|---|
+| 0 | lat | i32 | 1e-7 deg | TELEMETRY와 동일 |
+| 4 | lon | i32 | 1e-7 deg | TELEMETRY와 동일 |
+
+- **보내는 때:** 남은 경로가 바뀌면 그 처리 주기 안에 바로 보내고, 바뀌지 않아도 1Hz로 보낸다. 경로가 바뀌는 경우는 WAYPOINT 수락(끝에 추가), 경로점 도착(맨 앞 제거), STOP·RTB 수락과 Failsafe 진입(모두 비움)이다. 1Hz 송신은 유실된 변경과 새로 접속한 HMI를 1초 안에 맞추기 위해서다.
+- **상한 32개.** 남은 경로가 32개일 때 받은 WAYPOINT는 실행하지 않고 REJECTED_STATE로 응답한다(표 6-5). 패킷은 최대 20 + 1 + 8 × 32 = 277 바이트다.
+- RTB의 목적지(출발 지점)는 경로점이 아니므로 ROUTE에 넣지 않는다. RTB를 수락하면 남은 경로는 비고 count 0을 보낸다.
+- ROUTE는 VEHICLE의 별도 스트림(송신원 VEHICLE, msg_type `0x03`)으로 자기 seq를 쓴다(3장). 유효한 ROUTE는 VEHICLE의 유효 패킷이므로 링크 상태와 유실 계산에 들어간다(9장).
+- GW는 ROUTE를 DB에 저장하지 않는다(SRS REQ-LOG-001 범위 밖). 경로의 변화는 저장되는 명령 이벤트와 TELEMETRY로 되짚을 수 있다. 사후 재생(REQ-LOG-002, 고도화)에서 필요하면 다시 정한다.
 
 ---
 
@@ -239,6 +263,7 @@ Failsafe 해제 (SRS REQ-SAFE-002):
 | `detection` | 수신 즉시 | frame_id, capture_ts, img_w, img_h, objects[{class, conf, x, y, w, h}]. `capture_ts`는 u64 그대로의 정수다(0 ~ 2^64−1). JSON 수신 측이 double로 읽으면 2^53 이상에서 정밀도가 줄 수 있으며(2^64−1은 2^64가 됨), HMI는 이를 허용한다. HMI는 double로 읽은 값이 음수이거나 2^64를 넘으면 폐기한다(2^64 근처 수천 이내는 double로 구분할 수 없어 받아들인다) |
 | `link_status` | 상태 전이 시 + 1Hz | source(`VEHICLE`/`DETECTOR`), state(`CONNECTED`/`DEGRADED`/`LOST`, 첫 패킷 전은 `LOST`), last_rx_ts(첫 패킷 전 `null`). `last_rx_ts`가 `null`이면 state는 `LOST`여야 하며, 아니면 HMI는 메시지를 폐기한다 |
 | `stats` | 1Hz | source, loss_rate_10s(0~1, 창이 비면 `null`), rx_count(유효 패킷 누계), lost_count(유실 누계), errors{sync, version, length, crc, type, range, order} |
+| `route` | 수신 즉시 | waypoints[{lat, lon}](6.6 순서 그대로, 0~32개, 비면 `[]`), seq, rx_ts. 단위는 telemetry의 lat·lon과 같다. HMI는 개수가 32를 넘거나 좌표가 범위 밖이면 메시지를 폐기한다(SRS REQ-HMI-007). GW는 접속 직후 상태로 보내지 않는다: SIM이 1Hz로 보내므로 새 HMI도 1초 안에 받는다. HMI는 차량 링크가 CONNECTED가 아니면 마지막으로 받은 경로를 현재 값이 아닌 것으로 표시한다(REQ-HMI-006) |
 | `cmd_result` | 결과 확정 시 | req_id(7.2 그대로), cmd_id(GW가 발급한 u32, GW가 형식 오류로 보내지 않고 거절한 명령은 `null`), result(`ACCEPTED`/`REJECTED_INVALID`/`REJECTED_STATE`/`TIMEOUT`), attempts(SIM에 보낸 횟수 0~4, 7.3). 모든 HMI에 보낸다 |
 
 예시:
@@ -307,8 +332,8 @@ Failsafe 해제 (SRS REQ-SAFE-002):
 | 3 | version == `0x01` | version |
 | 4 | 수신 길이 == 20 + payload_len | length |
 | 5 | CRC 일치 | crc |
-| 6 | msg_type이 해당 포트에서 허용된 값 | type |
-| 7 | payload_len이 5장 정의와 일치 (DETECTION은 count로 계산) | length |
+| 6 | msg_type이 해당 포트에서 허용된 값 (차량 포트: TELEMETRY·ACK·ROUTE, 탐지 포트: DETECTION) | type |
+| 7 | payload_len이 5장 정의와 일치 (DETECTION·ROUTE는 count로 계산) | length |
 | 8 | 필드 값이 6장 범위 안 | range |
 | 9 | seq가 같은 스트림의 직전 seq보다 큼 (u32 순환 고려). 같으면(중복) 실패. **ACK 스트림은 제외**: ACK는 cmd_id로 명령과 짝을 짓고 늦거나 중복된 ACK는 결과를 바꾸지 않으므로(7.3) 순서 검사가 필요 없다. SIM 수신부만 다시 시작해 ACK seq가 0부터 다시 시작해도(차량 링크는 텔레메트리로 CONNECTED라 기준값 재설정이 일어나지 않음) ACK를 받기 위해서다 | order |
 
