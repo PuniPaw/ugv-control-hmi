@@ -16,7 +16,7 @@ const LINK_CLASS: Record<LinkState, string> = { CONNECTED: "ok", DEGRADED: "warn
       <h2>링크</h2>
       <div v-for="row in view.links" :key="row.source" class="row" :data-testid="`link-${row.source}`">
         <span class="label">{{ SOURCE_LABEL[row.source] }}</span>
-        <span class="badge" :class="LINK_CLASS[row.state]" :data-testid="`link-state-${row.source}`">{{ row.state }}</span>
+        <span class="badge" :class="row.state && LINK_CLASS[row.state]" :data-testid="`link-state-${row.source}`">{{ row.state ?? "—" }}</span>
         <span class="sub">
           유실 <span :data-testid="`loss-${row.source}`">{{ row.loss }}</span> ·
           <span :data-testid="`age-${row.source}`">{{ row.age }}</span>

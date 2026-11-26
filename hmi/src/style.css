@@ -7,6 +7,7 @@
   --ok: #2fb36b;
   --warn: #e0a526;
   --bad: #e0483e;
+  --advisory: #4aa3df;
   font-family: system-ui, "Noto Sans KR", sans-serif;
   color: var(--text);
   background: var(--bg);

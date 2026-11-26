@@ -4,6 +4,7 @@
 import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
 import { HmiController, randomReqId, type View } from "./app/hmiController";
 import { browserSocket, defaultGwUrl } from "./net/gwConnection";
+import AlertList from "./components/AlertList.vue";
 import CommandPanel from "./components/CommandPanel.vue";
 import ConnectionBanner from "./components/ConnectionBanner.vue";
 import MapView from "./components/MapView.vue";
@@ -28,6 +29,10 @@ const controller = new HmiController(
 // 매번 새 객체 → 깊은 반응성 대신 shallowRef로 통째 교체
 const view = shallowRef<View>(controller.view());
 const state = computed(() => view.value.state);
+// 등급별 자리 (REQ-HMI-003): WARNING·CAUTION은 배너 바로 아래 전체 폭(WARNING이 위), ADVISORY는 오른쪽 패널 위
+const urgent = computed(() => view.value.alerts.filter((a) => a.level !== "ADVISORY"));
+const advisory = computed(() => view.value.alerts.filter((a) => a.level === "ADVISORY"));
+const ack = (id: number) => controller.acknowledgeAlert(id);
 
 let clock = 0;
 onMounted(() => {
@@ -43,8 +48,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="layout">
     <ConnectionBanner class="banner" :level="view.banner.level" :text="view.banner.text" :gw-url="gwUrl" />
+    <AlertList class="alerts" data-testid="alerts-urgent" :rows="urgent" @ack="ack" />
     <MapView class="map" :fix="state.fix" :fix-valid="view.fixValid" :track="state.track" :stale="view.stale.vehicle" />
     <div class="side">
+      <AlertList data-testid="alerts-advisory" :rows="advisory" @ack="ack" />
       <StatusPanel class="status" :view="view" />
       <CommandPanel
         :view="view.command"
@@ -59,14 +66,15 @@ onBeforeUnmount(() => {
 <style scoped>
 .layout {
   display: grid;
-  grid-template: "banner banner" auto "map panel" 1fr / 1fr 320px;
+  grid-template: "banner banner" auto "alerts alerts" auto "map panel" 1fr / 1fr 320px;
   height: 100%;
 }
 .banner { grid-area: banner; }
+.alerts { grid-area: alerts; max-height: 30vh; overflow-y: auto; }
 .map { grid-area: map; }
 .side { grid-area: panel; display: flex; flex-direction: column; min-height: 0; }
 .status { flex: 1; min-height: 0; }
 @media (max-width: 800px) {
-  .layout { grid-template: "banner" auto "map" 55vh "panel" auto / 1fr; height: auto; min-height: 100%; }
+  .layout { grid-template: "banner" auto "alerts" auto "map" 55vh "panel" auto / 1fr; height: auto; min-height: 100%; }
 }
 </style>
