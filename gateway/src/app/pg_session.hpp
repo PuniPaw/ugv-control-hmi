@@ -25,7 +25,7 @@ class PgSession final : public IDbSession {
   ~PgSession() override;
 
   std::optional<std::string> open() override;
-  std::optional<WriteError> write(const dblog::Row& row) override;
+  std::optional<std::string> write(const dblog::Row& row) override;
   void close() override;
 
  private:

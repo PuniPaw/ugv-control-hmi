@@ -89,25 +89,32 @@ def stream_telemetry(port: int, seqs: range, period_s: float = 0.1) -> None:
                 time.sleep(delay)
 
 
-CAUSES = ("queue_full", "db_down", "rejected", "write_error")
+CAUSES = ("queue_full", "db_down", "write_error")
 NO_DROPS = dict.fromkeys(CAUSES, 0)
+TOTALS = re.compile(r"total queue_full (\d+), db_down (\d+), write_error (\d+)")
 
 
-def db_dropped_totals(gw) -> dict[str, int]:
-    """마지막 "db log dropped" 진단 줄의 원인별 누계."""
-    lines = [line for line in list(gw.stderr_lines) if line.startswith("db log dropped")]
-    if not lines:
-        return dict(NO_DROPS)
-    m = re.search(r"total queue_full (\d+), db_down (\d+), rejected (\d+), write_error (\d+)", lines[-1])
-    assert m, lines[-1]
+def _totals(line: str) -> dict[str, int]:
+    m = TOTALS.search(line)
+    assert m, line
     return dict(zip(CAUSES, (int(v) for v in m.groups())))
 
 
 def wait_drop_report(gw, timeout_s: float = 3.0) -> dict[str, int]:
-    """다음 "db log dropped" 보고를 기다려 누계를 돌려준다 (1Hz 보고)."""
+    """다음 "db log dropped" 1Hz 보고를 기다려 원인별 누계를 돌려준다. 보고가 없으면 실패."""
     before = sum(1 for line in list(gw.stderr_lines) if line.startswith("db log dropped"))
-    wait_stderr(gw, r"^db log dropped", timeout_s, count=before + 1)
-    return db_dropped_totals(gw)
+    lines = wait_stderr(gw, r"^db log dropped", timeout_s, count=before + 1)
+    assert len(lines) > before, f"버림 보고 없음: {gw.stderr_lines}"
+    return _totals(lines[-1])
+
+
+def closed_totals(gw) -> dict[str, int]:
+    """GW를 멈추고 종료 때 남기는 최종 누계(`db log closed`)를 돌려준다. 버림이 0이어도 이 줄은 나온다.
+    1Hz 보고 사이에 생긴 버림까지 들어 있어 "버림 0" 판정에 쓴다."""
+    stop_gateway(gw)
+    lines = wait_stderr(gw, r"^db log closed: ", 3.0)
+    assert lines, f"최종 누계 없음: {gw.stderr_lines}"
+    return _totals(lines[-1])
 
 
 class HeartbeatListener:
@@ -221,7 +228,7 @@ def test_REQ_LOG_001_link_transitions_and_command_events_are_stored(pg, start_gw
     results = [json.loads(r[2]) for r in rows if r[0] == "cmd_result"]
     assert results == [{"req_id": "a�b", "cmd_id": sent[0]["cmd_id"], "result": "TIMEOUT", "attempts": 4,
                         "repeated": False}]
-    assert db_dropped_totals(gw) == NO_DROPS
+    assert closed_totals(gw) == NO_DROPS
 
 
 def test_REQ_LOG_003_gateway_relays_without_db_option(gateway):
@@ -246,9 +253,9 @@ def test_REQ_LOG_003_unreachable_db_does_not_stop_relay_and_drops_are_counted(st
     finally:
         intervals = hb.close()
     assert len(wait_stderr(gw, r"^db unavailable: ", 0.1)) == 1, gw.stderr_lines
-    totals = db_dropped_totals(gw)
+    totals = closed_totals(gw)
     assert totals["db_down"] >= 30 + 1, (totals, gw.stderr_lines)  # TELEMETRY 30 + 링크 전이
-    assert totals["queue_full"] == totals["rejected"] == totals["write_error"] == 0
+    assert totals["queue_full"] == totals["write_error"] == 0
     assert len(intervals) >= 4 and max(intervals) <= 1100, intervals
 
 
@@ -277,16 +284,16 @@ def test_REQ_LOG_003_db_restart_keeps_relay_and_reconnects(pg, start_gw):
             sender.join()
     assert [m["data"]["seq"] for m in relayed] == list(range(90))
     assert max(intervals) <= 1100, intervals
-    assert wait_stderr(gw, r"^db (connection lost|unavailable)", 0.1), gw.stderr_lines
-    totals = db_dropped_totals(gw)
-    assert totals["db_down"] + totals["write_error"] > 0, gw.stderr_lines
-    assert totals["rejected"] == totals["queue_full"] == 0
+    assert wait_stderr(gw, r"^db (write failed|unavailable)", 0.1), gw.stderr_lines
 
     rows = wait_rows(pg, db, "SELECT seq FROM telemetry WHERE seq >= 100", 5, 3.0)
     assert [int(r[0]) for r in rows] == list(range(100, 105))  # 다시 접속한 뒤 보낸 기록은 모두 저장
     stored = [int(r[0]) for r in pg.psql("SELECT seq FROM telemetry WHERE seq < 90 ORDER BY seq", db)]
     assert stored and stored[0] < 10, stored  # 내리기 전
     assert len(stored) < 90  # 내려가 있던 동안은 버렸다
+    totals = closed_totals(gw)
+    assert totals["db_down"] + totals["write_error"] >= 90 - len(stored), (totals, stored)  # 잃은 TELEMETRY는 모두 셌다
+    assert totals["queue_full"] == 0
 
 
 def test_REQ_LOG_003_hung_db_does_not_delay_relay(pg, start_gw):
@@ -318,13 +325,13 @@ def test_REQ_LOG_003_hung_db_does_not_delay_relay(pg, start_gw):
 
     rows = wait_rows(pg, db, "SELECT seq FROM telemetry ORDER BY seq", 31, 5.0)
     assert [int(r[0]) for r in rows] == list(range(31))
-    assert db_dropped_totals(gw) == NO_DROPS
+    assert closed_totals(gw) == NO_DROPS
 
 
-def test_REQ_LOG_003_rejected_record_does_not_cost_other_records(pg, start_gw):
+def test_REQ_LOG_003_failed_record_does_not_cost_other_records(pg, start_gw):
     """TC-LOG-003-15: 서버 인코딩이 EUC_KR인 DB. 한글 req_id 명령은 그대로 저장되고(접속 인코딩 UTF8),
-    EUC_KR로 바꿀 수 없는 문자(이모지)가 든 req_id 명령의 이벤트만 rejected로 버린다.
-    같은 시간에 보낸 TELEMETRY는 모두 저장되고, 연결은 끊기지 않는다 (PR #50 리뷰 1)."""
+    EUC_KR로 바꿀 수 없는 문자(이모지)가 든 req_id 명령의 이벤트만 write_error로 버린다.
+    같은 시간에 보낸 TELEMETRY는 모두 저장된다 (실패한 행만 잃는다, PR #50 리뷰 1·2차)."""
     db = pg.new_database(encoding="EUC_KR")
     gw = start_gw("--db", pg.conninfo(db))
     assert wait_stderr(gw, r"^db connected$", 5.0), gw.stderr_lines
@@ -344,9 +351,36 @@ def test_REQ_LOG_003_rejected_record_does_not_cost_other_records(pg, start_gw):
     assert [int(r[0]) for r in rows] == list(range(30))
     sent = pg.psql("SELECT detail->>'req_id' FROM event WHERE kind = 'cmd_sent'", db)
     assert sent and {r[0] for r in sent} == {"한글명령"}, sent
+    assert wait_stderr(gw, r"^db write failed, dropped 1 record: ", 0.1), gw.stderr_lines
 
-    totals = wait_drop_report(gw)
-    assert totals["rejected"] >= 2, gw.stderr_lines  # 이모지 명령의 송신·재전송 이벤트
-    assert totals["db_down"] == totals["write_error"] == totals["queue_full"] == 0, gw.stderr_lines
-    assert wait_stderr(gw, r"^db rejected a record: ", 0.1), gw.stderr_lines
-    assert len(wait_stderr(gw, r"^db connected$", 0.1)) == 1, gw.stderr_lines
+    totals = closed_totals(gw)
+    assert totals["write_error"] >= 2, gw.stderr_lines  # 이모지 명령의 송신·재전송 이벤트
+    assert totals["db_down"] == totals["queue_full"] == 0, gw.stderr_lines
+
+
+def test_REQ_LOG_003_dropped_table_is_recreated_by_reconnecting(pg, start_gw):
+    """TC-LOG-003-16: 10Hz 저장 중에 다른 세션이 telemetry 테이블을 지운다. 그 순간 저장하던 행만 잃고,
+    GW가 다시 접속하며 테이블을 다시 만들어 이후 TELEMETRY를 모두 저장한다 (PR #50 2차 리뷰 1, 수정 전 2차 코드는
+    테이블이 없는 채로 50건을 모두 잃었다)."""
+    db = pg.new_database()
+    gw = start_gw("--db", pg.conninfo(db))
+    assert wait_stderr(gw, r"^db connected$", 5.0), gw.stderr_lines
+    sender = threading.Thread(target=stream_telemetry, args=(gw.vehicle_port, range(50)))
+    sender.start()
+    time.sleep(1.5)
+    # 잠금을 잡은 채 지운 행 수를 따로 남기고 지운다: 지우기 전에 저장된 행을 정확히 센다
+    pg.psql("LOCK TABLE telemetry IN ACCESS EXCLUSIVE MODE; "
+            "CREATE TABLE before_drop AS SELECT count(*) AS n FROM telemetry; DROP TABLE telemetry", db)
+    sender.join()
+    assert len(gw.messages("telemetry", 50, timeout_s=2.0)) == 50
+
+    before = int(pg.psql("SELECT n FROM before_drop", db)[0][0])
+    after = [int(r[0]) for r in wait_rows(pg, db, "SELECT seq FROM telemetry WHERE seq = 49", 1, 5.0)]
+    assert after == [49], gw.stderr_lines
+    after = [int(r[0]) for r in pg.psql("SELECT seq FROM telemetry ORDER BY seq", db)]
+    assert after == list(range(after[0], 50)), after  # 다시 만든 뒤로 빠짐없이
+    assert 5 <= before < 50
+    totals = closed_totals(gw)
+    assert totals["db_down"] == totals["queue_full"] == 0, gw.stderr_lines
+    assert before + totals["write_error"] + len(after) == 50, (before, totals, after)  # 잃은 것은 실패한 행뿐
+    assert totals["write_error"] <= 2, totals

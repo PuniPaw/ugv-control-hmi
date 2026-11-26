@@ -23,7 +23,6 @@ using ugvc::app::DbNotice;
 using ugvc::app::DbSink;
 using ugvc::app::DbStats;
 using ugvc::app::IDbSession;
-using ugvc::app::WriteError;
 using ugvc::dblog::Row;
 using ugvc::dblog::Table;
 using Kind = DbNotice::Kind;
@@ -35,8 +34,8 @@ struct FakeDb {
   std::condition_variable cv;
   bool up = true;
   std::string refuse_reason = "connection refused";
-  bool hang = false;             // write가 풀릴 때까지 멈춘다 (멈춘 DB 서버)
-  bool lose_connection = false;  // 다음 write에서 연결을 잃는다
+  bool hang = false;    // write가 풀릴 때까지 멈춘다 (멈춘 DB 서버)
+  bool broken = false;  // 다시 접속할 때까지 모든 write가 실패한다 (예: 테이블 삭제. open()이 다시 만든다)
   int opens = 0;
   int writes = 0;
   std::vector<std::string> written;  // 저장한 행의 첫 값
@@ -56,20 +55,19 @@ class FakeSession final : public IDbSession {
     std::lock_guard<std::mutex> lock(db_->m);
     ++db_->opens;
     if (!db_->up) return db_->refuse_reason;
+    db_->broken = false;
     return std::nullopt;
   }
-  // 첫 값이 "bad"인 행은 DB가 거절한다 (예: 서버 인코딩으로 바꿀 수 없는 문자)
-  std::optional<WriteError> write(const Row& row) override {
+  // 첫 값이 "bad"인 행은 늘 실패한다 (예: 서버 인코딩으로 바꿀 수 없는 문자). "throw"는 예외를 던진다
+  std::optional<std::string> write(const Row& row) override {
     std::unique_lock<std::mutex> lock(db_->m);
     ++db_->writes;
     db_->cv.notify_all();
     db_->cv.wait(lock, [this] { return !db_->hang; });
-    if (db_->lose_connection || !db_->up) {
-      db_->lose_connection = false;
-      return WriteError{WriteError::Kind::Connection, "server closed the connection"};
-    }
     const std::string first = row.values.at(0).value_or("");
-    if (first == "bad") return WriteError{WriteError::Kind::Data, "invalid byte sequence"};
+    if (first == "throw") throw std::bad_alloc();
+    if (db_->broken) return std::string("relation \"telemetry\" does not exist");
+    if (first == "bad") return std::string("invalid byte sequence");
     db_->written.push_back(first);
     return std::nullopt;
   }
@@ -79,7 +77,7 @@ class FakeSession final : public IDbSession {
   std::shared_ptr<FakeDb> db_;
 };
 
-constexpr DbSink::Config kConfig{100, 10, 1ms, 4ms};
+constexpr DbSink::Config kConfig{100, 1ms, 4ms};
 
 Row row(const std::string& first) { return Row{Table::Event, {first, std::string("link"), std::nullopt, std::string("{}")}}; }
 Row row(int i) { return row(std::to_string(i)); }
@@ -190,71 +188,88 @@ TEST(DbSink, REQ_LOG_003_changed_connect_failure_reason_is_reported_again) {
   EXPECT_EQ(notices[0].reason, "password authentication failed");
 }
 
-// DB가 행 하나를 거절해도(데이터 오류) 연결과 대기열은 그대로이고, 다른 행은 모두 저장된다 (PR #50 리뷰 1)
-TEST(DbSink, REQ_LOG_003_rejected_record_keeps_the_connection_and_other_records) {
+// 저장이 한 번 실패하면 그 행만 write_error로 세고, 대기열은 그대로 둔 채 바로 다시 접속해 이어 저장한다.
+// 다시 접속하면 open()이 DB 상태(예: 삭제된 테이블)를 다시 만든다. 재접속 간격을 1시간으로 둬도 바로 다시 접속해야 한다
+TEST(DbSink, REQ_LOG_003_write_failure_drops_only_that_record_and_reconnects_at_once) {
   auto db = std::make_shared<FakeDb>();
-  DbSink sink(std::make_unique<FakeSession>(db), kConfig);
+  DbSink sink(std::make_unique<FakeSession>(db), DbSink::Config{100, 1h, 1h});
   ASSERT_TRUE(connected(sink));
+  sink.publish(row("first"));  // 이 연결로 한 번 저장한다
+  ASSERT_TRUE(eventually([&] { return sink.stats().written == 1; }));
   db->with([&] { return db->hang = true; });
   sink.publish(row("a"));
-  ASSERT_TRUE(writer_parked(*db, 1));
-  for (const char* v : {"b", "bad", "c", "bad", "d"}) sink.publish(row(v));  // 같은 배치에 섞인 거절 행
-  db->with([&] { return db->hang = false; });
-
-  ASSERT_TRUE(eventually([&] { return sink.stats().written == 4; }));
-  EXPECT_EQ(db->with([&] { return db->written; }), (std::vector<std::string>{"a", "b", "c", "d"}));
-  const DbStats s = sink.stats();
-  EXPECT_EQ(s.rejected, 2U);
-  EXPECT_EQ(s.db_down + s.write_error + s.queue_full, 0U);
-  EXPECT_EQ(db->with([&] { return db->opens; }), 1) << "데이터 오류로 다시 접속하지 않는다";
-
-  const auto notices = sink.take_notices();  // 같은 사유는 한 번만
-  ASSERT_EQ(kinds(notices), std::vector<Kind>{Kind::RowRejected});
-  EXPECT_EQ(notices[0].reason, "invalid byte sequence");
-}
-
-// 저장 중 연결을 잃으면 그 행은 write_error, 아직 저장하지 않은 기록은 db_down. 바로 다시 접속한다
-// (재접속 간격을 1시간으로 둬도 다시 접속해야 통과한다)
-TEST(DbSink, REQ_LOG_003_connection_loss_drops_unsaved_records_and_reconnects_at_once) {
-  auto db = std::make_shared<FakeDb>();
-  DbSink sink(std::make_unique<FakeSession>(db), DbSink::Config{100, 10, 1h, 1h});
-  ASSERT_TRUE(connected(sink));
-  db->with([&] { return db->hang = true; });
-  sink.publish(row(0));
-  ASSERT_TRUE(writer_parked(*db, 1));
-  for (int i = 1; i <= 5; ++i) sink.publish(row(i));
+  ASSERT_TRUE(writer_parked(*db, 2));
+  for (const char* v : {"b", "c", "d"}) sink.publish(row(v));  // 실패할 행 뒤의 대기열
   db->with([&] {
-    db->lose_connection = true;
+    db->broken = true;  // 테이블이 지워졌다: 다시 접속할 때까지 저장이 실패한다
     return db->hang = false;
   });
 
-  const auto notices = notices_until(sink, Kind::Connected);
-  ASSERT_EQ(kinds(notices), (std::vector<Kind>{Kind::ConnectionLost, Kind::Connected}));
-  EXPECT_EQ(notices[0].reason, "server closed the connection");
+  ASSERT_TRUE(eventually([&] { return sink.stats().written == 4; }));
+  EXPECT_EQ(db->with([&] { return db->written; }), (std::vector<std::string>{"first", "b", "c", "d"}));
   const DbStats s = sink.stats();
   EXPECT_EQ(s.write_error, 1U);
-  EXPECT_EQ(s.db_down, 5U);
-
-  sink.publish(row(6));
-  ASSERT_TRUE(eventually([&] { return sink.stats().written == 1; }));
+  EXPECT_EQ(s.db_down + s.queue_full, 0U);
+  const auto notices = sink.take_notices();
+  ASSERT_EQ(kinds(notices), (std::vector<Kind>{Kind::WriteFailed, Kind::Connected}));
+  EXPECT_EQ(notices[0].reason, "relation \"telemetry\" does not exist");
+  EXPECT_EQ(notices[0].retry_in, 0ms);
 }
 
-// DB가 멈춰 있어도 close()는 끝나고(GW 종료가 막히지 않음), 저장하지 못한 기록과 그 뒤 기록은 db_down으로 센다
+// 다시 접속한 뒤 한 번도 저장하지 못하고 또 실패하면 재접속 간격을 둔다(접속 직후마다 끊는 서버, 계속 실패하는 행).
+// 그동안 들어온 기록은 버리지 않고 대기열에 쌓되, 상한을 넘으면 queue_full
+TEST(DbSink, REQ_LOG_003_failure_before_any_write_on_a_connection_backs_off_and_keeps_queueing) {
+  auto db = std::make_shared<FakeDb>();
+  DbSink sink(std::make_unique<FakeSession>(db), DbSink::Config{100, 1h, 1h});
+  ASSERT_TRUE(connected(sink));
+  sink.publish(row("bad"));  // 이 연결의 첫 저장이 실패한다
+  const auto notices = notices_until(sink, Kind::WriteFailed);
+  ASSERT_EQ(kinds(notices), std::vector<Kind>{Kind::WriteFailed});
+  EXPECT_EQ(notices[0].retry_in, 1h);  // 간격을 두고 다시 접속한다
+
+  for (int i = 0; i < 150; ++i) sink.publish(row(i));
+  const DbStats s = sink.stats();
+  EXPECT_EQ(s.write_error, 1U);
+  EXPECT_EQ(s.queue_full, 50U);  // 상한 100을 넘은 만큼
+  EXPECT_EQ(s.db_down, 0U);      // 연결을 잃은 것이 아니라 다시 접속을 기다리는 중
+}
+
+// DB가 멈춰 있어도 close()는 끝나고(GW 종료가 막히지 않음), 저장 중이던 행과 대기열, 그 뒤 기록은 db_down으로
+// 한 번씩만 센다 (넣은 기록 = 저장 + 버림)
 TEST(DbSink, REQ_LOG_003_close_does_not_wait_for_a_hung_db_and_counts_what_it_leaves) {
+  auto db = std::make_shared<FakeDb>();
+  auto sink = std::make_unique<DbSink>(std::make_unique<FakeSession>(db), kConfig);
+  ASSERT_TRUE(connected(*sink));
+  db->with([&] { return db->hang = true; });
+  sink->publish(row(0));
+  ASSERT_TRUE(writer_parked(*db, 1));
+  sink->publish(row(1));
+  sink->publish(row(2));
+
+  sink->close();
+
+  EXPECT_EQ(db->with([&] { return db->writes; }), 1) << "DB가 아직 멈춰 있어야 한다";
+  EXPECT_EQ(sink->stats().db_down, 3U);  // 저장 중이던 행 + 대기열 2
+  sink->publish(row(3));
+  EXPECT_EQ(sink->stats().db_down, 4U);
+  sink->close();  // 두 번째 호출은 바로 돌아온다
+
+  db->with([&] { return db->hang = false; });  // 떼어 낸 DB 스레드가 행 0을 마저 저장한다
+  ASSERT_TRUE(eventually([&] { return db->with([&] { return db->written.size() == 1; }); }));
+  const DbStats s = sink->stats();
+  EXPECT_EQ(s.written + s.dropped(), 4U) << "행 0을 저장과 버림에 두 번 세지 않는다";
+  EXPECT_EQ(s.db_down, 4U);
+}
+
+// DB 스레드에서 예외가 나도 GW는 내려가지 않는다. 저장만 멈추고(Stopped), 저장 중이던 행과 이후 기록은 db_down
+TEST(DbSink, REQ_LOG_003_exception_in_db_thread_stops_saving_without_crashing) {
   auto db = std::make_shared<FakeDb>();
   DbSink sink(std::make_unique<FakeSession>(db), kConfig);
   ASSERT_TRUE(connected(sink));
-  db->with([&] { return db->hang = true; });
-  sink.publish(row(0));
-  ASSERT_TRUE(writer_parked(*db, 1));
+  sink.publish(row("throw"));
+  const auto notices = notices_until(sink, Kind::Stopped);
+  ASSERT_EQ(kinds(notices), std::vector<Kind>{Kind::Stopped});
+  EXPECT_EQ(sink.stats().db_down, 1U);
   sink.publish(row(1));
-  sink.publish(row(2));
-
-  sink.close();
-
-  EXPECT_EQ(db->with([&] { return db->writes; }), 1) << "DB가 아직 멈춰 있어야 한다";
   EXPECT_EQ(sink.stats().db_down, 2U);
-  sink.publish(row(3));
-  EXPECT_EQ(sink.stats().db_down, 3U);
-  db->with([&] { return db->hang = false; });  // 떼어 낸 DB 스레드를 끝낸다
 }

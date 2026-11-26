@@ -65,7 +65,6 @@ constexpr auto kMaxHmiLag = std::chrono::seconds(2);  // ping 후 이 안에 응
 constexpr std::size_t kMaxWsConnecting = 16;  // 요청 헤더를 아직 다 보내지 않은 연결. 넘치면 바로 닫는다
 constexpr const char* kWsPath = "/ws";         // ICD 2장 IF-03
 constexpr std::size_t kMaxDbQueued = 5000;     // 시연 부하(초당 약 25건)로 3분 남짓. 넘치면 queue_full로 버린다
-constexpr std::size_t kMaxDbBatch = 500;       // 한 트랜잭션에 넣는 최대 행 수
 
 struct Options {
   std::uint16_t vehicle_port = 15001;
@@ -181,7 +180,7 @@ class GatewayApp {
              [this](const std::string& m) { on_hmi_message(m); },
              [this](const std::string& line) { log_.publish(line); }}),
         db_(o.db ? std::make_unique<app::DbSink>(std::make_unique<app::PgSession>(*o.db),
-                                                  app::DbSink::Config{kMaxDbQueued, kMaxDbBatch})
+                                                  app::DbSink::Config{kMaxDbQueued})
                  : nullptr),
         timer_(io, asio::steady_timer::clock_type::now()) {
     diag(log_, "ugvc_gateway: vehicle UDP ", o.vehicle_port, ", detector UDP ", o.detector_port,
@@ -191,12 +190,13 @@ class GatewayApp {
     tick();
   }
 
-  // 종료: DB에 남은 기록을 잠깐 저장해 보고(DbSink::close), 마지막 1Hz 보고 이후의 버림·알림까지 남긴다.
-  // log_는 이 뒤에 소멸한다 (먼저 선언됐으므로).
+  // 종료: DB에 남은 기록을 잠깐 저장해 보고(DbSink::close), 마지막 1Hz 보고 이후의 버림·알림과 최종 누계를 남긴다.
+  // 최종 누계 줄은 버림이 없어도 쓴다 (버림 0을 확인할 수 있게). log_는 이 뒤에 소멸한다 (먼저 선언됐으므로).
   ~GatewayApp() {
     if (!db_) return;
     db_->close();
     report_db();
+    diag(log_, "db log closed: written ", db_->stats().written, ", ", totals(db_->stats()));
   }
   GatewayApp(const GatewayApp&) = delete;
   GatewayApp& operator=(const GatewayApp&) = delete;
@@ -343,20 +343,25 @@ class GatewayApp {
         case app::DbNotice::Kind::ConnectFailed:
           diag(log_, "db unavailable: ", n.reason, " (retry in ", n.retry_in.count(), "ms)");
           break;
-        case app::DbNotice::Kind::ConnectionLost: diag(log_, "db connection lost: ", n.reason, " (reconnecting)"); break;
-        case app::DbNotice::Kind::RowRejected: diag(log_, "db rejected a record: ", n.reason); break;
+        case app::DbNotice::Kind::WriteFailed:
+          diag(log_, "db write failed, dropped 1 record: ", n.reason, " (reconnect in ", n.retry_in.count(), "ms)");
+          break;
+        case app::DbNotice::Kind::Stopped: diag(log_, "db log stopped: ", n.reason); break;
       }
     }
     const auto now = db_->stats();
     const auto& was = reported_db_;
     if (now.dropped() != was.dropped()) {
       diag(log_, "db log dropped ", now.dropped() - was.dropped(), " records (queue_full +",
-           now.queue_full - was.queue_full, ", db_down +", now.db_down - was.db_down, ", rejected +",
-           now.rejected - was.rejected, ", write_error +", now.write_error - was.write_error,
-           "; total queue_full ", now.queue_full, ", db_down ", now.db_down, ", rejected ", now.rejected,
-           ", write_error ", now.write_error, ")");
+           now.queue_full - was.queue_full, ", db_down +", now.db_down - was.db_down, ", write_error +",
+           now.write_error - was.write_error, "; ", totals(now), ")");
     }
     reported_db_ = now;
+  }
+
+  static std::string totals(const app::DbStats& s) {
+    return "total queue_full " + std::to_string(s.queue_full) + ", db_down " + std::to_string(s.db_down) +
+           ", write_error " + std::to_string(s.write_error);
   }
 
   core::SystemClock clock_;

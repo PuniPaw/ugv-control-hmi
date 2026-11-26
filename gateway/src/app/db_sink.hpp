@@ -6,16 +6,21 @@
 // 접속·재접속과 실제 저장(블로킹 libpq 호출)을 한다. DB가 느리거나 멈추거나 없어도 io 스레드의
 // 수신·검증·링크 판정·중계·재전송은 기다리지 않는다.
 //
-// 저장 실패는 두 종류다 (WriteError::Kind). 둘을 섞으면 행 하나의 문제로 연결을 버리게 된다.
-//   Data       — DB가 그 행만 거절했다. 연결은 그대로 쓰고 다음 행을 저장한다
-//   Connection — 연결을 잃었다. 연결을 닫고 다시 접속한다
+// 저장 실패는 종류를 가리지 않는다. 어떤 실패든 그 행 하나만 write_error로 세고, 대기열은 그대로 둔 채
+// 연결을 닫고 다시 접속한다. 다시 접속하면 open()이 스키마와 준비된 문장을 다시 만들므로, 테이블 삭제 같은
+// DB 상태 문제도 스스로 풀린다. 실패 원인을 연결·데이터로 가르는 판단은 두 번 틀렸다(PR #50 1·2차 리뷰).
+//
+// 연결 상태 (Link):
+//   Down         — 접속하지 못했다. 들어온 기록은 db_down으로 버리고, 대기열은 비어 있다
+//   Reconnecting — 저장이 실패해 다시 접속하는 중. 들어온 기록은 대기열에 쌓는다 (상한을 넘으면 queue_full)
+//   Up           — 접속했다
+// 접속한 뒤 한 번도 저장하지 못하고 다시 실패하면(접속 직후마다 끊는 서버, 계속 거절되는 행) 재접속 간격
+// (ReconnectSchedule, 0.5s → 5s)을 적용한다. 한 번이라도 저장했으면 바로 다시 접속한다.
 //
 // 버리는 경우와 원인(DbStats):
-//   queue_full  — 저장이 밀려 대기열(max_queued)이 찼다
-//   db_down     — 연결이 없을 때 들어온 기록, 연결을 잃을 때 아직 저장하지 않은 기록
-//   rejected    — DB가 그 행을 거절했다 (Data)
-//   write_error — 저장하던 중 연결을 잃은 그 행 (Connection. 서버에 닿았는지 알 수 없다)
-// 연결이 없는 동안 대기열은 비어 있다. 다시 접속하면 그 뒤에 들어온 기록부터 저장한다.
+//   queue_full  — 대기열(max_queued)이 찼다
+//   db_down     — 접속하지 못한 동안 들어온 기록, 접속에 실패한 순간 대기열에 있던 기록, 종료 때 저장하지 못한 기록
+//   write_error — 저장에 실패한 그 행
 //
 // 진단은 DB 스레드가 직접 쓰지 않는다. 일어난 일을 DbNotice(종류 + 사유)로 모으고, io 스레드가
 // take_notices()로 꺼내 문구를 만든다. 종료 때 떼어 낸 DB 스레드가 이미 사라진 LineSink를 부르는
@@ -34,21 +39,14 @@
 
 namespace ugvc::app {
 
-struct WriteError {
-  enum class Kind { Data, Connection };
-  Kind kind;
-  std::string reason;
-};
-
 // DB 연결 하나. 실제는 PgSession(libpq), 단위 시험은 가짜. DB 스레드에서만 부른다.
 class IDbSession {
  public:
   virtual ~IDbSession() = default;
-  // 접속하고 스키마를 만든다. 실패하면 사유 (성공이면 nullopt)
+  // 접속하고 스키마와 준비된 문장을 만든다. 실패하면 사유 (성공이면 nullopt)
   virtual std::optional<std::string> open() = 0;
-  // 행 하나를 저장하고 바로 확정한다(행마다 따로). 실패하면 종류와 사유.
-  // Connection이면 DbSink가 close()를 부르고 다시 open()한다.
-  virtual std::optional<WriteError> write(const dblog::Row& row) = 0;
+  // 행 하나를 저장하고 바로 확정한다. 실패하면 사유. 실패 뒤 DbSink는 close()를 부르고 다시 open()한다
+  virtual std::optional<std::string> write(const dblog::Row& row) = 0;
   virtual void close() = 0;
 };
 
@@ -56,30 +54,28 @@ struct DbStats {
   std::uint64_t written = 0;
   std::uint64_t queue_full = 0;
   std::uint64_t db_down = 0;
-  std::uint64_t rejected = 0;
   std::uint64_t write_error = 0;
 
-  std::uint64_t dropped() const { return queue_full + db_down + rejected + write_error; }
+  std::uint64_t dropped() const { return queue_full + db_down + write_error; }
 };
 
 // DB 스레드에서 일어난 일. 문구는 io 스레드(main의 report_db)가 만든다.
 struct DbNotice {
   enum class Kind {
-    Connected,       // 접속 성공
-    ConnectFailed,   // 접속 실패 (사유가 직전 알림과 같으면 다시 내지 않는다)
-    ConnectionLost,  // 저장 중 연결을 잃음
-    RowRejected,     // DB가 행 하나를 거절 (사유가 직전 알림과 같으면 다시 내지 않는다)
+    Connected,      // 접속 성공
+    ConnectFailed,  // 접속 실패 (사유가 직전 알림과 같으면 다시 내지 않는다)
+    WriteFailed,    // 행 하나 저장 실패 → 다시 접속
+    Stopped,        // DB 스레드가 예외로 멈춤. 이후 기록은 db_down
   };
   Kind kind;
-  std::string reason;                       // Connected는 빈 문자열
-  std::chrono::milliseconds retry_in{0};    // ConnectFailed만: 다음 시도까지
+  std::string reason;                     // Connected는 빈 문자열
+  std::chrono::milliseconds retry_in{0};  // ConnectFailed·WriteFailed: 다음 접속 시도까지 (0 = 바로)
 };
 
 class DbSink {
  public:
   struct Config {
     std::size_t max_queued;
-    std::size_t max_batch;  // DB 스레드가 대기열에서 한 번에 꺼내는 최대 행 수 (잠금 횟수를 줄인다)
     std::chrono::milliseconds reconnect_first = dblog::kReconnectFirst;
     std::chrono::milliseconds reconnect_max = dblog::kReconnectMax;
   };
@@ -94,8 +90,8 @@ class DbSink {
   void publish(dblog::Row row);
 
   // 남은 기록을 저장하도록 잠깐(kFlushTimeout) 기다리고, 끝나지 않으면 DB 스레드를 떼어 낸다
-  // (DB가 멈춰도 GW 종료가 막히지 않게). 그때 대기열에 남은 기록은 db_down으로 센다.
-  // 부른 뒤에는 publish()가 모두 db_down이 된다. stats()·take_notices()는 계속 쓸 수 있다.
+  // (DB가 멈춰도 GW 종료가 막히지 않게). 그때 대기열과 저장 중이던 행은 db_down으로 센다.
+  // 두 번째 호출부터는 바로 돌아온다. 부른 뒤 publish()는 모두 db_down이다. stats()·take_notices()는 계속 쓸 수 있다.
   void close();
 
   DbStats stats() const;

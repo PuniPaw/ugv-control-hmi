@@ -89,19 +89,17 @@ std::optional<std::string> PgSession::open() {
   return std::nullopt;
 }
 
-// 행 하나를 자동 확정(autocommit)으로 저장한다. 행마다 따로 확정하므로 DB가 행 하나를 거절해도
-// 다른 행은 그대로 저장된다. 실패하면 연결 상태로 종류를 가른다: 연결이 살아 있으면 그 행의 문제(Data),
-// 아니면 연결을 잃은 것(Connection).
-std::optional<WriteError> PgSession::write(const dblog::Row& row) {
-  if (!conn_) return WriteError{WriteError::Kind::Connection, "not connected"};
+// 행 하나를 자동 확정(autocommit)으로 저장한다. 행마다 따로 확정하므로 한 행의 실패가 다른 행을 잃게 하지 않는다.
+// 실패하면 원인을 가리지 않고 사유만 돌려준다 (DbSink가 그 행만 세고 다시 접속한다).
+std::optional<std::string> PgSession::write(const dblog::Row& row) {
+  if (!conn_) return std::string("not connected");
   std::vector<const char*> params;
   params.reserve(row.values.size());
   for (const auto& v : row.values) params.push_back(v ? v->c_str() : nullptr);  // nullptr = SQL NULL
   const Result r(PQexecPrepared(conn_.get(), statement_name(row.table), static_cast<int>(params.size()),
                                 params.data(), nullptr, nullptr, /*resultFormat=*/0));
   if (ok(r)) return std::nullopt;
-  const auto kind = PQstatus(conn_.get()) == CONNECTION_OK ? WriteError::Kind::Data : WriteError::Kind::Connection;
-  return WriteError{kind, error()};
+  return error();
 }
 
 void PgSession::close() { conn_.reset(); }
