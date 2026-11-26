@@ -63,14 +63,26 @@ add_library(ugvc_gateway_core
 target_include_directories(ugvc_gateway_core PUBLIC include)
 target_link_libraries(ugvc_gateway_core PUBLIC ugvc_ingress nlohmann_json::nlohmann_json PRIVATE ugvc_warnings)
 
+# dblog: 유효 패킷·이벤트 → DB 행 변환, 스키마, 재접속 시각 (REQ-LOG-001·003). DB 없음 → 단위 시험 대상
+add_library(ugvc_dblog src/dblog/row.cpp)
+target_include_directories(ugvc_dblog PUBLIC include)
+target_link_libraries(ugvc_dblog PUBLIC ugvc_gateway_core PRIVATE ugvc_warnings)
+
+# libpq (PostgreSQL C 클라이언트, SDD 5.1). Ubuntu: libpq-dev. 실행 파일만 링크한다
+find_package(PostgreSQL REQUIRED)
+
 # GW 실행 파일: 소켓·타이머만 담당
 # app_io: io 스레드를 막지 않는 출력 — 줄 단위 stdout·stderr(LineSink, 전용 쓰기 스레드)와 IF-03 WebSocket 서버(WsServer)
-add_library(ugvc_app_io src/app/line_sink.cpp src/app/ws_server.cpp)
+# 그리고 DB 로그 저장(DbSink, 전용 DB 스레드). DB 연결 구현(PgSession, libpq)은 ugvc_app_pg로 따로 둔다
+add_library(ugvc_app_io src/app/line_sink.cpp src/app/ws_server.cpp src/app/db_sink.cpp)
 target_include_directories(ugvc_app_io PUBLIC src/app)
-target_link_libraries(ugvc_app_io PUBLIC ugvc_asio Threads::Threads PRIVATE ugvc_warnings)
+target_link_libraries(ugvc_app_io PUBLIC ugvc_asio ugvc_dblog Threads::Threads PRIVATE ugvc_warnings)
+
+add_library(ugvc_app_pg src/app/pg_session.cpp)
+target_link_libraries(ugvc_app_pg PUBLIC ugvc_app_io PRIVATE PostgreSQL::PostgreSQL ugvc_warnings)
 
 add_executable(ugvc_gateway src/app/main.cpp)
-target_link_libraries(ugvc_gateway PRIVATE ugvc_gateway_core ugvc_app_io ugvc_asio ugvc_warnings)
+target_link_libraries(ugvc_gateway PRIVATE ugvc_gateway_core ugvc_app_io ugvc_app_pg ugvc_asio ugvc_warnings)
 
 if(UGVC_BUILD_TESTS)
   FetchContent_Declare(
@@ -102,10 +114,13 @@ if(UGVC_BUILD_TESTS)
     tests/if03/command_test.cpp
     tests/gateway/command_tracker_test.cpp
     tests/app/line_sink_test.cpp
+    tests/app/db_sink_test.cpp
+    tests/dblog/row_test.cpp
+    tests/dblog/reconnect_test.cpp
   )
   target_include_directories(ugvc_tests PRIVATE tests)
   target_link_libraries(ugvc_tests PRIVATE
-    ugvc_gateway_core ugvc_ingress ugvc_codec ugvc_app_io ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
+    ugvc_gateway_core ugvc_ingress ugvc_codec ugvc_dblog ugvc_app_io ugvc_warnings GTest::gtest_main nlohmann_json::nlohmann_json)
   # 공용 테스트 벡터 위치 (STP 2.4)
   target_compile_definitions(ugvc_tests PRIVATE
     UGVC_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../testdata")

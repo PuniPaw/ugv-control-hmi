@@ -28,6 +28,16 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "slow: 30초 이상 걸리는 STP 통합 TC (-m slow로 실행)")
 
 
+def pytest_terminal_summary(terminalreporter):
+    """환경 때문에 skip한 시험(예: PostgreSQL 없음)의 사유를 -rs 없이도 보인다."""
+    reasons = sorted({str(r.longrepr[2]) for r in terminalreporter.stats.get("skipped", [])
+                      if isinstance(r.longrepr, tuple) and "PostgreSQL" in str(r.longrepr[2])})
+    if reasons:
+        terminalreporter.section("환경 때문에 skip한 시험")
+        for reason in reasons:
+            terminalreporter.write_line(reason)
+
+
 def free_udp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -78,11 +88,12 @@ class GatewayProc:
             self._q.get_nowait()
 
 
-def start_gateway(ports: list[int]) -> GatewayProc:
-    """GW를 띄우고 stdout·stderr 수집을 시작한다. ports = [차량, 탐지, SIM]. GW 재시작 시험에서도 쓴다."""
+def start_gateway(ports: list[int], extra_args: tuple[str, ...] = ()) -> GatewayProc:
+    """GW를 띄우고 stdout·stderr 수집을 시작한다. ports = [차량, 탐지, SIM]. GW 재시작 시험에서도 쓴다.
+    extra_args: 추가 명령줄 옵션 (예: DB 저장 시험의 --db)."""
     proc = subprocess.Popen(
         [str(GATEWAY_BIN), "--vehicle-port", str(ports[0]), "--detector-port", str(ports[1]),
-         "--sim-port", str(ports[2]), *GW_TEST_ARGS],
+         "--sim-port", str(ports[2]), *GW_TEST_ARGS, *extra_args],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     line = proc.stderr.readline()
     assert "ugvc_gateway" in line, line

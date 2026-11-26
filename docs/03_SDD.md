@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.6.1 (초안) |
+| 버전 | v0.7.3 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.10, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.27, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.12, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.31, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -38,6 +38,10 @@
 | v0.5.4 | 2026-11-23 | 8.6 PR #35 4차 리뷰 반영: 같은 종류에 결과 대기 명령이 있으면 그것을 경고(더 새 명령의 결과로 숨기는 것은 오래된 결과 미확인뿐), "한 번만 보냄"을 "새 연결에 지난 결과를 스스로 다시 보내지 않음"으로, 8.2 재설정 서술(명령도 `connectionEnded`). `main`(PR #36) merge로 이 PR의 이력 행을 v0.5~v0.5.3으로 다시 매기고 관련 문서(SRS v0.8, ICD v0.15, STP v0.26) 갱신. 8.7 시연 점검은 한 프로세스 SIM 사용 |
 | v0.6 | 2026-11-25 | 8.7 HMI 경고 체계 신설(REQ-HMI-003·004, SRS v0.9 표 3-1·3-2): 조건 집합 `alertConditions`(기존 판정이 입력)와 수명 규칙 `reconcile`·`acknowledge`(순수 함수), 명령 결과 경고는 풀리지 않음, 등급별 자리와 확인 버튼, 차량 LOST 경고 2.0s 구성. 탐지 노드 조건·신규 표적은 DET 연결 주로 미룸. 받은 적 없는 링크 상태는 LOST가 아니라 `null`(8.3). 8.1 모듈 표, 8.4 마지막 항목, 시험 절을 8.8로, 9장 REQ-HMI-004 측정 행 정리 |
 | v0.6.1 | 2026-11-25 | 8.7 PR #49 1차 리뷰 반영: GW 연결 분류를 `view.ts`의 `gwHealth()` 하나로 모아 배너와 경고가 같이 씀(8.4 문구를 실제대로), 확인 가능 여부를 술어 하나(`canAcknowledge`)로, WARNING·CAUTION을 한 띠에 두고 위아래로 나눈 것을 위치 구분으로 보는 근거, GW 재시작 직후 재접속하면 차량 LOST가 잠깐 떴다가 해제됨으로 남는 한계(이슈 #51). 관련 문서 SRS v0.10 |
+| v0.7 | 2026-11-25 | 5.1 DB 로그 저장 신설(REQ-LOG-001·003): 9장 미정 "PostgreSQL 저장 방식"을 비동기(전용 DB 스레드, `DbSink`)·트랜잭션 배치(최대 500행)로 확정. 클라이언트 libpq(근거), 스키마(`telemetry`·`detection`·`event`, 인덱스), `--db` 접속 설정, 상한 5000건과 원인별 버림 계수(queue_full·db_down·write_error), 재접속 0.5s→5s(`ReconnectSchedule`, 시계 주입). 2장 모듈 표에 `dblog`, 5장 스레드 수, 6.1 명령 이벤트 저장(`CommandSent`에 WAYPOINT 좌표), 7장 표 |
+| v0.7.1 | 2026-11-25 | 5.1 PR #50 1차 리뷰 반영: 저장 실패를 연결 오류와 데이터 오류(`WriteError::Kind`)로 나눔. 행 하나가 거절돼도 연결을 버려 같은 배치의 유효 기록을 잃던 결함 때문에, v0.7의 트랜잭션 배치를 행마다 자동 확정(`synchronous_commit=off`)으로 바꾸고 데이터 오류는 그 행만 `rejected`(새 원인)로 셈. 접속 기본값 `client_encoding=UTF8`. 연결을 잃으면 그 행 `write_error`, 나머지 `db_down`, 재접속은 바로. 알림은 종류 있는 `DbNotice`(문구는 io 스레드), 사유가 바뀌면 다시 알림, 종료 때 남은 기록 계수와 마지막 보고, DB 스레드 예외 처리. 스키마 생성 권한, 접속 시간 상한의 한계, `write_error` 의미, req_id 없는 거부 메시지는 DB에 남지 않음을 적음 |
+| v0.7.2 | 2026-11-26 | 5.1 PR #50 2차 리뷰 반영(사용자 결정: 저장 실패의 종류를 가르는 판단을 없앰): v0.7.1의 연결·데이터 오류 분류(`WriteError::Kind`)와 `rejected` 원인을 지움. 분류가 1·2차 결함의 같은 전제였다(2차: 연결이 살아 있는 실패를 모두 행 거절로 봐 테이블 삭제 뒤 회복하지 못함). 어떤 실패든 그 행만 `write_error`로 세고 대기열을 둔 채 다시 접속(`open()`이 DDL·prepare를 다시 해 DB 상태 문제가 풀림). 연결 상태 Down·Reconnecting·Up, 저장 한 번 없이 또 실패하면 재접속 간격, 한 행씩 꺼내는 루프(`max_batch` 삭제), `close()`가 저장 중 행도 세고 두 번째 호출은 바로 돌아옴, 예외는 `Stopped`, 종료 때 최종 누계 줄. SRS v0.11 REQ-LOG-003 |
+| v0.7.3 | 2026-11-26 | 5.1 PR #50 3차 리뷰 반영(동작 변경 없음): 저장 불가 행이 이어질 때 뒤 기록이 늦어지고 그사이 종료하면 `db_down`이 되는 한계(사용자 결정으로 유지), 간격은 접속 실패로 늘어난 값을 첫 저장까지 이어 받음, 다시 접속에 실패하면 DB가 살아 있어도 대기열을 `db_down`으로 버림(예: conninfo의 `statement_timeout`과 잠금), `db_down`도 잃은 수의 상한(종료 때 저장 중 행), 재접속마다 `db connected` 알림. SRS v0.12 |
 
 ---
 
@@ -55,8 +59,10 @@ flowchart LR
         ingress --> gw["gateway<br/>Gateway·HEARTBEAT"]
         link --> gw
         gw --> if03["if03<br/>IF-03 JSON·command 파서"]
-        if03 --> app["app<br/>소켓·타이머·출력"]
+        if03 --> app["app<br/>소켓·타이머·출력·DB 저장"]
         gw --> app
+        gw --> dblog["dblog<br/>DB 행·스키마·재접속 시각"]
+        dblog --> app
     end
     subgraph PY["python/ · sim/"]
         proto["ugvc_proto<br/>codec·check_frame"] --> sim["ugvc_sim<br/>Simulator·Failsafe·app"]
@@ -65,7 +71,7 @@ flowchart LR
     vectors -.-> proto
 ```
 
-화살표는 "사용한다" 방향이다. 아래 모듈은 위 모듈을 모른다. `app`만 소켓(Asio)을 쓰고, 나머지는 입출력이 없는 순수 로직이라 단위 시험으로 검증한다.
+화살표는 "사용한다" 방향이다. 아래 모듈은 위 모듈을 모른다. `app`만 소켓(Asio)과 DB(libpq)를 쓰고, 나머지는 입출력이 없는 순수 로직이라 단위 시험으로 검증한다.
 
 | 모듈 | 책임 | 주요 타입·함수 | 요구사항 |
 |---|---|---|---|
@@ -75,7 +81,8 @@ flowchart LR
 | `link` | 링크 상태 기계(송신원 하나), 10초 유실률 창 | `LinkMonitor`, `LinkChange`, `LossWindow` | REQ-COM-003·004·005 |
 | `gateway` | 수신 처리 순서를 묶는 중심 객체, 송신원별 링크 전이 수집, HEARTBEAT 생성, 명령 재전송 추적 | `Gateway::on_datagram`, `Gateway::poll`, `Gateway::take_transitions`, `HeartbeatSender`, `CommandTracker` | REQ-COM-001~007, REQ-CMD-002·005 |
 | `if03` | 정수 LSB → 공학 단위, IF-03 JSON 메시지 생성, HMI 명령 경계 검증 | `if03::telemetry`, `stats`, `link_status`, `cmd_result`, `parse_command` | ICD 7.1·7.2 |
-| `app` | UDP 수신·송신, 50ms 판정 타이머, stdout·stderr 출력(전용 스레드), 명령행 옵션 | `GatewayApp`, `UdpReceiver`, `LineSink` | REQ-COM-007, REQ-SAFE-001 |
+| `dblog` | 유효 TELEMETRY·DETECTION과 이벤트(링크 전이, 명령)를 DB 행으로 변환, 스키마, 재접속 시각 | `Row`, `telemetry_row`, `link_row`, `command_row`, `schema_sql`, `ReconnectSchedule` | REQ-LOG-001·003 |
+| `app` | UDP 수신·송신, 50ms 판정 타이머, stdout·stderr 출력(전용 스레드), DB 저장(전용 스레드, libpq), 명령행 옵션 | `GatewayApp`, `UdpReceiver`, `LineSink`, `DbSink`, `PgSession` | REQ-COM-007, REQ-SAFE-001, REQ-LOG-003 |
 
 ## 3. 수신 처리 흐름
 
@@ -120,7 +127,7 @@ stateDiagram-v2
 
 ## 5. 스레드·시간 구조
 
-GW의 판정은 **단일 스레드 Boost.Asio `io_context` 하나**로 동작한다. 수신·판정·HEARTBEAT·WebSocket 세션이 모두 이 스레드에서 차례로 실행되므로 `Gateway`에는 잠금이 없다. 그 밖의 스레드는 stdout·stderr에 실제로 쓰는 `LineSink` 쓰기 스레드 2개뿐이며, `Gateway` 상태는 만지지 않고 문자열 대기열만 공유한다.
+GW의 판정은 **단일 스레드 Boost.Asio `io_context` 하나**로 동작한다. 수신·판정·HEARTBEAT·WebSocket 세션이 모두 이 스레드에서 차례로 실행되므로 `Gateway`에는 잠금이 없다. 그 밖의 스레드는 stdout·stderr에 실제로 쓰는 `LineSink` 쓰기 스레드 2개와, `--db`를 줬을 때 PostgreSQL에 저장하는 `DbSink` DB 스레드 1개(5.1)뿐이다. 이들은 `Gateway` 상태를 만지지 않고 값(문자열, DB 행) 대기열만 공유한다.
 
 | 이벤트 원천 | 주기 | 하는 일 |
 |---|---|---|
@@ -141,6 +148,7 @@ GW의 판정은 **단일 스레드 Boost.Asio `io_context` 하나**로 동작한
 | stderr (진단: 링크 전이, 오류, 버림 보고) | `LineSink`: 전용 스레드가 블로킹 쓰기, 대기열 200줄 | 새 줄을 버리고 자리가 나면 개수 보고 |
 | WebSocket (IF-03, HMI) | `WsServer`: 세션별 쓰기 대기열 1000개, 비동기 쓰기 (io 스레드), 동시 세션 8개, ping 응답 기한 2.0s | 그 세션의 연결을 끊고 사유를 stderr에 기록한다. HMI는 재접속해 현재 상태부터 받는다 |
 | HEARTBEAT (UDP) | `send_to` (UDP는 막히지 않음) | 오류만 stderr에 보고 |
+| PostgreSQL (DB 로그) | `DbSink`: 전용 DB 스레드가 libpq 블로킹 호출, 대기열 5000건 (5.1) | 새 기록을 버리고 원인별 개수를 stderr에 1Hz로 보고 |
 
 - **읽는 쪽이 사라지면**(EPIPE) 그 뒤 줄은 모두 버린 것으로 센다. SIGPIPE는 무시해 프로세스가 죽지 않는다.
 - **O_NONBLOCK 비동기 쓰기를 쓰지 않는 이유:** `dup`한 fd도 원래 fd와 열린 파일 설명(open file description)을 공유한다. 이전 구현은 여기에 O_NONBLOCK을 걸었고, `2>&1`로 같은 설명을 쓰는 stderr까지 non-blocking이 되어 읽는 쪽이 한 번 멈추면 `std::cerr`가 영구히 고장 났다(진단이 조용히 사라짐). 종료 후에도 터미널에 O_NONBLOCK이 남았다. 전용 스레드의 블로킹 쓰기는 fd 플래그를 바꾸지 않는다.
@@ -163,6 +171,85 @@ GW의 판정은 **단일 스레드 Boost.Asio `io_context` 하나**로 동작한
 - `2>&1` 파이프가 멈췄다 돌아와도 링크 전이·버림 보고가 나오고 fd 플래그가 그대로 (`test_diagnostics_survive_shared_pipe_stall`)
 - stdout을 읽던 쪽이 닫혀도 버린 줄 보고 (`test_dropped_lines_reported_after_stdout_reader_closes`)
 - `LineSink` 단위 시험: 막히지 않음, 쓴 줄 + 버린 줄 = 넣은 줄, EPIPE 계수, fd 플래그 불변
+
+### 5.1 DB 로그 저장 (REQ-LOG-001·003)
+
+`--db <접속 문자열>`을 주면 GW는 유효 TELEMETRY·DETECTION과 이벤트(링크 상태 전이, 명령 송신·재전송·결과·무시·모르는 ACK)를 PostgreSQL에 저장한다. 경고 원인 중 GW가 아는 것(링크 전이, 명령, TELEMETRY의 mode·status_flags)은 이 기록들에 모두 들어 있다(REQ-LOG-001). 옵션이 없으면 저장하지 않고(`db log: disabled (no --db)`), 그 밖의 동작은 같다.
+
+```mermaid
+flowchart LR
+    subgraph io["io 스레드 (단일)"]
+        rx["on_datagram<br/>publish_transitions<br/>drain_command_events"] -->|"dblog::*_row (값)"| pub["DbSink::publish<br/>잠금은 대기열 조작 동안만"]
+        rep["1Hz report_db"]
+    end
+    pub --> q[("대기열 ≤ 5000건")]
+    q --> th["DB 스레드<br/>접속·재접속·행 저장"]
+    th -->|"libpq, 행마다 자동 확정"| pg[("PostgreSQL")]
+    th -.->|"알림·계수 (잠금)"| rep
+    rep --> err["stderr (LineSink)"]
+```
+
+**저장 방식: 비동기, 전용 스레드, 행마다 확정 (9장 미정 사항 확정).**
+
+- io 스레드는 기록을 `dblog::Row`(테이블 + 매개변수 텍스트 값)로 바꿔 대기열에 넣기만 한다. 행 변환은 순수 함수라 단위 시험한다. DB 호출(접속, 저장)은 모두 DB 스레드가 하고, 그동안 잠금을 놓는다. 그래서 DB가 느리거나 응답하지 않거나 없어도 수신·검증·링크 판정·중계·재전송·HEARTBEAT는 기다리지 않는다. 구조는 `LineSink`와 같다(5장 출력 표).
+- 동기 저장(io 스레드에서 `INSERT`)은 쓰지 않는다. DB가 한 번 멈추면 io 스레드가 함께 멈추고, 3.0초면 SIM이 Failsafe에 들어간다(REQ-SAFE-001). 비동기 libpq API(`PQsendQuery` + 소켓을 Asio에 등록)는 io 스레드를 막지 않지만, 접속 단계의 이름 해석·TLS 협상까지 비동기로 다뤄야 해 코드가 훨씬 커진다. 스레드 하나로 같은 성질을 얻는다.
+- DB 스레드는 대기열에서 한 행씩 꺼내 준비된 문장(`PQexecPrepared`)으로 저장하고 행마다 자동 확정한 뒤, 그 결과를 바로 센다. 확정마다 디스크 동기화를 기다리지 않도록 세션에 `synchronous_commit = off`를 건다. 서버가 죽으면 마지막 1초 미만의 기록을 잃을 수 있지만 DB가 깨지지는 않는다. 로그 용도에 맞는 선택이다. 시연 부하(초당 약 25건)는 행 단위로 충분히 감당한다.
+- **저장 실패는 종류를 가리지 않는다.** 어떤 실패든 그 행 하나만 버리고(`write_error`), 대기열은 그대로 둔 채 연결을 닫고 다시 접속한다(SRS v0.11 REQ-LOG-003). 다시 접속하면 `open()`이 스키마(DDL)와 준비된 문장을 다시 만들므로 테이블 삭제 같은 DB 상태 문제도 스스로 풀린다. 행마다 확정하므로 한 행의 실패가 앞뒤 행을 잃게 하지 않는다.
+  - 실패 원인을 "연결 오류 / 데이터 오류"로 가르면 그 분류가 틀릴 때마다 기록을 잃는다. 모든 실패를 연결 끊김으로 보고 배치째 버리면 한글 req_id 하나로 같은 배치의 유효 TELEMETRY를 잃었고(PR #50 1차 리뷰), 연결이 살아 있는 실패를 모두 행 거절로 보면 테이블이 지워진 뒤 다시 만들지 못해 이후 기록을 전부 잃었다(2차 리뷰). 다시 접속하는 비용(DDL 몇 문장)은 드문 실패에만 들므로, 분류하지 않고 늘 다시 접속한다.
+  - **연결 상태(`DbSink::State::Link`).** `Down`(접속 실패: 들어온 기록은 `db_down`, 대기열은 비어 있음), `Reconnecting`(저장 실패 뒤 다시 접속하는 중: 들어온 기록은 대기열에 쌓고 상한을 넘으면 `queue_full`), `Up`.
+  - **간격.** 이번 연결로 한 번이라도 저장했으면 바로 다시 접속한다. 접속한 뒤 한 번도 저장하지 못하고 또 실패하면(접속 직후마다 끊는 서버, 매번 실패하는 행) 재접속 간격(아래 `ReconnectSchedule`)을 적용한다. 그래서 같은 실패가 되풀이돼도 접속과 DDL을 쉬지 않고 반복하지 않는다. 간격은 접속 성공으로 되돌리지 않고 그 연결의 첫 저장 성공에서 되돌리므로, 접속 실패가 이어져 간격이 5s까지 늘었다면 접속 직후 첫 저장이 실패할 때도 5s를 이어 쓴다(SRS v0.12 REQ-LOG-003).
+  - **다시 접속에 실패하면** `Down`이 되고 그때 대기열은 `db_down`으로 센다(SRS v0.12). DB 서버가 살아 있어도 `open()`의 DDL·prepare가 실패하면 마찬가지다. 예: 사용자가 conninfo에 `options='-c statement_timeout=300'`을 넣었는데 다른 세션이 테이블을 오래 잠그면, INSERT와 재접속의 DDL이 모두 시간 초과로 실패해 대기열을 잃는다(PR #50 3차 리뷰에서 24건). 기본 conninfo에서는 DDL이 잠금을 기다리므로 잃지 않는다.
+  - **한계(사용자 결정으로 유지, 이슈 #57).** 저장할 수 없는 행(예: UTF8이 아닌 DB에 그 인코딩에 없는 문자)이 대기열 맨 앞에 잇달아 오면, 행마다 저장 실패 → 재접속 → 첫 저장 실패가 되어 간격이 0.5 → 1 → 2 → 4 → 5s로 늘고, 뒤의 정상 기록도 그만큼 늦게 저장된다(3차 리뷰: 이런 명령 8개 뒤의 TELEMETRY가 22.6s 뒤 저장). 그사이 GW를 끝내면 Reconnecting 중에는 다시 접속하지 않으므로 대기열이 `db_down`으로 버려지고, 약 40개가 이어지면 대기열이 차 `queue_full`까지 갈 수 있다. 우리 HMI는 UUID req_id를 쓰고 기본 DB는 UTF8이라, 규약 밖 클라이언트가 UTF8이 아닌 DB에 붙을 때만 생긴다.
+- **버림과 원인별 계수(`DbStats`).** 다음 세 경우 기록을 버리고 센다. 대기열을 무한정 키우면 DB가 오래 멈춘 동안 메모리가 끝없이 늘기 때문이다.
+
+| 원인 | 언제 |
+|---|---|
+| `queue_full` | 저장이 밀려 대기열(5000건, 시연 부하로 3분 남짓)이 찼을 때 들어온 기록 |
+| `db_down` | 접속하지 못한 동안 들어온 기록, 다시 접속에 실패한 순간 대기열에 있던 기록, 종료 때 저장하지 못한 기록(대기열과 저장 중이던 행). 종료 때 저장 중이던 행은 떼어 낸 스레드가 나중에 저장할 수 있어, 이 수도 잃은 수의 상한이다 |
+| `write_error` | 저장에 실패한 그 행. 확정 직후 연결이 끊긴 경우처럼 서버에는 저장됐을 수도 있어, 이 수는 잃은 수의 상한이다 |
+
+- `Down`인 동안 대기열은 비어 있다. 접속하면 그 뒤에 들어온 기록부터 저장한다. 기동 직후 첫 접속이 끝나기 전에 들어온 기록도 `db_down`이다.
+- 쉬는 동안 연결이 끊기면 다음 저장에서야 안다. 그때 잃는 것은 그 행 하나(`write_error`)이고, 곧바로 다시 접속한다.
+- 넣은 기록 수 = 저장 + `queue_full` + `db_down` + `write_error` + 대기열 + 저장 중인 행. 종료 뒤에는 대기열과 저장 중인 행이 0이다(`close()`가 센다).
+- io 스레드는 1Hz로 계수를 읽어, 직전 보고보다 늘었으면 `db log dropped N records (queue_full +a, db_down +b, write_error +c; total queue_full A, db_down B, write_error C)`를 stderr에 쓴다. 종료 때는 버림이 없어도 최종 누계 `db log closed: written W, total queue_full A, db_down B, write_error C`를 쓴다. 버린 수는 GW 진단 기록에만 남긴다. IF-03 `stats`에 넣으려면 ICD를 바꿔야 해 이번 범위에서 뺐다.
+- **진단 문구는 io 스레드가 만든다.** DB 스레드는 일어난 일을 종류 있는 알림 `DbNotice{kind, reason, retry_in}`(접속, 접속 실패, 저장 실패, 저장 멈춤)으로 상한 16개 목록에 모은다. io 스레드가 1Hz로 꺼내 문구(`db connected`, `db unavailable: <사유> (retry in Nms)`, `db write failed, dropped 1 record: <사유> (reconnect in Nms)`, `db log stopped: <사유>`)를 만들어 `LineSink`에 쓴다. 종료 때 떼어 낸 DB 스레드가 이미 사라진 `LineSink`를 부르는 일이 없게 하기 위해서다. 접속 실패와 저장 실패는 사유가 직전 알림과 다를 때만 알린다(저장 실패는 저장에 성공하면 다시 알린다). 접속 알림(`db connected`)은 거르지 않아 다시 접속할 때마다 나온다. 저장이 매번 실패하는 연결에서는 `db connected`만 되풀이돼 정상처럼 보이고, 성공과 실패가 번갈아 나오면 알림 상한 16을 채울 수 있다(이슈 #58). 재시도마다 되풀이하지 않으면서, 끊긴 뒤 사유가 인증 실패처럼 바뀌면 알 수 있게 한다. 알림이 상한을 넘으면 버리지만 버린 기록 수는 계수에 남는다. libpq 오류 문구의 개행은 공백으로 바꿔 진단 한 줄을 지킨다.
+- **DB 스레드의 예외.** 메모리 부족 같은 예외(`std::exception` 밖의 것도)를 잡아 GW를 내리지 않고 DB 저장만 멈춘다(`db log stopped: ...`, 다시 접속하지 않음). 대기열, 저장 중이던 행과 그 뒤 기록은 `db_down`으로 센다.
+- **재접속(`dblog::ReconnectSchedule`).** 첫 시도는 바로 하고, 실패할 때마다 간격을 0.5s → 1s → 2s → 4s → 5s(상한)로 늘린다. 포기하지 않는다. 접속한 뒤 처음으로 저장에 성공하면 처음 간격으로 되돌린다(접속 성공만으로는 되돌리지 않아, 접속 직후마다 실패하는 서버에서도 간격이 늘어난다). 저장이 실패하면 연결을 닫고(`PQfinish`) 위 "간격" 규칙대로 다시 시도한다. 시계를 주입받아 단위 시험은 `FakeClock`으로 경계(499ms / 500ms)를 본다. 시도 한 번은 `connect_timeout=3`으로 접속 대기를 3초로 묶는다. 다만 호스트 이름 해석(getaddrinfo)은 이 상한에 들지 않는다. 이름 해석이 오래 걸려도 DB 스레드만 기다린다.
+- **소리 없이 끊긴 연결.** TCP 연결에 `keepalives_idle=5`, `keepalives_interval=2`, `keepalives_count=3`, `tcp_user_timeout=10000`을 기본값으로 준다. 기본값(2시간)이면 네트워크가 끊긴 채 응답을 기다리는 저장이 그만큼 이어지고, 그동안 새 기록은 `queue_full`로 버려진다. 서버 프로세스가 멈춘 경우(시험의 SIGSTOP)는 풀릴 때까지 기다리며, 대기열 상한 안이면 풀린 뒤 모두 저장한다.
+- **종료.** GW가 끝날 때 `DbSink::close()`가 남은 기록을 저장하도록 최대 500ms 기다리고, 끝나지 않으면 DB 스레드를 떼어 낸다(GW 종료가 DB 때문에 막히지 않게). 그때 대기열과 저장 중이던 행은 `db_down`으로 센다(떼어 낸 스레드가 그 행을 나중에 마치더라도 다시 세지 않는다). 두 번째 호출은 바로 돌아온다. 이어서 `report_db()`를 한 번 더 불러 마지막 1Hz 보고 이후의 알림과 버림을 남기고, 최종 누계 줄을 쓴다. 대기열과 연결은 DB 스레드와 `shared_ptr`로 공유해 떼어 낸 스레드가 끝날 때까지 살아 있다.
+
+**클라이언트 라이브러리: libpq.** 쓰는 기능은 접속, 준비된 문장, 한 문장 실행뿐이다. libpq는 Ubuntu에서 `libpq-dev` 하나로 끝나고(`libpq5`는 PostgreSQL 클라이언트와 함께 이미 깔려 있다), CMake 기본 모듈 `FindPostgreSQL`로 찾는다. libpqxx는 패키지가 하나 더 늘고, 오류를 예외로 던져 이 계층의 규칙("실패하면 사유를 돌려주고 재접속")과 맞지 않는다. libpq의 C 자원은 `std::unique_ptr` + 삭제자(`PQfinish`, `PQclear`)로 감싸 어느 경로로 나가도 해제되게 했다(RAII). libpq 호출은 `PgSession` 한 파일에만 있고, `DbSink`는 `IDbSession`만 알아 단위 시험은 가짜 세션(멈춤, 저장 실패, 다시 접속할 때까지 계속 실패, 접속 거절, 예외)을 쓴다.
+
+**문자 인코딩.** GW가 보내는 텍스트는 UTF-8이므로 접속 기본값에 `client_encoding=UTF8`을 둔다. 서버 인코딩이 UTF8이 아니어도(예: EUC_KR) 서버가 바꿔 저장한다. 서버 인코딩에 없는 문자(EUC_KR DB의 이모지 등)가 든 행은 저장에 실패하므로 그 행만 버리고 다시 접속한다.
+
+**HMI 입력과 DB.** 명령 이벤트의 req_id는 HMI가 보낸 텍스트다. 매개변수로만 넘기므로(`PQexecPrepared`) SQL 주입은 없다. PostgreSQL의 `text`·`jsonb`는 NUL 문자를 받지 않아, NUL이 든 req_id면 그 행이 늘 저장에 실패해 사건 기록을 잃는다. 저장 전에 NUL을 U+FFFD로 바꾼다. 잘못된 UTF-8도 U+FFFD로 바꿔 직렬화한다. req_id를 읽지 못해 거부한 HMI 메시지는 명령 사건이 생기지 않으므로 DB에 남지 않고 GW 진단 기록(`ws message rejected`)에만 남는다.
+
+**스키마.** GW가 접속할 때마다 `CREATE TABLE IF NOT EXISTS`·`CREATE INDEX IF NOT EXISTS`로 만든다. 몇 번 실행해도 결과가 같으므로 빈 DB를 주면 된다. 접속 사용자에게 테이블 생성 권한이 필요하다(테이블이 이미 있어도 DDL을 실행한다). PostgreSQL 15부터는 `public` 스키마에 일반 사용자의 생성 권한이 없으므로, DB 소유자로 접속하거나 `GRANT CREATE ON SCHEMA public`을 준다. INSERT 권한만 가진 역할로는 접속 단계에서 실패한다. 정수 필드는 ICD의 LSB 값을 그대로 저장한다(공학 단위 변환은 IF-03 경계에서만, ADR-002). 사후 재생(REQ-LOG-002, 고도화)은 수신 시각으로 구간을 찾으므로 각 테이블에 수신 시각 인덱스를 둔다.
+
+| 테이블 | 열 (모두 NOT NULL, `event.source` 제외) | 인덱스 |
+|---|---|---|
+| `telemetry` | `id` bigserial PK, `rx_ts_ms` bigint(GW 수신 시각, IF-03 `rx_ts`와 같은 값), `seq` bigint, `tx_ts_ms` numeric(20)(헤더 timestamp), `lat`·`lon` integer(1e-7 deg), `heading` integer(0.01 deg), `speed` integer(0.01 m/s), `battery` smallint, `mode` smallint, `status_flags` integer | `rx_ts_ms` |
+| `detection` | `id` bigserial PK, `rx_ts_ms` bigint, `seq` bigint, `tx_ts_ms` numeric(20), `frame_id` bigint, `capture_ts_ms` numeric(20), `img_w`·`img_h` integer, `objects` jsonb(`[{class_id, confidence, x, y, w, h}]`, 정수 LSB) | `rx_ts_ms` |
+| `event` | `id` bigserial PK, `ts_ms` bigint(사건 시각), `kind` text, `source` text(링크 전이만 `VEHICLE`·`DETECTOR`, 그 밖은 NULL), `detail` jsonb | `ts_ms` |
+
+- u64 시각(헤더 timestamp, capture_ts)은 bigint(i64) 범위를 넘을 수 있어 `numeric(20)`에 둔다. 검증을 통과한 어떤 값이든 그 행이 저장에 실패하지 않게 하기 위해서다.
+- `event.kind`와 `detail`:
+
+| kind | detail |
+|---|---|
+| `link` | `{from, to, last_rx_ts}` (상태 이름, 첫 패킷 전이면 `last_rx_ts` null) |
+| `cmd_sent` | `{req_id, cmd_id, cmd_type, attempt}`, WAYPOINT면 `lat`·`lon`(1e-7 deg 정수) 추가 |
+| `cmd_result` | `{req_id, cmd_id, result, attempts, repeated}` (형식 오류 거절은 `cmd_id` null) |
+| `cmd_ignored` | `{req_id, reason}` |
+| `cmd_unknown_ack` | `{cmd_id, result}` (받은 값 그대로) |
+
+**접속 설정.** `--db`의 값은 libpq 접속 문자열(`host=... dbname=...` 또는 `postgresql://...`)이다. GW는 그 앞에 기본값(`connect_timeout=3`, `application_name=ugvc_gateway`, 위 keepalive 값)을 두고, 사용자가 같은 키를 적으면 사용자 값이 우선한다. 비밀번호는 명령줄에 넣지 말고(`ps`로 보인다) `~/.pgpass`나 `PGPASSWORD`로 준다. GW는 접속 문자열을 진단에 찍지 않는다.
+
+검증:
+- 행 변환(정수 값 그대로, u64 최댓값, DETECTION 물체 전부, 이벤트 종류별 detail, NUL req_id), 문장의 매개변수 수 (`DbRow.*`)
+- 재접속 간격 0.5s 경계, 5s 상한과 100회 뒤에도 계속, 성공 뒤 처음 간격 (`ReconnectSchedule.*`, 가짜 시계)
+- `DbSink`(가짜 세션, 시간 상한이 아니라 완료로 판정): 저장이 멈춘 채로 1만 건 publish가 끝나고 상한 초과는 queue_full, DB 없으면 db_down과 같은 사유 알림 1회·재접속 계속·사유가 바뀌면 다시 알림, 저장 실패 → 그 행만 write_error·대기열 유지·바로 재접속, 연결 직후 실패 → 재접속 간격·대기열 유지·상한 초과는 queue_full, 다시 접속도 실패 → 대기열 db_down, 간격은 첫 저장 성공에서 처음 값으로, 멈춘 DB에서도 close()가 끝나고 저장 중 행과 대기열은 db_down으로 한 번만, 예외는 저장 멈춤
+- 통합(실제 PostgreSQL): 저장 내용이 IF-03과 같음, 링크·명령 이벤트, DB 내렸다 올리기와 서버 프로세스 정지 중 중계·HEARTBEAT 지속, 없는 DB에서 기동·계수, EUC_KR DB에서 실패한 행만 잃음, 테이블 삭제 뒤 다시 접속해 회복 (STP 3.24·3.25)
 
 ## 6. 명령 재전송 (REQ-CMD-002·003·005·006, ICD 6.3·6.4·7.2·7.3)
 
@@ -195,7 +282,7 @@ sequenceDiagram
   - 이벤트는 `std::variant<CommandSent, CommandResult, UnknownAck, CommandIgnored>`로 모아 `take_events()`로 꺼낸다. `app`은 `std::visit` + `core::overloaded`로 처리하므로 새 이벤트 종류를 처리하지 않으면 컴파일 오류가 난다(REQ-CMD-005).
 - **ACK와 규칙 ⑨.** `Gateway::on_datagram`은 ACK 스트림에 seq 순서 검사와 유실 계산을 하지 않는다(ICD 9장). SIM 수신부만 다시 시작하면 ACK seq가 0부터 시작하는데, 차량 링크는 텔레메트리 때문에 CONNECTED라 기준값 재설정이 일어나지 않아 ACK가 모두 order로 버려졌기 때문이다.
 - **`app`.** HMI 명령 → `parse_command` → `submit` → COMMAND 송신(COMMAND 전용 seq, HEARTBEAT와 같은 소켓). 유효 ACK(검증 ①~⑧을 통과한 `Message`의 `Ack`, ACK는 ⑨ 제외) → `on_ack`. 판정 주기 → `poll` 재전송. 매번 이벤트를 꺼내 진단 기록(stderr)에 쓰고, `CommandResult`는 `cmd_result`로 stdout과 모든 HMI에 보낸다. 진단에 쓰는 req_id와 명령 원문은 HMI가 보낸 텍스트이므로 JSON 문자열로 감싸 진단 줄 위조를 막는다.
-- **이벤트를 PostgreSQL에 남기는 것**은 로그 작업(REQ-LOG)에서 `drain_command_events`에 붙인다.
+- **이벤트 DB 저장(REQ-LOG-001).** `drain_command_events`가 꺼낸 사건마다 `dblog::command_row`로 행을 만들어 `DbSink`에 넣는다(5.1). 진단 기록과 같은 사건이 같은 순서로 저장된다. `CommandSent`는 WAYPOINT 좌표(`lat`, `lon`)도 담아 저장된 기록만으로 어느 지점으로 보낸 명령인지 알 수 있다.
 
 ### 6.2 SIM (REQ-CMD-003·006, REQ-SAFE-001·002)
 
@@ -245,6 +332,7 @@ stateDiagram-v2
 | SIM `Simulator`가 시각 `now`를 인자로 받음, 소켓은 `app`만 | Failsafe 3.0s 경계, 복구 뒤 재개 금지, 두절 중 명령 처리를 실제 대기 없이 시험 (TC-SAFE-001·002) |
 | `testdata/vectors/*.json`을 C++·Python이 함께 읽음, 생성기는 표준 라이브러리만 사용 | 두 언어 구현이 같은 바이트를 만드는지, 구현과 독립된 기준으로 확인 (ADR-002) |
 | GW가 IF-03 JSON을 stdout에도 출력 | WebSocket 없이 통합 시험(pytest가 subprocess로 GW 실행) |
+| DB 행 변환은 순수 함수, `DbSink`는 `IDbSession`만 앎, `ReconnectSchedule`에 시계 주입 | DB 없이 저장 내용·버림 계수·재접속을 단위 시험. 실제 PostgreSQL은 통합 시험에서 임시 클러스터로 (5.1) |
 | `tools/check_stp_tests.py` | STP의 테스트 이름이 실제 테스트(C++·Python·HMI vitest)와 어긋나면 실패 (RTM grep의 전제) |
 | HMI: 소켓·타이머 주입, 순수 `apply`/`freshness`/`view`/`trackSync` | 재접속 간격, 신선도 경계, 시계 차, 표시 정책을 브라우저 없이 시험 (8.8) |
 
@@ -463,4 +551,3 @@ stateDiagram-v2
 | 항목 | 정할 때 |
 |---|---|
 | HMI 영상·탐지 매칭 버퍼 (ADR-001, frame_id, 0.5s) | 12월 3주 DET 연결 |
-| PostgreSQL 저장 방식(동기·비동기, 배치) | 12월 1–2주. 단일 스레드를 막지 않는 방식이어야 한다 (5장) |
