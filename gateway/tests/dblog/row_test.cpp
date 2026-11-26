@@ -101,7 +101,7 @@ TEST(DbRow, REQ_LOG_001_every_command_event_kind_is_stored) {
   EXPECT_EQ(detail_of(unknown), json::parse(R"({"cmd_id":12,"result":9})"));
 }
 
-// PostgreSQL text·jsonb는 NUL을 받지 않는다: HMI가 NUL이 든 req_id를 보내도 그 행이 배치를 깨지 않게 바꿔 둔다
+// PostgreSQL text·jsonb는 NUL을 받지 않는다: HMI가 NUL이 든 req_id를 보내도 그 행이 늘 저장에 실패하지 않게 바꿔 둔다
 TEST(DbRow, REQ_LOG_001_nul_in_req_id_is_replaced_before_storing) {
   const Row r = dblog::command_row(gateway::CommandIgnored{std::string("x\0y", 3), "req_id pending"}, 1);
   const std::string detail = at(r, 3);

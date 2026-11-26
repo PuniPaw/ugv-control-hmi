@@ -100,14 +100,6 @@ def _totals(line: str) -> dict[str, int]:
     return dict(zip(CAUSES, (int(v) for v in m.groups())))
 
 
-def wait_drop_report(gw, timeout_s: float = 3.0) -> dict[str, int]:
-    """다음 "db log dropped" 1Hz 보고를 기다려 원인별 누계를 돌려준다. 보고가 없으면 실패."""
-    before = sum(1 for line in list(gw.stderr_lines) if line.startswith("db log dropped"))
-    lines = wait_stderr(gw, r"^db log dropped", timeout_s, count=before + 1)
-    assert len(lines) > before, f"버림 보고 없음: {gw.stderr_lines}"
-    return _totals(lines[-1])
-
-
 def closed_totals(gw) -> dict[str, int]:
     """GW를 멈추고 종료 때 남기는 최종 누계(`db log closed`)를 돌려준다. 버림이 0이어도 이 줄은 나온다.
     1Hz 보고 사이에 생긴 버림까지 들어 있어 "버림 0" 판정에 쓴다."""

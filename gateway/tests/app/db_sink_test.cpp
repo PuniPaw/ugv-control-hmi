@@ -273,3 +273,60 @@ TEST(DbSink, REQ_LOG_003_exception_in_db_thread_stops_saving_without_crashing) {
   sink.publish(row(1));
   EXPECT_EQ(sink.stats().db_down, 2U);
 }
+
+// 저장이 실패한 뒤 다시 접속에도 실패하면 Down이 되고, 그때 대기열은 db_down으로 센다 (SRS v0.12 REQ-LOG-003)
+TEST(DbSink, REQ_LOG_003_failed_reconnect_after_a_write_failure_drops_the_queue_as_db_down) {
+  auto db = std::make_shared<FakeDb>();
+  DbSink sink(std::make_unique<FakeSession>(db), DbSink::Config{100, 1h, 1h});
+  ASSERT_TRUE(connected(sink));
+  sink.publish(row("first"));  // 한 번 저장한 연결: 저장이 실패하면 바로 다시 접속한다
+  ASSERT_TRUE(eventually([&] { return sink.stats().written == 1; }));
+  db->with([&] { return db->hang = true; });
+  sink.publish(row("a"));
+  ASSERT_TRUE(writer_parked(*db, 2));
+  sink.publish(row("b"));
+  sink.publish(row("c"));
+  db->with([&] {
+    db->broken = true;
+    db->up = false;  // 다시 접속도 실패한다
+    return db->hang = false;
+  });
+
+  const auto notices = notices_until(sink, Kind::ConnectFailed);
+  ASSERT_EQ(kinds(notices), (std::vector<Kind>{Kind::WriteFailed, Kind::ConnectFailed}));
+  const DbStats s = sink.stats();
+  EXPECT_EQ(s.write_error, 1U);
+  EXPECT_EQ(s.db_down, 2U);  // 다시 접속에 실패한 순간의 대기열
+  sink.publish(row("d"));    // Down이면 들어온 기록은 바로 db_down
+  EXPECT_EQ(sink.stats().db_down, 3U);
+}
+
+// 재접속 간격은 접속 성공이 아니라 그 연결의 첫 저장 성공에서 처음 값으로 돌아온다.
+// 접속 실패로 간격이 4ms까지 늘어도, 저장한 뒤의 "연결 직후 실패"는 다시 첫 간격(1ms)부터
+TEST(DbSink, REQ_LOG_003_first_successful_write_resets_the_reconnect_interval) {
+  auto db = std::make_shared<FakeDb>();
+  db->up = false;
+  DbSink sink(std::make_unique<FakeSession>(db), DbSink::Config{100, 1ms, 4ms});
+  ASSERT_TRUE(eventually([&] { return db->with([&] { return db->opens >= 4; }); }));  // 간격 1·2·4·4ms
+  db->with([&] { return db->up = true; });
+  ASSERT_EQ(kinds(notices_until(sink, Kind::Connected)), (std::vector<Kind>{Kind::ConnectFailed, Kind::Connected}));
+  sink.publish(row("ok"));
+  ASSERT_TRUE(eventually([&] { return sink.stats().written == 1; }));
+
+  db->with([&] { return db->hang = true; });
+  sink.publish(row("x"));  // 저장한 연결에서 실패 → 바로 다시 접속(테이블을 다시 만듦)
+  ASSERT_TRUE(writer_parked(*db, 2));
+  sink.publish(row("bad"));  // 다시 접속한 연결의 첫 저장이 실패 → 간격
+  db->with([&] {
+    db->broken = true;
+    return db->hang = false;
+  });
+
+  const auto notices = notices_until(sink, Kind::WriteFailed, 2);
+  std::vector<DbNotice> failed;
+  std::copy_if(notices.begin(), notices.end(), std::back_inserter(failed),
+               [](const DbNotice& n) { return n.kind == Kind::WriteFailed; });
+  ASSERT_EQ(failed.size(), 2U);
+  EXPECT_EQ(failed[0].retry_in, 0ms);  // 저장한 연결: 바로
+  EXPECT_EQ(failed[1].retry_in, 1ms);  // 첫 저장 성공에서 되돌린 첫 간격 (접속 실패의 4ms가 아님)
+}

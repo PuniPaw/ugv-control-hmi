@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.30 (초안) |
+| 버전 | v0.31 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.11, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.7.2, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.12, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.7.3, ADR-002 |
 
 ## 개정 이력
 
@@ -42,6 +42,7 @@
 | v0.28 | 2026-11-25 | DB 로그 저장: TC-LOG-001-01~08(행 변환, 실제 PostgreSQL 저장 내용·이벤트), TC-LOG-003-01~12(재접속 간격, `DbSink` 비차단·원인별 버림·재접속·종료, 저장 끄기, 없는 DB, DB 재시작, DB 서버 정지). 2.3 이벤트 확인을 실제 구조(반환값 `take_transitions`·`take_events`, DB 저장은 TC-LOG)로 고침(`IEventSink`·`FakeEventSink`는 만들지 않았다). 2.8 PostgreSQL 통합 시험 환경과 skip 규칙. 3.16 머리말(PostgreSQL 저장은 TC-LOG-001-08). 1.2 범위에 LOG |
 | v0.29 | 2026-11-25 | PR #50 1차 리뷰 반영: 2.2에 실제 스레드 시험 예외(`LineSink`·`DbSink`, 시간 상한이 아니라 완료·계수로 판정). TC-LOG-003-04 삭제(순서대로 저장은 REQ-LOG-001의 증거라 TC-LOG-001-09로 옮김). TC-LOG-003-05·08은 시간 상한 대신 완료로 판정, TC-LOG-003-07을 "저장 중 연결 유실: 그 행 write_error, 나머지 db_down, 바로 재접속"으로 바꿈(쓰기 실패를 연결 오류와 데이터 오류로 나눔, SDD v0.7.1). TC-LOG-003-13(접속 실패 사유가 바뀌면 다시 알림), 14(거절 행만 rejected, 연결·다른 행 유지), 15(EUC_KR DB 통합) 추가. TC-LOG-001-07은 폐기 프레임 뒤 유효 프레임이 저장된 다음 행을 다시 셈, TC-LOG-003-11은 재접속 뒤 보낸 기록으로 판정. 버림 원인에 rejected |
 | v0.30 | 2026-11-26 | PR #50 2차 리뷰 반영(SRS v0.11 REQ-LOG-003, SDD v0.7.2: 저장 실패는 종류를 가리지 않고 그 행만 write_error, 대기열 유지, 다시 접속). TC-LOG-003-07을 "저장 실패 한 번: 그 행만, 대기열 유지, 바로 재접속(테이블 재생성)"으로, TC-LOG-003-14를 "연결 직후 실패는 재접속 간격, 대기열 유지"로 바꿈(v0.29의 행 거절 rejected 판정 삭제). TC-LOG-003-08에 저장 중 행 계수와 close 두 번, TC-LOG-003-15 기대값을 write_error로. TC-LOG-003-16(테이블 삭제 뒤 회복, 통합), 17(DB 스레드 예외) 추가. 버림 0 판정은 종료 때 최종 누계 줄로. 2.2 예외를 `DbSink`로 좁힘(`LineSink` 시험은 시간 상한을 씀) |
+| v0.31 | 2026-11-26 | PR #50 3차 리뷰 반영(SRS v0.12 REQ-LOG-003의 재접속 규칙): TC-LOG-003-18(저장 실패 뒤 다시 접속에도 실패하면 대기열 db_down), TC-LOG-003-19(재접속 간격은 그 연결의 첫 저장 성공에서 처음 값으로) 추가 |
 
 ---
 
@@ -509,6 +510,8 @@ U는 vitest(순수 함수 `state/alerts.ts`, `HmiController`), D는 시연 점�
 | TC-LOG-003-15 | I | 실제 PostgreSQL, 서버 인코딩 EUC_KR. 10Hz TELEMETRY 30개 중에 STOP 명령 두 개(req_id "한글명령", 이모지가 든 req_id) | TELEMETRY 30개 모두 저장, 한글 req_id 명령의 이벤트는 저장되고 이모지 명령의 이벤트만 write_error(≥ 2), `db write failed, dropped 1 record` 알림, 최종 누계 db_down·queue_full 0 | `test_REQ_LOG_003_failed_record_does_not_cost_other_records` |
 | TC-LOG-003-16 | I | 실제 PostgreSQL. 10Hz TELEMETRY 50개 중 1.5s에 다른 세션이 telemetry 테이블을 잠그고 지움(지우기 전 행 수를 남김) | 중계 50개, 다시 만든 테이블에 그 뒤 seq가 49까지 빠짐없이 저장, 최종 누계 db_down·queue_full 0, write_error ≤ 2, 지우기 전 행 + write_error + 다시 만든 뒤 행 = 50 | `test_REQ_LOG_003_dropped_table_is_recreated_by_reconnecting` |
 | TC-LOG-003-17 | U | DB 스레드에서 예외(가짜 세션이 `std::bad_alloc`) | GW는 계속, 알림 Stopped, 저장 중이던 행과 그 뒤 기록은 db_down | `DbSink.REQ_LOG_003_exception_in_db_thread_stops_saving_without_crashing` |
+| TC-LOG-003-18 | U | 한 번 저장한 연결에서 저장 실패, 대기열 2건, 다시 접속도 실패 | 알림 WriteFailed → ConnectFailed, write_error 1, 그때의 대기열 2건 db_down, 그 뒤 기록도 db_down | `DbSink.REQ_LOG_003_failed_reconnect_after_a_write_failure_drops_the_queue_as_db_down` |
+| TC-LOG-003-19 | U | 접속 실패로 간격이 1→2→4ms(상한)로 늘어난 뒤 접속·저장 성공, 이어서 저장 실패(바로 재접속)와 재접속한 연결의 첫 저장 실패 | 첫 실패의 다음 시도 0ms(저장한 연결), 둘째는 1ms(첫 저장 성공에서 되돌린 첫 간격, 접속 실패의 4ms가 아님) | `DbSink.REQ_LOG_003_first_successful_write_resets_the_reconnect_interval` |
 
 - 막히지 않음의 판정: TC-LOG-003-12에서 `DbSink::publish`를 저장 완료까지 기다리게 바꾸면(동기 저장 변이) 중계가 2개에서 멈춰 실패함을 확인했다.
 - TC-LOG-003-15는 접속 기본값에서 `client_encoding=UTF8`을 빼면 한글 req_id 이벤트가 저장되지 않아 실패한다. TC-LOG-003-16은 저장 실패 뒤 다시 접속하지 않게 바꾸면(2차 리뷰에서 찾은 결함) 실패한다(변이로 확인).
