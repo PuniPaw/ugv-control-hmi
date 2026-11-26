@@ -4,7 +4,7 @@
 |---|---|
 | 문서번호 | UGVC-SRS-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.12 |
+| 버전 | v0.13 |
 | 작성일 | 2026-11-10 |
 | 관련 문서 | UGVC-ICD-001 (인터페이스 정의서), UGVC-STP-001 (시험 계획서), ADR-001, ADR-002, GLOSSARY.md |
 
@@ -24,6 +24,7 @@
 | v0.10 | 2026-11-25 | PR #49 리뷰: 표 3-2 "개수"를 명확히 함. 명령 결과 경고는 "명령 하나에 하나"가 아니라 조건마다, 명령마다 하나이며, 결과 미확인 뒤 TIMEOUT·REJECTED가 오면 한 명령에 경고가 둘일 수 있음 |
 | v0.11 | 2026-11-26 | REQ-LOG-003: DB가 기록 하나의 저장에 실패하면 그 기록만 버리고 원인별로 센 뒤 DB에 다시 접속하도록 버림 사유에 추가(PR #50 리뷰, 사용자 결정). 기존 사유(연결 불가, 대기 상한 초과)는 그대로 |
 | v0.12 | 2026-11-26 | REQ-LOG-003: 저장 실패 뒤 다시 접속하는 동안의 규칙을 명시(PR #50 3차 리뷰). 다시 접속하는 동안 대기 중인 기록은 유지하고(상한을 넘으면 버림), 다시 접속에 실패하면 그때 대기 중인 기록을 연결 불가로 버리며, 그 연결로 한 번도 저장하지 못하고 다시 실패하면 0.5s에서 5s까지 늘어나는 간격을 두고 다시 접속 |
+| v0.13 | 2026-11-26 | 경로점 표시 구현 전 빈칸 확정. REQ-HMI-001의 경로점은 SIM이 보고한 남은 경로(ICD v0.16 6.6 ROUTE)임을 명시. REQ-CMD-007 신설(SIM의 남은 경로 보고, 상한 32개와 초과 WAYPOINT의 REJECTED_STATE). REQ-SAFE-003 신설(SIM은 STANDBY로 기동하고 운용자 명령 없이 주행을 시작하지 않음, 이슈 #39 사용자 결정) |
 
 ---
 
@@ -105,6 +106,7 @@ flowchart LR
 | REQ-CMD-004 | HMI는 차량 링크가 LOST일 때 명령 버튼을 비활성화하고 그 사유를 표시하여야 한다. | D | MVP |
 | REQ-CMD-005 | GW는 모든 명령의 송신, 재전송, 결과를 이벤트로 기록하여야 한다. | T | MVP |
 | REQ-CMD-006 | SIM은 필드 값이 ICD 6.3 범위를 벗어난 COMMAND(cmd_type이 표 6-4에 없음, WAYPOINT 좌표가 범위 밖)를 실행하지 않고 ACK result REJECTED_INVALID로 응답하여야 한다. cmd_id가 0인 COMMAND는 응답 없이 폐기한다. | T | MVP |
+| REQ-CMD-007 | SIM은 남은 경로점 목록을 ROUTE(ICD 6.6)로 경로가 바뀔 때 즉시, 그리고 1Hz로 보고하여야 한다. SIM은 경로점을 32개까지 가지며, 남은 경로가 32개일 때 받은 WAYPOINT는 실행하지 않고 ACK result REJECTED_STATE로 응답하여야 한다. GW는 유효한 ROUTE를 IF-03 `route`(ICD 7.1)로 모든 HMI에 중계하여야 한다. | T | MVP |
 
 ### 3.3 탐지 (AI)
 
@@ -118,7 +120,7 @@ flowchart LR
 
 | ID | 요구사항 | 검증 | 단계 |
 |---|---|---|---|
-| REQ-HMI-001 | HMI는 지도 위에 차량의 현재 위치, 진행 방향, 이동 궤적, 경로점을 표시하여야 한다. | D | MVP |
+| REQ-HMI-001 | HMI는 지도 위에 차량의 현재 위치, 진행 방향, 이동 궤적, 경로점을 표시하여야 한다. 경로점은 SIM이 보고한 남은 경로(ICD 6.6 ROUTE)를 방문 순서대로 표시하며, 지금 향하는 경로점을 구분한다. | D | MVP |
 | REQ-HMI-002 | HMI는 속도, 배터리, 운용 모드, 링크 상태, 유실률, 지연 시간을 상태 패널에 표시하여야 한다. | D | MVP |
 | REQ-HMI-003 | HMI는 경고를 WARNING, CAUTION, ADVISORY 3단계로 색과 위치를 구분해 표시하고, WARNING과 CAUTION은 운용자가 확인하기 전까지 유지하여야 한다. 경고의 발생·확인·해제는 표 3-2를 따른다. | D | MVP |
 | REQ-HMI-004 | HMI는 표 3-1의 조건에 따라 경고를 발생시켜야 하며, 차량 링크 LOST 경고는 마지막 유효 패킷 수신 후 2.0초 안에 표시되어야 한다. | T | MVP |
@@ -177,6 +179,7 @@ GW 연결이 끊겼거나 데이터가 지연된 동안 차량 조건(링크, �
 |---|---|---|---|
 | REQ-SAFE-001 | SIM은 HEARTBEAT를 3.0초 이상 수신하지 못하면 스스로 정지(STOPPED)하고, status_flags의 FAILSAFE_ACTIVE를 설정하여야 한다. 시작 후 한 번도 받지 못한 경우는 시작 시각부터 경과 시간을 잰다. | T | MVP |
 | REQ-SAFE-002 | SIM은 Failsafe 정지 후 링크가 복구되어도 운용자 명령 없이 주행을 재개하지 않아야 한다. Failsafe는 HEARTBEAT를 받는 중(마지막 HEARTBEAT 후 3.0초 미만)에 수락한 COMMAND로만 해제하며(FAILSAFE_ACTIVE를 지움), STOP이면 정지를 유지하고 RTB·WAYPOINT이면 그 명령대로 주행한다. HEARTBEAT를 3.0초 이상 받지 못한 동안 받은 RTB·WAYPOINT는 실행하지 않고 ACK result REJECTED_STATE로 응답하여야 한다(STOP은 수락하고 Failsafe를 유지한다). | T | MVP |
+| REQ-SAFE-003 | SIM은 기동 직후 STANDBY 상태로 정지해 있어야 하며, 운용자 명령(WAYPOINT·RTB) 없이 주행을 시작하지 않아야 한다. | T | MVP |
 
 ### 3.8 품질 (QUAL)
 
