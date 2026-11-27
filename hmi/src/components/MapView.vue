@@ -48,7 +48,9 @@ onMounted(() => {
   const tiles = import.meta.env.VITE_TILE_URL;
   if (tiles) L.tileLayer(tiles, { maxZoom: 19 }).addTo(map);
   trackLayer = L.layerGroup().addTo(map);
-  map.createPane(ROUTE_PANE).style.zIndex = "450"; // overlayPane(400) 위, markerPane(600) 아래
+  const pane = map.createPane(ROUTE_PANE);
+  pane.style.zIndex = "450"; // overlayPane(400) 위, markerPane(600) 아래
+  pane.classList.toggle("stale", props.route?.stale ?? false); // 이미 흐린 경로로 마운트될 때 (아래 watch는 바뀔 때만)
   routeLayer = L.layerGroup().addTo(map);
   drawRoute(props.route);
   map.on("dragstart", () => (follow.value = false)); // 운용자가 지도를 옮기면 따라가기를 끈다
@@ -91,7 +93,10 @@ function drawRoute(route: RouteView | null) {
   routeLayer.clearLayers();
   const points = route?.waypoints ?? [];
   if (points.length > 1) L.polyline(points, ROUTE_LINE_STYLE).addTo(routeLayer);
-  points.forEach((p, i) => L.marker(p, { icon: waypointIcon(i + 1), pane: ROUTE_PANE, interactive: false }).addTo(routeLayer!));
+  // Leaflet은 마커를 화면 y좌표로 겹쳐 쌓으므로, 지금 향하는 점이 가려지지 않게 맨 위로 올린다
+  points.forEach((p, i) =>
+    L.marker(p, { icon: waypointIcon(i + 1), pane: ROUTE_PANE, interactive: false, zIndexOffset: i === 0 ? 1000 : 0 }).addTo(routeLayer!),
+  );
 }
 watch(() => props.route?.waypoints, () => drawRoute(props.route));
 watch(

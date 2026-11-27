@@ -210,7 +210,8 @@ export function commandView(s: HmiState, conn: ConnView, monoNow: number): Comma
 
 /**
  * 지도의 경로점 (REQ-HMI-001). waypoints는 방문 순서대로이며 [0]이 지금 향하는 점이다(비면 남은 경로 없음).
- * stale이면 마지막으로 받은 경로가 현재 값이 아님을 흐리게 표시한다 (REQ-HMI-006, ICD 7.1 route: 차량 마커와 같은 범위)
+ * stale이면 마지막으로 받은 경로가 현재 값이 아님을 흐리게 표시한다 (REQ-HMI-006, ICD 7.1 route): 차량 마커와 같은 범위에
+ * 더해, 이 연결에서 아직 route를 받지 못했으면(재접속·기준선 재설정 직후의 이전 연결 경로) 흐린다
  */
 export interface RouteView {
   waypoints: LatLon[];
@@ -239,7 +240,7 @@ export function present(s: HmiState, conn: ConnView, clocks: Clocks): Presented 
     banner: banner(conn, fresh, clocks.mono),
     stale,
     fixValid: v !== null && gpsValid(v),
-    route: s.route && { waypoints: s.route, stale: stale.vehicle },
+    route: s.route && { waypoints: s.route, stale: stale.vehicle || s.session?.routeSeen !== true },
     links: SOURCES.map((source) => ({
       source,
       state: s.link[source]?.state ?? null,

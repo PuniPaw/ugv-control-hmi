@@ -42,6 +42,9 @@ export interface Session {
   // 이 연결에서 VEHICLE link_status를 받았는지. 받기 전의 link.VEHICLE은 이전 연결의 값이라
   // 명령 송신 판정에 쓰지 않는다 (REQ-CMD-004, GW는 접속 직후 link_status를 보낸다: ICD 7장)
   vehicleLinkSeen: boolean;
+  // 이 연결에서 route를 받았는지. 받기 전의 route는 이전 연결의 값이라 현재 값으로 보이지 않게 흐린다
+  // (REQ-HMI-006. GW는 접속 직후 route를 보내지 않고 SIM이 1Hz로 보낸다: ICD 7.1)
+  routeSeen: boolean;
 }
 
 export interface HmiState {
@@ -103,7 +106,10 @@ function appendPoint(track: LatLon[][], open: boolean, p: LatLon): LatLon[][] {
 
 /** IF-03 연결이 열렸을 때 (at: HMI 시계) */
 export function connectionOpened(s: HmiState, at: number): HmiState {
-  return { ...s, session: { openedAt: at, baseline: null, lastStats: null, lateSince: null, vehicleLinkSeen: false } };
+  return {
+    ...s,
+    session: { openedAt: at, baseline: null, lastStats: null, lateSince: null, vehicleLinkSeen: false, routeSeen: false },
+  };
 }
 
 /**
@@ -174,7 +180,11 @@ export function apply(s0: HmiState, m: If03Message, receivedAt: number): HmiStat
       return { ...s, stats: { ...s.stats, [m.data.source]: m.data } };
     case "route":
       // GW가 송신원 스트림 seq 순서를 검증해 넘기므로(ICD 9장 규칙 ⑨) 받은 순서대로 마지막 것이 현재 경로다
-      return { ...s, route: m.data.waypoints.map((w): LatLon => [w.lat, w.lon]) };
+      return {
+        ...s,
+        route: m.data.waypoints.map((w): LatLon => [w.lat, w.lon]),
+        session: s.session && { ...s.session, routeSeen: true },
+      };
     case "detection":
       return s; // 영상 오버레이(12월 3주)에서 쓴다
     case "cmd_result":

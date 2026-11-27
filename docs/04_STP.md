@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.32 (초안) |
+| 버전 | v0.33 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-SDD-001 v0.8, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-SDD-001 v0.8.1, ADR-002 |
 
 ## 개정 이력
 
@@ -44,6 +44,7 @@
 | v0.30 | 2026-11-26 | PR #50 2차 리뷰 반영(SRS v0.11 REQ-LOG-003, SDD v0.7.2: 저장 실패는 종류를 가리지 않고 그 행만 write_error, 대기열 유지, 다시 접속). TC-LOG-003-07을 "저장 실패 한 번: 그 행만, 대기열 유지, 바로 재접속(테이블 재생성)"으로, TC-LOG-003-14를 "연결 직후 실패는 재접속 간격, 대기열 유지"로 바꿈(v0.29의 행 거절 rejected 판정 삭제). TC-LOG-003-08에 저장 중 행 계수와 close 두 번, TC-LOG-003-15 기대값을 write_error로. TC-LOG-003-16(테이블 삭제 뒤 회복, 통합), 17(DB 스레드 예외) 추가. 버림 0 판정은 종료 때 최종 누계 줄로. 2.2 예외를 `DbSink`로 좁힘(`LineSink` 시험은 시간 상한을 씀) |
 | v0.31 | 2026-11-26 | PR #50 3차 리뷰 반영(SRS v0.12 REQ-LOG-003의 재접속 규칙): TC-LOG-003-18(저장 실패 뒤 다시 접속에도 실패하면 대기열 db_down), TC-LOG-003-19(재접속 간격은 그 연결의 첫 저장 성공에서 처음 값으로) 추가 |
 | v0.32 | 2026-11-27 | HMI 경로점 표시(SRS v0.13 REQ-HMI-001, ICD v0.16 7.1 `route`): TC-HMI-001-11(남은 경로를 방문 순서대로 보관, 연결 끊김·차량 LOST 뒤 이전 값), TC-HMI-001-12(GW 텍스트에서 지도 판정까지, 끊김 뒤 흐림), TC-HMI-006-21(경로 흐림 범위), TC-HMI-007-07(route 수신 검증: 32개 상한, 좌표 범위, 폐기 계수) 추가. 3.10 후속 범위를 경로점 시연 점검(GW·SIM ROUTE 구현 병합 뒤)으로 좁힘 |
+| v0.33 | 2026-11-27 | PR #62 1차 리뷰 반영: TC-HMI-007-07의 HmiController 시험을 TC-HMI-007-08로 분리(TC와 시험 1:1), TC-HMI-006-22(재접속·기준선 재설정 뒤 이 연결에서 route를 받기 전에는 이전 경로를 흐림) 추가, TC-HMI-001-11 입력 문구를 시험 순서와 맞춤 |
 
 ---
 
@@ -276,7 +277,7 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 | TC-HMI-001-08 | U | HmiController에서 IF-03 연결이 실제로 끊겼다가(close 1006) 재접속 | 궤적이 두 구간 (기준선 재설정과 달리 진짜 끊김은 궤적을 끊음) | `hmiController.test.ts > REQ_HMI_001 a real IF-03 disconnect starts a new track segment` |
 | TC-HMI-001-09 | U | HmiController에서 기준선 재설정 전후로 텔레메트리 seq가 약 30 건너뜀: (a) 재설정 접속이 3s 동안 열리지 않음 (b) 소켓은 바로 열렸지만 그 뒤 첫 텔레메트리 seq가 약 30 건너뜀(처리 적체를 버린 재설정과 같은 입력. 브라우저 쪽 적체를 버리는 동작 자체는 이 시험의 대상이 아님) | 두 경우 모두 궤적 두 구간 (빠지는 표본이 없으면 TC-HMI-006-16처럼 한 구간) | `hmiController.test.ts > REQ_HMI_001 a resync connection that opens after 3s breaks the track`, `hmiController.test.ts > REQ_HMI_001 a resync connection that opens at once but skips about 30 seq breaks the track` |
 | TC-HMI-001-10 | U | 유효 위치 사이 텔레메트리 seq 간격: 9개 빠짐, 10개 빠짐, 무효 1 + 빠짐 9, u32 순환(2개·25개 빠짐), seq 역행(500 → 3), 같은 seq 재수신 | 9개는 한 구간, 10개 이상은 두 구간 (GPS 무효와 빠진 표본을 같이 셈), 순환을 올바로 셈, 역행은 두 구간, 같은 seq는 점을 다시 붙이지 않음 | `hmiState.test.ts > REQ_HMI_001 a gap of 10 or more telemetry seq numbers breaks the track, 9 does not` |
-| TC-HMI-001-11 | U | route 3개 → 맨 앞을 뺀 route 2개 → telemetry → 차량 LOST와 IF-03 연결 끊김 → 빈 route | 받기 전 경로 없음(null), 받은 순서 그대로 보관([0]이 지금 향하는 점), 새 route로 통째 바뀜, 이전 상태는 그대로, 다른 메시지는 경로 배열 참조를 바꾸지 않음(지도는 참조가 바뀔 때만 다시 그림), 끊김·LOST 뒤에도 마지막 경로 유지, 빈 route는 빈 경로 | `hmiState.test.ts > REQ_HMI_001 the route replaces the remaining waypoints in visit order and survives as the previous value` |
+| TC-HMI-001-11 | U | route 3개 → 맨 앞을 뺀 route 2개, 그 상태(2개)에 각각 telemetry, 차량 LOST 뒤 IF-03 연결 끊김, 빈 route를 따로 적용 | 받기 전 경로 없음(null), 받은 순서 그대로 보관([0]이 지금 향하는 점), 새 route로 통째 바뀜, 이전 상태는 그대로, 다른 메시지는 경로 배열 참조를 바꾸지 않음(지도는 참조가 바뀔 때만 다시 그림), 끊김·LOST 뒤에도 마지막 경로 유지, 빈 route는 빈 경로 | `hmiState.test.ts > REQ_HMI_001 the route replaces the remaining waypoints in visit order and survives as the previous value` |
 | TC-HMI-001-12 | U | HmiController에 가짜 소켓 텍스트로 route(ICD 7.1 형식) 2개 → 1개, 이어서 IF-03 연결 끊김(close 1006) | 접속 직후 route 전에는 경로 없음, 화면 판정 `present().route`가 방문 순서대로 두 점(흐림 아님), 도착 뒤 한 점, 끊김 뒤 같은 한 점을 흐림으로 | `hmiController.test.ts > REQ_HMI_001 the route from the GW reaches the map view in visit order and stays as the dimmed previous value after a disconnect` |
 
 ### 3.11 REQ-HMI-002 상태 패널
@@ -317,6 +318,7 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 | TC-HMI-006-19 | U | 재접속 대기(1s) 중 벽시계 +3s, −60s, 단조 시계 0.6s·1.0s 진행 | 벽시계 변화와 무관하게 "1초 후 재접속", 단조 시계로만 줄어 "0초 후 재접속" | `hmiController.test.ts > REQ_HMI_006 retry countdown follows the monotonic clock, not wall clock changes` |
 | TC-HMI-006-20 | U | 제때 온 stats 뒤 `ts`가 큰 telemetry 하나로 기준선이 낮아짐, 이어서 stats | telemetry 직후 화면은 STALE이지만 재설정 시계는 시작하지 않음, 다음(늦은) stats 수신 시각부터 5000ms에 재설정 요청(4999ms에는 아님) | `hmiState.test.ts > REQ_HMI_006 the resync clock starts at the first late stats, not at a message that lowered the baseline` |
 | TC-HMI-006-21 | U | route를 받은 상태에서 차량 링크 CONNECTED·DEGRADED·LOST·받은 적 없음, 마지막 stats 뒤 2001ms(STALE), GW 재접속 대기 | 차량 CONNECTED이고 FRESH·연결 중일 때만 흐림 아님, 나머지는 모두 흐림(차량 마커와 같은 범위, ICD 7.1 route). route를 받기 전에는 경로 없음 | `view.test.ts > REQ_HMI_006 the last route is dimmed when the vehicle link is not CONNECTED or GW data is not fresh` |
+| TC-HMI-006-22 | U | HmiController에서 route를 받은 뒤 IF-03 연결 끊김 → 재접속(stats·차량 CONNECTED가 먼저 옴) → 빈 route, 이어서 route를 받은 뒤 시계 계단 변화로 기준선 재설정 → 재접속 → route | 두 경우 모두 이 연결에서 route를 받기 전에는 FRESH·차량 CONNECTED여도 이전 경로를 흐림, 받으면 새 경로를 흐림 없이 | `hmiController.test.ts > REQ_HMI_006 after a reconnect or a resync the previous route stays dimmed until this connection receives a route` |
 
 ### 3.13 REQ-HMI-007 IF-03 수신 검증
 
@@ -328,7 +330,8 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 | TC-HMI-007-04 | U | 텍스트가 아닌 프레임 | 텍스트만 전달 | `gwConnection.test.ts > REQ_HMI_007 passes text frames through and ignores binary` |
 | TC-HMI-007-05 | U | 받은 텍스트: 깨진 JSON, 다른 필드는 다 갖추고 위도만 91인 telemetry, 정상 stats. HmiController에 형식 오류 메시지 2개 | 폐기 수 2, 정상 메시지는 반영되고 폐기 수는 그대로. 화면 판정(`present().discarded`, 상태 패널 `data-testid="discarded"`가 그리는 값)도 2이고 범위 밖 위도는 반영되지 않음 | `hmiState.test.ts > REQ_HMI_007 text that is not IF-03 is discarded and counted`, `hmiController.test.ts > REQ_HMI_007 discarded IF-03 messages are counted for display in the status panel` |
 | TC-HMI-007-06 | U | cmd_result: 정의 밖 필드, 형식 오류 거절(cmd_id null·attempts 0·REJECTED_INVALID), 결과 4종, cmd_id 2^32−1, req_id 63바이트. 틀린 것: req_id 빈 값·66바이트·숫자, 정의 밖 result, cmd_id 0·2^32·1.5·문자열, attempts 0·5, cmd_id null인데 TIMEOUT 또는 attempts 1, TIMEOUT인데 attempts 1·3, result 없음 | ICD 7.1 필드만 남겨 받아들이고 틀린 것은 모두 null | `if03.test.ts > REQ_HMI_007 cmd_result is accepted only in the ICD 7.1 shape` |
-| TC-HMI-007-07 | U | route: 정의 밖 필드(메시지·경로점), 빈 `[]`, 32개, 위경도 ±90·±180 경계, seq 2^32−1. 틀린 것: 33개, 위도 90.0000001(두 번째 점만), 경도 −180.0000001, 좌표 문자열·null·빠짐, 배열 모양 경로점, waypoints null·없음, seq 2^32·−1, rx_ts 없음. HmiController에 33개 route와 범위 밖 좌표 route | ICD 7.1 필드만 순서대로 남겨 받아들이고 틀린 것은 모두 null(하나라도 틀리면 메시지 전체), 폐기 수 2, 앞서 받은 경로 유지 | `if03.test.ts > REQ_HMI_007 route is accepted only with at most 32 waypoints inside the ICD ranges`, `hmiController.test.ts > REQ_HMI_007 a route that breaks the ICD is discarded and counted, and the previous route stays` |
+| TC-HMI-007-07 | U | route: 정의 밖 필드(메시지·경로점), 빈 `[]`, 32개, 위경도 ±90·±180 경계, seq 2^32−1. 틀린 것: 33개, 위도 90.0000001(두 번째 점만), 경도 −180.0000001, 좌표 문자열·null·빠짐, 배열 모양 경로점, waypoints null·없음, seq 2^32·−1, rx_ts 없음 | ICD 7.1 필드만 순서대로 남겨 받아들이고 틀린 것은 모두 null(하나라도 틀리면 메시지 전체) | `if03.test.ts > REQ_HMI_007 route is accepted only with at most 32 waypoints inside the ICD ranges` |
+| TC-HMI-007-08 | U | HmiController에 경로점 1개 route를 받은 뒤 33개 route와 범위 밖 좌표(위도 91)가 섞인 route | 폐기 수 2, 앞서 받은 경로 유지 | `hmiController.test.ts > REQ_HMI_007 a route that breaks the ICD is discarded and counted, and the previous route stays` |
 
 ### 3.14 REQ-CMD-002 명령 송신·재전송·결과 (GW)
 
