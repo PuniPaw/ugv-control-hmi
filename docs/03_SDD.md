@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.7.3 (초안) |
+| 버전 | v0.8 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.12, UGVC-ICD-001 v0.15, UGVC-STP-001 v0.31, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-STP-001 v0.32, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -42,6 +42,7 @@
 | v0.7.1 | 2026-11-25 | 5.1 PR #50 1차 리뷰 반영: 저장 실패를 연결 오류와 데이터 오류(`WriteError::Kind`)로 나눔. 행 하나가 거절돼도 연결을 버려 같은 배치의 유효 기록을 잃던 결함 때문에, v0.7의 트랜잭션 배치를 행마다 자동 확정(`synchronous_commit=off`)으로 바꾸고 데이터 오류는 그 행만 `rejected`(새 원인)로 셈. 접속 기본값 `client_encoding=UTF8`. 연결을 잃으면 그 행 `write_error`, 나머지 `db_down`, 재접속은 바로. 알림은 종류 있는 `DbNotice`(문구는 io 스레드), 사유가 바뀌면 다시 알림, 종료 때 남은 기록 계수와 마지막 보고, DB 스레드 예외 처리. 스키마 생성 권한, 접속 시간 상한의 한계, `write_error` 의미, req_id 없는 거부 메시지는 DB에 남지 않음을 적음 |
 | v0.7.2 | 2026-11-26 | 5.1 PR #50 2차 리뷰 반영(사용자 결정: 저장 실패의 종류를 가르는 판단을 없앰): v0.7.1의 연결·데이터 오류 분류(`WriteError::Kind`)와 `rejected` 원인을 지움. 분류가 1·2차 결함의 같은 전제였다(2차: 연결이 살아 있는 실패를 모두 행 거절로 봐 테이블 삭제 뒤 회복하지 못함). 어떤 실패든 그 행만 `write_error`로 세고 대기열을 둔 채 다시 접속(`open()`이 DDL·prepare를 다시 해 DB 상태 문제가 풀림). 연결 상태 Down·Reconnecting·Up, 저장 한 번 없이 또 실패하면 재접속 간격, 한 행씩 꺼내는 루프(`max_batch` 삭제), `close()`가 저장 중 행도 세고 두 번째 호출은 바로 돌아옴, 예외는 `Stopped`, 종료 때 최종 누계 줄. SRS v0.11 REQ-LOG-003 |
 | v0.7.3 | 2026-11-26 | 5.1 PR #50 3차 리뷰 반영(동작 변경 없음): 저장 불가 행이 이어질 때 뒤 기록이 늦어지고 그사이 종료하면 `db_down`이 되는 한계(사용자 결정으로 유지), 간격은 접속 실패로 늘어난 값을 첫 저장까지 이어 받음, 다시 접속에 실패하면 DB가 살아 있어도 대기열을 `db_down`으로 버림(예: conninfo의 `statement_timeout`과 잠금), `db_down`도 잃은 수의 상한(종료 때 저장 중 행), 재접속마다 `db connected` 알림. SRS v0.12 |
+| v0.8 | 2026-11-27 | 8장 HMI 경로점 표시(SRS v0.13 REQ-HMI-001, ICD v0.16 7.1 `route`): 8.1 모듈 표(`parseIf03`의 `route`, 상태 `route`, 화면 판정 `RouteView`, `MapView`), 8.2 route 검증(32개 이하, 좌표 범위, 하나라도 틀리면 메시지 전체 폐기), 8.3 마지막 경로 보관(연결 범위가 아님: 끊김·LOST 뒤 이전 값, 새 route에서만 배열 교체), 8.5 경로점 그리기(전용 pane, 번호 마커·점선, 첫 점 강조, 흐림은 차량 마커와 같은 범위, 화면 속성), 8.8 시험 |
 
 ---
 
@@ -362,15 +363,15 @@ flowchart LR
 | 모듈 | 책임 | 요구사항 |
 |---|---|---|
 | `src/net/gwConnection.ts` | IF-03 접속·끊김 판정·재접속, 기준선 재설정 재접속(`resync`, 실패로 세지 않음), 열린 연결로 텍스트 송신(`send`, 열린 연결이 없으면 false, 대기열·재송신 없음). 상태 변화는 판별 유니온 `ConnEvent`로 알린다. 소켓과 타이머는 주입받는다 (`Deps`). 브라우저 WebSocket은 `browserSocket`이 `SocketLike`로 감싼다 | REQ-HMI-006 |
-| `src/if03/messages.ts` | IF-03 JSON을 판별 유니온 `If03Message`로 검증(`cmd_result` 포함). 틀린 메시지와 모르는 type은 `null`. HMI가 보내는 command 텍스트(`commandText`)도 여기서만 만든다 | REQ-HMI-007, REQ-CMD-001, ICD 7.1·7.2 |
+| `src/if03/messages.ts` | IF-03 JSON을 판별 유니온 `If03Message`로 검증(`cmd_result`·`route` 포함). 틀린 메시지와 모르는 type은 `null`. HMI가 보내는 command 텍스트(`commandText`)도 여기서만 만든다 | REQ-HMI-007, REQ-CMD-001, ICD 7.1·7.2 |
 | `src/state/commands.ts` | 명령 확인 절차(`draft`)와 보낸 명령 기록(`CommandLog`): `draftCommand`·`cancelDraft`·`commandSent`·`resultReceived`·`connectionEnded`, 같은 종류 미해결 명령 `sameKindUnresolved`(확인 경고), 경로점 입력 해석 `waypointFromInput` | REQ-CMD-001 |
-| `src/state/hmiState.ts` | `receiveText()`: 파싱 후 반영 또는 폐기 계수. `apply()`: 메시지 하나를 반영한 새 상태. `connectionOpened()`·`connectionLost()`·`resyncStarted()`: 연결 범위 상태(`session`) 시작·폐기(끊김이면 궤적도 끊음, 재설정이면 궤적 유지). `freshness()`: GW 데이터 신선도. `needsResync()`: 기준선 재설정 필요 여부. 전송 층(`net/`)을 모른다 | REQ-HMI-001·002·006·007 |
-| `src/state/view.ts` | 표시 정책: 화면용 연결 상태 `ConnView`, 배너 등급·문구, 흐림 범위, 상태 패널 행(`LinkRow`·`VehicleRows`: 경과 시간·유실률·배터리·위치 문구), 명령 패널(`commandBlock` 송신 가능 판정과 사유, 확인 문구, 결과 행 `CommandRow`), 이를 한 시각으로 묶은 `present()` | REQ-HMI-002·006, REQ-CMD-001·004 |
+| `src/state/hmiState.ts` | `receiveText()`: 파싱 후 반영 또는 폐기 계수. `apply()`: 메시지 하나를 반영한 새 상태. `connectionOpened()`·`connectionLost()`·`resyncStarted()`: 연결 범위 상태(`session`) 시작·폐기(끊김이면 궤적도 끊음, 재설정이면 궤적 유지). `freshness()`: GW 데이터 신선도. `needsResync()`: 기준선 재설정 필요 여부. 마지막으로 받은 남은 경로 `route`(방문 순서, 8.3). 전송 층(`net/`)을 모른다 | REQ-HMI-001·002·006·007 |
+| `src/state/view.ts` | 표시 정책: 화면용 연결 상태 `ConnView`, 배너 등급·문구, 흐림 범위, 상태 패널 행(`LinkRow`·`VehicleRows`: 경과 시간·유실률·배터리·위치 문구), 명령 패널(`commandBlock` 송신 가능 판정과 사유, 확인 문구, 결과 행 `CommandRow`), 지도 경로점 `RouteView`(방문 순서와 흐림, 8.5), 이를 한 시각으로 묶은 `present()` | REQ-HMI-001·002·006, REQ-CMD-001·004 |
 | `src/state/alerts.ts` | 경고 체계: 지금 성립한 조건(`alertConditions`, 입력은 기존 판정), 수명 규칙(`reconcile`·`acknowledge`, 표 3-2), 화면 행(`alertRows`). 8.7 | REQ-HMI-003·004 |
 | `src/model/connection.ts` | `net/`과 `state/`가 함께 쓰는 접속 이유 타입(`ConnectAttempt`). 두 층은 서로를 import하지 않는다. 그리기 컴포넌트는 `state/view`의 `Presented`만 받는다 | |
 | `src/map/trackSync.ts` | 이전에 그린 것과 다음 궤적을 비교해 그리기 연산(`clear`·`newLine`·`extend`) 목록을 낸다 | REQ-HMI-001 |
 | `src/app/hmiController.ts` | 연결 + 상태 + 주기 판정 + 화면 판정을 한곳에 묶는다: 텍스트 → `receiveText`, 연결 이벤트 → `connectionOpened`·`connectionLost`·`resyncStarted`와 `ConnView`, `tick()` → `needsResync`면 `resync()`, `view()` → `present()`와 경고 목록 맞추기(`reconcile`), `acknowledgeAlert`(운용자 확인). 명령: `requestCommand`(확인 단계 시작)·`cancelCommand`·`confirmCommand`(보낼 수 있을 때만 새 req_id로 송신). 벽시계·단조 시계·소켓·타이머·req_id 발급은 주입 | REQ-HMI-003·006, REQ-CMD-001·004 |
-| `src/components/*.vue` | 그리기만 한다. 위 모듈의 결과를 그대로 쓰고 판정하지 않는다 | |
+| `src/components/*.vue` | 그리기만 한다. 위 모듈의 결과를 그대로 쓰고 판정하지 않는다. `MapView`는 차량·궤적(`trackSync` 연산 실행)과 경로점(`RouteView`)을 Leaflet으로 그린다 | REQ-HMI-001 |
 
 판정은 모두 순수 함수(시각은 인자)와 주입받는 `HmiController`에 있고, 실제 시계(`Date.now`, `performance.now`, 250ms 주기 `tick`)와 WebSocket은 `App.vue`에서 주입한다. 화면 판정(신선도·배너·흐림)은 `present()`가 한 시각으로 한 번에 하므로 App.vue와 시험이 같은 경로를 쓴다.
 
@@ -381,6 +382,7 @@ GW가 보낸 JSON은 `parseIf03`에서만 검사한다.
 - ICD 6장 바이너리 필드의 범위를 공학 단위로 옮겨 그대로 검사한다: 위도 ±90, 경도 ±180, 방향 0~359.99, 속도 0~30, 배터리 0~100 정수, seq·frame_id u32, 이미지 1~4096, 객체 32개 이하, 상자는 이미지 안(x ≤ img_w−1, 1 ≤ w ≤ img_w−x, y·h도 같음), class는 표 6-3, conf·유실률 0~1, 계수는 0 이상 정수, `errors`의 키 7개. LSB 해상도(예: 0.01°)는 검사하지 않는다(GW가 정수 LSB를 나눠 만든 값이므로).
 - 결과 객체는 검사한 필드만으로 새로 조립한다(타입 단언 없음). 정의 밖 필드는 버린다.
 - 하나라도 맞지 않으면 메시지 전체를 폐기하고 `discarded`로 센다(상태 패널에 표시). GW는 검증 규칙 ⑧로 범위 밖 값을 이미 거르므로, 여기서 걸리는 것은 GW·HMI 버전 불일치 같은 결함이다. 일부 필드만 살려 쓰지 않는다.
+- `route`(v0.8)는 경로점이 32개 이하이고 모든 위도 ±90·경도 ±180(telemetry와 같은 범위), seq u32, rx_ts 0 이상 정수일 때만 받는다(ICD 7.1·6.6). 경로점은 `{lat, lon}`만 남겨 순서 그대로 새로 조립한다. 한 점이라도 틀리면 경로 전체를 버린다(일부 점만 그리면 방문 순서와 현재 목표가 틀어진다).
 - `cmd_result`는 유니온의 변형으로 다룬다(v0.4). cmd_id가 null이면 attempts 0·REJECTED_INVALID, 아니면 cmd_id 1~2^32−1·attempts 1~4인 두 모양만 받는다(ICD 7.1·7.3). req_id는 1~64바이트(UTF-8). `apply()`의 `switch`가 모든 변형을 다루므로, 처리를 빠뜨리면 컴파일 오류(TS2366, 반환값 누락)가 난다.
 
 ### 8.3 상태 갱신
@@ -392,6 +394,7 @@ GW가 보낸 JSON은 `parseIf03`에서만 검사한다.
 - **궤적 상한:** 전체 3000점(10Hz 약 5분). 넘으면 가장 오래된 점부터 300점을 한 번에 지운다. 지도의 다시 그리기를 30초에 한 번으로 묶기 위해서다(8.5). 전체 궤적은 사후 재생(PostgreSQL 로그)에서 본다.
 - 링크 상태는 송신원마다 마지막으로 받은 `link_status`이고, 받은 적이 없으면 `null`이다(상태 패널은 "—"). 접속 직후 GW가 현재 link_status를 보내므로 곧 실제 값이 된다(ICD 7장). v0.6 전에는 GW 초기값과 같은 LOST를 넣어 두었으나, 경고 체계가 받지 않은 값으로 차량 LOST 경고를 띄우게 되어 바꿨다(8.7). 흐림과 명령 차단은 `null`을 CONNECTED가 아닌 것으로 다룬다.
 - **연결 범위 상태(`session`):** 열린 연결 하나에서만 뜻이 있는 값(연 시각, 기준선, 마지막 stats, 늦음 시작 시각)은 `session: {...} | null` 하나로 묶는다. `HmiController`가 연결 이벤트에 따라 OPEN이면 만들고(`connectionOpened`), 재시도 대기·처음·재시도 접속이면 버리며 궤적을 끊고(`connectionLost`), 기준선 재설정 접속이면 버리되 궤적은 끊지 않는다(`resyncStarted`: 재설정은 연결 끊김이 아니다). 두 경우 모두 명령은 `connectionEnded`로 정리한다(결과 대기 → 결과 미확인, 확인 단계 닫힘, 8.6). 재설정 자체로는 궤적을 끊지 않고, 재설정 동안 빠진 표본은 8.3의 seq 간격 규칙이 판정한다. 화면용 연결 상태 `ConnView`는 판별 유니온이며, 재접속 대기는 단조 시계 기준 예정 시각(`retryAtMono`)을 가진다(벽시계가 바뀌어도 카운트다운이 틀리지 않음). 링크·차량·궤적 값은 "이전 값"으로 남는다.
+- **경로점(`route`, v0.8):** SIM이 보고한 남은 경로를 `LatLon[]`(방문 순서, `[0]`이 지금 향하는 점, ICD 6.6)로 하나만 보관하고, 받은 적이 없으면 `null`이다. 새 `route`가 오면 통째로 바꾼다(도착·WAYPOINT 추가·STOP·RTB·Failsafe 모두 SIM이 바뀐 목록을 보낸다). seq는 비교하지 않는다: GW가 송신원 스트림 seq 순서를 검증해 넘기고(ICD 9장 규칙 ⑨) WebSocket은 순서를 지킨다. 위치·궤적과 같이 연결 범위 값이 아니므로 `session`에 넣지 않고, IF-03 연결 끊김·기준선 재설정·차량 LOST 뒤에도 "이전 값"으로 남긴다(현재 값이 아님은 8.5 흐림이 나타냄). GW는 접속 직후 상태로 route를 보내지 않지만 SIM이 1Hz로 보내므로 재접속 뒤 1초 안에 새 값으로 바뀐다(ICD 7.1). 다른 메시지는 배열 참조를 바꾸지 않으므로 지도는 새 `route`에서만 다시 그린다.
 - **폐기:** `receiveText()`가 파싱에 실패한 메시지를 `discarded`로 센다(상태 패널에 표시).
 
 ### 8.4 연결 감시·재접속·신선도 (REQ-HMI-006, ICD 7장)
@@ -447,6 +450,7 @@ stateDiagram-v2
   | 200점 SVG polyline `addLatLng` | 0.14ms |
 
   그래서 궤적을 200점 이하 조각(끝점 공유)으로 나눠 그리고, 새 점은 마지막 조각에만 덧붙인다. `trackSync.planDraw(drawn, track)`가 그리기 연산(`clear`, `newLine(points)`, `extend(point)`)과 다음 `drawn`(비교 기준 궤적, 마지막 조각의 점 수)을 낸다. 조각 경계와 이음점도 여기서 정하므로 `MapView`는 연산을 실행만 한다. 다시 그리기는 앞쪽 삭제(301점마다, 10Hz면 약 30초에 한 번)에만 일어난다.
+- **경로점(REQ-HMI-001, v0.8):** `present().route`(`RouteView`: `waypoints`, `stale`, route를 받기 전이면 `null`)를 그린다. 경로점마다 방문 순서 번호 마커를 두고 점선으로 순서대로 잇는다. 첫 점(지금 향하는 점)은 더 크고 채운 마커(`current`)로 구분한다. RTB의 목적지는 경로점이 아니므로(ICD 6.6) RTB 중에는 경로점이 없다. 경로점은 전용 pane(`route`, z 450: 궤적 위, 차량 아래)에 그리고, 흐림은 pane 클래스 하나로 바꾼다. `stale`은 `staleness().vehicle`과 같다: GW 연결이 끊겼거나 신선도가 FRESH가 아니거나 차량 링크가 CONNECTED가 아니면 마지막 경로를 현재 값이 아닌 것으로 흐리게 한다(REQ-HMI-006, ICD 7.1). 다시 그리기는 `waypoints` 참조가 바뀔 때(새 route, 1Hz, 최대 32점)만 한다. 화면 속성: 지도 요소에 `data-route-count`(경로점 수, 받기 전 빈 값)·`data-route-stale`, 경로점마다 `data-testid="waypoint"`·`data-order`(1부터)·`data-current`.
 - 시연 점검이 렌더러와 무관하게 확인할 수 있도록, 개발 서버에서만 `window.__ugvcTrackPoints()`(Leaflet 궤적 레이어의 polyline들에 실제로 들어 있는 점 수, 조각 이음점 포함)를 두고 지도 요소에 `data-heading`을 둔다. 점 수는 그릴 때마다 세지 않고 점검 스크립트가 부를 때만 센다. `extend`할 선이 없으면 계획과 실행이 어긋난 결함이므로 예외로 드러낸다.
 
 ### 8.6 명령 패널 (REQ-CMD-001·004, ICD 7.2, 이슈 #27)
@@ -540,7 +544,7 @@ stateDiagram-v2
 |---|---|
 | `parseIf03` | `hmi/tests/fixtures/gw_if03_sample.jsonl`(실제 GW 출력: 위치 유효·무효 telemetry, detection, stats, link_status)을 그대로 넣어 본다. 이 표본은 `capture_gw_if03.py`가 GW를 실행해 만든다. 표본은 생성 시점의 형식이므로, GW의 IF-03 형식을 바꾸면 스크립트를 다시 돌린다. 현재 GW와의 일치는 시연 점검(실제 GW 출력이 파서를 거쳐야 화면이 ok가 됨)이 매번 확인한다 |
 | `HmiController` | 가짜 소켓·타이머·벽시계·단조 시계(ms 단위)로 늦음 → 재설정(첫 늦은 stats부터 5~5.25초, 계단부터 ≤6.25초, 계단 위상 4가지) → 새 기준선 FRESH 전체 순환, 느린 재설정 접속은 궤적 분리, 단조 시계 카운트다운, 진짜 끊김 뒤 궤적 분리, 상태 패널 행. 경계값은 코드 상수가 아니라 ICD 값으로 확인 |
-| `receiveText`, `apply`, `freshness`, `needsResync`, `view`, `trackSync` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계·시계 차·계단 변화를 대기 없이 시험. `planDraw` 연산을 실행한 결과가 상태 궤적과 같은지 무작위 8000메시지로 확인 |
+| `receiveText`, `apply`, `freshness`, `needsResync`, `view`, `trackSync` | 순수 함수. 시각을 인자로 넘겨 2000ms 경계·시계 차·계단 변화를 대기 없이 시험. 경로점은 `route` 검증(32개, 좌표 범위), 방문 순서 보관·이전 값 유지, `present().route`의 흐림 범위를 보고, `HmiController`에 가짜 소켓 텍스트(ICD 7.1 형식)로 넣어 화면 판정까지 확인(실제 GW·SIM ROUTE 시연 점검은 두 구현 병합 뒤). `planDraw` 연산을 실행한 결과가 상태 궤적과 같은지 무작위 8000메시지로 확인 |
 | `GwConnection` | 가짜 소켓·가짜 타이머로 재접속 간격, 접속·무수신 제한, 예외, stop·재시작 시험 |
 | 명령 패널 | `state/commands.ts` 순수 함수(확인 없는 기록 불가, 결과 대응, 끊김·재설정 → 결과 미확인과 확인 단계 닫힘, 결과 전 명령은 상한으로 밀리지 않음, 같은 종류 경고, 경로점 입력)와 `HmiController`(가짜 소켓이 받은 텍스트로 송신 여부·req_id 확인: 확인 절차, LOST·GW 끊김·재접속 뒤 link_status 전 차단, 끊김 뒤 10초 동안 재송신 없음, 30초 늦은 결과도 결과 대기 유지, 재설정의 버린 적체에서 잃은 결과는 결과 미확인, 다시 시도는 경고가 붙은 새 명령, 경고한 명령의 결과가 오면 확인 단계 닫힘). 시연 점검은 GW 진단의 `cmd sent` 줄로 실제 송신을 확인한다 |
 | 경고 체계 | `state/alerts.ts` 순수 함수(조건별 등급, 받지 않은 값은 경고 아님, 수명 규칙 전이 전부, 명령 결과 경고, 순서)와 `HmiController`(LOST 경고가 그 메시지로 낸 화면에 있음, 데이터 지연은 tick 하나 안, GW 끊김 중 마지막 값, 확인 동작). 기대값은 SRS 표에서 옮긴다 |
