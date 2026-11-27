@@ -5,7 +5,7 @@ from ugvc_proto.telemetry import Flags, Mode, Telemetry
 
 from ugvc_proto.command import CmdType, Command
 
-from ugvc_sim.vehicle import HOME, START, VehicleState, apply_command, step, to_telemetry
+from ugvc_sim.vehicle import HOME, START, VehicleState, apply_command, step, to_route, to_telemetry
 
 
 def _state(**kw) -> VehicleState:
@@ -14,15 +14,15 @@ def _state(**kw) -> VehicleState:
 
 
 def test_north_moves_lat_only():
-    s = step(_state(heading_deg=0.0), dt=1.0)
+    s = step(_state(mode=Mode.MISSION, route=((37.0, 127.0),)), dt=1.0)
     assert math.isclose((s.lat_deg - 36.0) * 111_320.0, 10.0, rel_tol=1e-9)
-    assert s.lon_deg == 127.0
+    assert s.lon_deg == 127.0 and s.heading_deg == 0.0
 
 
 def test_east_moves_lon_only():
-    s = step(_state(heading_deg=90.0), dt=1.0)
+    s = step(_state(mode=Mode.MISSION, route=((36.0, 128.0),)), dt=1.0)
     assert abs(s.lat_deg - 36.0) < 1e-12
-    assert s.lon_deg > 127.0
+    assert s.lon_deg > 127.0 and s.heading_deg == 90.0
 
 
 def test_battery_low_flag_at_20_percent():
@@ -32,7 +32,7 @@ def test_battery_low_flag_at_20_percent():
 
 
 def test_to_telemetry_uses_icd_lsb():
-    t = to_telemetry(VehicleState(36.1234567, 127.7654321, 87.25, 4.5, 76.0))
+    t = to_telemetry(VehicleState(36.1234567, 127.7654321, 87.25, 4.5, 76.0, mode=Mode.MISSION))
     assert t == Telemetry(lat=361234567, lon=1277654321, heading=8725, speed=450, battery=76,
                           mode=Mode.MISSION, status_flags=Flags.GPS_VALID | Flags.CAMERA_OK)
 
@@ -90,8 +90,15 @@ def test_standby_does_not_move_but_battery_drains():
     assert (after.lat_deg, after.lon_deg) == (s.lat_deg, s.lon_deg) and after.battery_pct < s.battery_pct
 
 
-def test_start_state_keeps_fixed_heading_leg():
-    s = _drive(START, 2.0)
-    tel = to_telemetry(s)
-    assert tel.heading == 8725 and tel.mode == Mode.MISSION and tel.speed == 450
-    assert (s.lat_deg, s.lon_deg) != (START.lat_deg, START.lon_deg)
+def test_mission_without_route_stops_in_standby():
+    s = step(_state(mode=Mode.MISSION), dt=1.0)
+    assert s.mode == Mode.STANDBY and s.speed_mps == 0 and (s.lat_deg, s.lon_deg) == (36.0, 127.0)
+
+
+def test_to_route_returns_waypoint_lsb_in_visit_order():
+    points = [(361240000, 1277660000), (900000000, -1800000000), (-900000000, 1800000000), (1, -1)]
+    s = START
+    for i, (lat, lon) in enumerate(points, start=1):
+        s = apply_command(s, Command(i, CmdType.WAYPOINT, lat, lon))
+    assert to_route(s).waypoints == tuple(points)
+    assert to_route(START).waypoints == ()

@@ -1,4 +1,4 @@
-"""차량 운동 모사: 고정 방위 시연 주행, 경로점·귀환 주행, 정지, 명령 적용, Failsafe 진입.
+"""차량 운동 모사: 경로점·귀환 주행, 정지, 명령 적용, Failsafe 진입, 남은 경로 보고.
 
 상태는 공학 단위(float)로 계산하고, 송신할 때만 ICD 정수 LSB로 바꾼다 (ADR-002).
 모든 함수는 시계·소켓 없이 상태만 받아 새 상태를 돌려주는 순수 함수다.
@@ -9,6 +9,7 @@ import math
 from dataclasses import dataclass, replace
 
 from ugvc_proto.command import Command, CmdType
+from ugvc_proto.route import Route
 from ugvc_proto.telemetry import Flags, Mode, Telemetry
 
 EARTH_M_PER_DEG_LAT = 111_320.0  # 위도 1도 ≈ 111.32 km (근거리 평면 근사)
@@ -25,14 +26,14 @@ class VehicleState:
     heading_deg: float
     speed_mps: float
     battery_pct: float
-    mode: Mode = Mode.MISSION
+    mode: Mode = Mode.STANDBY
     flags: Flags = Flags.GPS_VALID | Flags.CAMERA_OK
     route: tuple[LatLon, ...] = ()  # 남은 경로점 (도). 앞에서부터 방문
 
 
-# 시작 상태: 고정 방위 직선 시연 주행 (경로 비어 있음). HMI 시연 점검이 방위 87.25를 본다.
+# 시작 상태: STANDBY로 정지, 경로 없음 (REQ-SAFE-003). 운용자 명령(WAYPOINT·RTB)이 와야 움직인다.
 START = VehicleState(lat_deg=36.1234567, lon_deg=127.7654321, heading_deg=87.25,
-                     speed_mps=CRUISE_MPS, battery_pct=76.0)
+                     speed_mps=0.0, battery_pct=76.0)
 HOME: LatLon = (START.lat_deg, START.lon_deg)  # RTB 목적지 = 시작 위치
 
 
@@ -71,8 +72,8 @@ def step(s: VehicleState, dt: float, home: LatLon = HOME,
         s, arrived = _drive_to(s, home, dist)
         return replace(s, mode=Mode.STANDBY, speed_mps=0.0) if arrived else s
     if s.mode == Mode.MISSION:
-        if not s.route:
-            return _move(s, s.heading_deg, dist)  # 시연 구간: 고정 방위 직진
+        if not s.route:  # WAYPOINT로만 MISSION에 들어오므로 생기지 않지만, 경로 없이 달리지 않는다 (REQ-SAFE-003)
+            return replace(s, mode=Mode.STANDBY, speed_mps=0.0)
         s, arrived = _drive_to(s, s.route[0], dist)
         if not arrived:
             return s
@@ -119,3 +120,8 @@ def to_telemetry(s: VehicleState) -> Telemetry:
         mode=int(s.mode),
         status_flags=int(s.flags),
     )
+
+
+def to_route(s: VehicleState) -> Route:
+    """남은 경로 → ICD 6.6 정수 LSB. 경로점은 WAYPOINT 좌표(1e-7 deg 정수)에서 왔으므로 반올림하면 받은 값 그대로다."""
+    return Route(tuple((round(lat * 1e7), round(lon * 1e7)) for lat, lon in s.route))

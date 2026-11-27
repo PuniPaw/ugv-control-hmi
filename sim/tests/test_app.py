@@ -1,4 +1,4 @@
-"""SIM 프로세스 수준 시험: 실제 UDP 소켓·실제 시계로 app.run()을 돌리고 가짜 GW 소켓으로 TELEMETRY·ACK를 본다."""
+"""SIM 프로세스 수준 시험: 실제 UDP 소켓·실제 시계로 app.run()을 돌리고 가짜 GW 소켓으로 TELEMETRY·ACK·ROUTE를 본다."""
 import json
 import socket
 import threading
@@ -7,12 +7,14 @@ import time
 import pytest
 
 from ugvc_proto.command import Ack, AckResult, CmdType, Command
-from ugvc_proto.frame import MsgType, check_frame, encode_frame
+from ugvc_proto.frame import MsgType, encode_frame
+from ugvc_proto.route import Route
 from ugvc_proto.telemetry import Flags, Mode, Telemetry
 
+from conftest import parse_downlink
 from ugvc_sim import app
 
-PAYLOAD_LEN = {MsgType.TELEMETRY: 16, MsgType.ACK: 5}
+NEAR_LAT, NEAR_LON = 361240000, 1277660000  # 시작 위치 근처 경로점 (≈ 60 m)
 
 
 class Rig:
@@ -28,6 +30,7 @@ class Rig:
         self.stop = threading.Event()
         self.telemetry: list[tuple[float, Telemetry]] = []
         self.acks: list[Ack] = []
+        self.routes: list[tuple[float, int, Route]] = []  # (경과 초, seq, 경로)
         self.t0 = time.monotonic()
         self._hb_seq = 0
         self.sim = threading.Thread(target=app.run, args=(self.sim_sock, self.gw.getsockname()),
@@ -42,12 +45,14 @@ class Rig:
                 data = self.gw.recvfrom(2048)[0]
             except socket.timeout:
                 continue
-            header, payload = check_frame(data, PAYLOAD_LEN)
+            header, message = parse_downlink(data)
             now = time.monotonic() - self.t0
             if header.msg_type == MsgType.TELEMETRY:
-                self.telemetry.append((now, Telemetry.from_payload(payload)))
+                self.telemetry.append((now, message))
+            elif header.msg_type == MsgType.ROUTE:
+                self.routes.append((now, header.seq, message))
             else:
-                self.acks.append(Ack.from_payload(payload))
+                self.acks.append(message)
 
     def now(self) -> float:
         return time.monotonic() - self.t0
@@ -90,11 +95,11 @@ def _failsafe(t: Telemetry) -> bool:
 
 
 def test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe(rig):
-    """HEARTBEAT가 한 번도 없으면 시작 3.0초 뒤 첫 TELEMETRY부터 STOPPED + FAILSAFE_ACTIVE (그 전은 MISSION, 플래그 없음)."""
+    """HEARTBEAT가 한 번도 없으면 시작 3.0초 뒤 첫 TELEMETRY부터 STOPPED + FAILSAFE_ACTIVE (그 전은 STANDBY, 플래그 없음)."""
     assert rig.wait_until(lambda: rig.now() > 3.6 and rig.telemetry, 5.0)
     first = next(t for t, tel in rig.telemetry if _failsafe(tel))
     assert 3.0 <= first <= 3.35, first
-    assert all(tel.mode == Mode.MISSION and not tel.status_flags & Flags.FAILSAFE_ACTIVE
+    assert all(tel.mode == Mode.STANDBY and not tel.status_flags & Flags.FAILSAFE_ACTIVE
                for t, tel in rig.telemetry if t < first)
     assert all(_failsafe(tel) for t, tel in rig.telemetry if t >= first)
     frozen = {(tel.lat, tel.lon) for t, tel in rig.telemetry if t >= first}
@@ -102,7 +107,9 @@ def test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe(rig):
 
 
 def test_REQ_SAFE_002_process_resumes_only_on_command(rig):
-    """Failsafe 뒤 HEARTBEAT가 돌아와도 정지·플래그 유지. COMMAND RTB를 받아야 ACCEPTED로 주행을 재개한다."""
+    """Failsafe 뒤 HEARTBEAT가 돌아와도 정지·플래그 유지. COMMAND WAYPOINT를 받아야 ACCEPTED로 주행을 재개한다.
+
+    시작 위치에서 정지해 있으므로 RTB는 바로 도착해 STANDBY가 된다. 주행 재개는 WAYPOINT로 본다."""
     assert rig.wait_until(lambda: rig.telemetry and _failsafe(rig.last()), 5.0)
     stopped_at = rig.last()
     end = rig.now() + 1.5
@@ -111,10 +118,11 @@ def test_REQ_SAFE_002_process_resumes_only_on_command(rig):
         time.sleep(0.25)
     recovery = [tel for t, tel in rig.telemetry if t >= end - 1.5]
     assert recovery and all(_failsafe(tel) and (tel.lat, tel.lon) == (stopped_at.lat, stopped_at.lon) for tel in recovery)
-    rig.command(Command(1, CmdType.RTB))
+    rig.heartbeat()
+    rig.command(Command(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
     assert rig.wait_until(lambda: rig.acks, 1.0)
     assert rig.acks[0] == Ack(1, AckResult.ACCEPTED)
-    assert rig.wait_until(lambda: rig.last().mode == Mode.RTB, 1.0)
+    assert rig.wait_until(lambda: rig.last().mode == Mode.MISSION and rig.last().speed > 0, 1.0)
     assert not rig.last().status_flags & Flags.FAILSAFE_ACTIVE
 
 
@@ -155,21 +163,20 @@ class _FakeSocket:
             raise OSError(101, "Network is unreachable")
         return len(data)
 
-    def telemetry(self) -> list[tuple[float, int, Telemetry]]:
+    def sent(self, msg_type: MsgType) -> list[tuple[float, int, Telemetry | Ack | Route]]:
+        """보내려던 프레임 중 msg_type인 것의 (시각, seq, 메시지)."""
         out = []
         for at, data in self.frames:
-            header, payload = check_frame(data, PAYLOAD_LEN)
-            if header.msg_type == MsgType.TELEMETRY:
-                out.append((at, header.seq, Telemetry.from_payload(payload)))
+            header, message = parse_downlink(data)
+            if header.msg_type == msg_type:
+                out.append((at, header.seq, message))
         return out
 
+    def telemetry(self) -> list[tuple[float, int, Telemetry]]:
+        return self.sent(MsgType.TELEMETRY)
+
     def acks(self) -> list[Ack]:
-        out = []
-        for _, data in self.frames:
-            header, payload = check_frame(data, PAYLOAD_LEN)
-            if header.msg_type == MsgType.ACK:
-                out.append(Ack.from_payload(payload))
-        return out
+        return [a for _, _, a in self.sent(MsgType.ACK)]
 
 
 def test_REQ_SAFE_001_send_failure_does_not_kill_sim_and_failsafe_still_engages(capsys):
@@ -182,7 +189,9 @@ def test_REQ_SAFE_001_send_failure_does_not_kill_sim_and_failsafe_still_engages(
     tel = {seq: (at, t) for at, seq, t in sock.telemetry()}
     assert sorted(tel) == list(range(40))
     assert all(not t.status_flags & Flags.FAILSAFE_ACTIVE for seq, (_, t) in tel.items() if seq <= 29)
-    assert abs(tel[30][0] - 3.0) < 1e-9 and _failsafe(tel[30][1])
+    # 1Hz ROUTE 예정 시각(정확히 3.0)이 TELEMETRY 예정 시각(0.1 누적 합, 3.0보다 조금 큼)보다 먼저 와서
+    # 가짜 소켓의 최소 대기 1 ms만큼 늦을 수 있다
+    assert 0 <= tel[30][0] - 3.0 <= 0.001 + 1e-9 and _failsafe(tel[30][1])
     assert all(_failsafe(t) for seq, (_, t) in tel.items() if seq >= 30)
     assert sock.acks() == [Ack(1, AckResult.ACCEPTED)]  # ACK도 보내려 했고 실패했지만 계속 돌았다
     lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
@@ -201,3 +210,39 @@ def test_REQ_SAFE_001_stalled_loop_sends_one_failsafe_telemetry_without_burst():
     assert max(gaps) >= 3.5 and _failsafe(tel[resumed][2])  # 멈춘 뒤 첫 TELEMETRY가 이미 Failsafe
     assert all(not _failsafe(x) for _, _, x in tel[:resumed])
     assert all(g >= 0.1 - 1e-9 for g in gaps), gaps  # 밀린 주기를 같은 시각에 몰아 보내지 않는다
+
+
+def test_REQ_CMD_007_process_sends_route_on_change_and_every_second():
+    """SIM 본체(`app.run`, 가짜 소켓·가짜 시계): 시작에 빈 ROUTE, WAYPOINT를 받은 그 처리에서 ACK 뒤 바로 ROUTE,
+    Failsafe 진입(경로 비움) tick에 바로 ROUTE, 그 사이는 시작 기준 1.0초 예정 시각마다. ROUTE는 자기 seq 0, 1, 2, … (ICD 6.6).
+    가짜 소켓은 기다린 만큼 시계를 옮기고 최소 대기가 1 ms라 예정 시각보다 최대 1 ms 늦을 수 있다."""
+    hb = encode_frame(MsgType.HEARTBEAT, 0, 0)
+    wp = encode_frame(MsgType.COMMAND, 0, 0, Command(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON).to_payload())
+    sock = _FakeSocket(unreachable=False, inbox=[(0.5, hb), (1.05, wp)])  # 마지막 HEARTBEAT 0.5s → Failsafe 3.5s
+    app.run(sock, ("127.0.0.1", 15001), count=50, clock=sock.clock)  # 0.0~4.9s
+    routes = sock.sent(MsgType.ROUTE)
+    assert [seq for _, seq, _ in routes] == list(range(len(routes)))
+    assert routes[0][0] == 0.0 and routes[0][2] == Route()
+    types = [parse_downlink(data)[0].msg_type for _, data in sock.frames]
+    ack_at = types.index(MsgType.ACK)
+    assert types[ack_at + 1] == MsgType.ROUTE  # 같은 처리 주기 안, ACK 바로 뒤
+    at, _, route = next(r for r in routes if r[2].waypoints)
+    assert at == 1.05 and route == Route(((NEAR_LAT, NEAR_LON),))
+    failsafe_at = next(t for t, _, tel in sock.telemetry() if _failsafe(tel))
+    assert abs(failsafe_at - 3.5) < 0.1 + 1e-9
+    after = [(t, r) for t, _, r in routes if t >= failsafe_at]
+    assert after[0] == (failsafe_at, Route())  # Failsafe tick에 바로 빈 경로
+    periodic = [t for t, _, _ in routes if t not in (1.05, failsafe_at)]
+    assert len(periodic) == 5 and all(0 <= t - k <= 0.001 + 1e-9 for k, t in enumerate(periodic)), periodic
+    assert all(r.waypoints for t, _, r in routes if 1.05 <= t < failsafe_at)
+
+
+def test_REQ_SAFE_003_process_starts_standby_and_stays_without_command():
+    """SIM 본체(`app.run`, 가짜 시계): HEARTBEAT가 계속 와도 명령이 없으면 TELEMETRY가 내내 STANDBY·speed 0·같은 위치."""
+    inbox = [(i * 0.5, encode_frame(MsgType.HEARTBEAT, i, 0)) for i in range(1, 20)]
+    sock = _FakeSocket(unreachable=False, inbox=inbox)
+    app.run(sock, ("127.0.0.1", 15001), count=100, clock=sock.clock)  # 0.0~9.9s
+    tel = [t for _, _, t in sock.telemetry()]
+    assert len(tel) == 100
+    assert all(t.mode == Mode.STANDBY and t.speed == 0 and not t.status_flags & Flags.FAILSAFE_ACTIVE for t in tel)
+    assert len({(t.lat, t.lon) for t in tel}) == 1

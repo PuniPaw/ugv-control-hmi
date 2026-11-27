@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 
 from ugvc_proto.command import Ack, AckResult, Command, CmdType
-from ugvc_proto.frame import MsgType, check_frame, encode_frame
+from ugvc_proto.frame import MsgType, encode_frame
 
+from conftest import parse_downlink
 from ugvc_sim import app
 from ugvc_sim.simulator import Simulator
 from ugvc_sim.uplink import Heartbeat, HeartbeatWatch, InvalidCommand, ReceivedCommand, parse_uplink
@@ -160,17 +161,16 @@ def test_REQ_CMD_003_ack_frame_is_valid_and_seq_increments(sim):
     send(_frame(Command(2, CmdType.STOP)))
     checked = [_recv_ack(ack_sock) for _ in range(2)]
     assert [c[0].msg_type for c in checked] == [MsgType.ACK] * 2
-    assert [len(c[1]) for c in checked] == [5, 5]
+    assert [c[0].payload_len for c in checked] == [5, 5]
     assert [c[0].seq for c in checked] == [0, 1]
-    assert [Ack.from_payload(c[1]) for c in checked] == [Ack(1, AckResult.ACCEPTED), Ack(2, AckResult.ACCEPTED)]
+    assert [c[1] for c in checked] == [Ack(1, AckResult.ACCEPTED), Ack(2, AckResult.ACCEPTED)]
 
 
 def _recv_ack(gw):
-    """가짜 GW 소켓에서 ACK 하나를 받는다 (같이 오는 TELEMETRY는 건너뛴다). 0.5초 안에 없으면 socket.timeout."""
+    """가짜 GW 소켓에서 ACK 하나를 (헤더, Ack)로 받는다 (같이 오는 TELEMETRY·ROUTE는 건너뛴다). 0.5초 안에 없으면 socket.timeout."""
     deadline = time.monotonic() + 0.5
     while time.monotonic() < deadline:
-        data = gw.recvfrom(2048)[0]
-        checked = check_frame(data, {MsgType.ACK: 5, MsgType.TELEMETRY: 16})
+        checked = parse_downlink(gw.recvfrom(2048)[0])
         if checked[0].msg_type == MsgType.ACK:
             return checked
     raise socket.timeout("no ACK")
@@ -208,7 +208,7 @@ def test_REQ_CMD_003_listen_duplicate_gets_same_ack(sim, capsys):
     gw, send = sim()
     send(_frame(Command(5, CmdType.RTB)))
     send(_frame(Command(5, CmdType.RTB)))
-    acks = [Ack.from_payload(_recv_ack(gw)[1]) for _ in range(2)]
+    acks = [_recv_ack(gw)[1] for _ in range(2)]
     assert acks == [Ack(5, AckResult.ACCEPTED)] * 2
     lines = [json.loads(l) for l in capsys.readouterr().out.splitlines() if '"command"' in l]
     assert [l["executed"] for l in lines] == [True, False]
@@ -217,7 +217,7 @@ def test_REQ_CMD_003_listen_duplicate_gets_same_ack(sim, capsys):
 def test_REQ_CMD_006_listen_rejects_invalid_over_udp(sim):
     gw, send = sim()
     send(_frame(Command(6, 0x99)))
-    assert Ack.from_payload(_recv_ack(gw)[1]) == Ack(6, AckResult.REJECTED_INVALID)
+    assert _recv_ack(gw)[1] == Ack(6, AckResult.REJECTED_INVALID)
 
 
 def test_REQ_CMD_006_listen_cmd_id_0_gets_no_ack(sim):
@@ -233,4 +233,4 @@ def test_REQ_CMD_003_drop_first_ignores_first_command_then_acks_retransmission(s
     with pytest.raises(socket.timeout):
         _recv_ack(gw)
     send(_frame(Command(9, CmdType.STOP)))
-    assert Ack.from_payload(_recv_ack(gw)[1]) == Ack(9, AckResult.ACCEPTED)
+    assert _recv_ack(gw)[1] == Ack(9, AckResult.ACCEPTED)

@@ -1,7 +1,9 @@
-"""SIM 실행 본체: UDP 소켓 하나에서 COMMAND·HEARTBEAT를 받고 10Hz로 TELEMETRY를 보낸다 (단일 스레드).
+"""SIM 실행 본체: UDP 소켓 하나에서 COMMAND·HEARTBEAT를 받고 10Hz로 TELEMETRY, 경로가 바뀔 때와 1Hz로 ROUTE를 보낸다 (단일 스레드).
+
+SIM은 STANDBY로 기동하며 WAYPOINT·RTB 명령이 와야 움직인다 (REQ-SAFE-003).
 
 사용:
-    python3 -m ugvc_sim                    # UDP 15010 수신, TELEMETRY·ACK는 GW 127.0.0.1:15001로, 10Hz 무한
+    python3 -m ugvc_sim                    # UDP 15010 수신, TELEMETRY·ACK·ROUTE는 GW 127.0.0.1:15001로, 10Hz 무한
     python3 -m ugvc_sim --count 600 -v     # TELEMETRY 600개 뒤 종료, 보낸 프레임 hex 출력
 
 표준출력은 JSON 한 줄씩: command / heartbeat / reject / drop, 모드·Failsafe 전이(mode / failsafe),
@@ -25,10 +27,10 @@ from ugvc_proto.command import AckResult
 from ugvc_proto.frame import MsgType, Reject, encode_frame
 from ugvc_proto.telemetry import Mode
 
-from ugvc_sim.simulator import Simulator
+from ugvc_sim.simulator import RouteReporter, Simulator
 from ugvc_sim.uplink import Heartbeat, parse_uplink
 
-GW_VEHICLE_PORT = 15001  # IF-01a. GW는 TELEMETRY·ACK를 이 포트로 받는다
+GW_VEHICLE_PORT = 15001  # IF-01a. GW는 TELEMETRY·ACK·ROUTE를 이 포트로 받는다
 _MAX_WAIT_S = 0.1        # 소켓을 기다리는 최대 시간 (stop 확인 주기)
 _MAX_RATE_HZ = 1000.0
 _FATAL_SOCKET_ERRNOS = {errno.EBADF, errno.ENOTSOCK}  # 소켓 자체가 없다: 계속 돌아도 회복할 수 없음
@@ -85,10 +87,20 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
     sender = _Sender(sock, gw_addr)
     t0 = clock()
     sim = Simulator(start=t0)
-    tel_seq = ack_seq = sent = 0
+    route_reporter = RouteReporter(t0)
+    tel_seq = ack_seq = route_seq = sent = 0
     due = last_tick = t0
     to_drop = drop_first
     recv_failing = False
+
+    def report_route(now: float) -> None:
+        """경로를 바꿀 수 있는 사건을 처리한 뒤 부른다: 바뀌었으면 이 처리 주기 안에, 아니면 1Hz로 ROUTE (ICD 6.6)."""
+        nonlocal route_seq
+        route = sim.route()
+        if route_reporter.poll(now, route):
+            sender.send(encode_frame(MsgType.ROUTE, route_seq, _epoch_ms(), route.to_payload()))
+            route_seq = (route_seq + 1) & 0xFFFFFFFF
+
     try:
         while (stop is None or not stop.is_set()) and (count is None or sent < count):
             now = clock()
@@ -103,12 +115,16 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
                     print(f"seq={tel_seq} {frame.hex()}", flush=True)
                 tel_seq = (tel_seq + 1) & 0xFFFFFFFF
                 sent += 1
+                report_route(now)
                 # 예정 시각 기준이라 늦음이 쌓이지 않는다. 한 주기 넘게 늦었으면 몰아 보내지 않고 지금부터 다시 잰다
                 due += period
                 if due <= now:
                     due = now + period
                 continue
-            sock.settimeout(max(0.001, min(due - now, _MAX_WAIT_S)))
+            if now >= route_reporter.due:  # 1Hz ROUTE는 TELEMETRY tick과 따로 제 예정 시각에 (tick 간격만큼 늦지 않게)
+                report_route(now)
+                continue
+            sock.settimeout(max(0.001, min(min(due, route_reporter.due) - now, _MAX_WAIT_S)))
             try:
                 data, _ = sock.recvfrom(2048)
             except socket.timeout:
@@ -142,6 +158,7 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
                 _emit({"type": "command", "cmd_id": msg.command.cmd_id, "cmd_type": msg.command.cmd_type,
                        "result": AckResult(outcome.ack.result).name, "executed": outcome.execute is not None})
             _report_transitions(sim, before)
+            report_route(now)
     except KeyboardInterrupt:
         pass
     return sent
@@ -170,7 +187,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="python3 -m ugvc_sim", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--host", default="127.0.0.1", help="COMMAND·HEARTBEAT를 받을 주소")
     p.add_argument("--port", type=int, default=15010, help="수신 포트 (IF-01b)")
-    p.add_argument("--gw-host", default="127.0.0.1", help="TELEMETRY·ACK를 보낼 GW 주소")
+    p.add_argument("--gw-host", default="127.0.0.1", help="TELEMETRY·ACK·ROUTE를 보낼 GW 주소")
     p.add_argument("--gw-port", type=int, default=GW_VEHICLE_PORT, help="GW 차량 수신 포트 (IF-01a)")
     p.add_argument("--rate", type=_rate, default=10.0, help="TELEMETRY Hz (기본 10)")
     p.add_argument("--count", type=int, default=None, help="보낼 TELEMETRY 개수 (기본: 무한)")
