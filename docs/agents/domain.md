@@ -18,8 +18,8 @@ This repo is **single-context**: one `GLOSSARY.md` at the root and one `docs/adr
 /
 ├── GLOSSARY.md
 ├── docs/adr/
-│   ├── ADR-001-영상-전송-경로-분리.md
-│   └── ADR-002-바이트순서-big-endian.md
+│   ├── README.md
+│   └── ADR-NNN-<한글-제목>.md
 ├── sim/ detector/ gateway/ hmi/
 ```
 
@@ -52,4 +52,4 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
-> _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
+> _ADR-002(big-endian·고정소수점)와 어긋나지만, … 때문에 다시 검토할 만하다_

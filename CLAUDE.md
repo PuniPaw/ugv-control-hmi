@@ -12,7 +12,7 @@
 ## 1. 시스템 구성
 
 ```
-[SIM 차량 시뮬레이터, Python] ──UDP IF-01a (TELEMETRY, ACK)──▶ [GW 통신 게이트웨이, C++17]
+[SIM 차량 시뮬레이터, Python] ──UDP IF-01a (TELEMETRY, ACK, ROUTE)──▶ [GW 통신 게이트웨이, C++17]
                               ◀─UDP IF-01b (COMMAND, HEARTBEAT)─
 [DET AI 탐지 노드, Python]   ──UDP IF-02 (DETECTION)─────────▶ [GW]
 [GW] ◀──WebSocket JSON IF-03──▶ [HMI 관제 화면, Vue 3 + TS]
@@ -47,7 +47,7 @@
   - `sync u16 = 0xAA55 | version u8 = 0x01 | msg_type u8 | seq u32 | timestamp u64(ms) | payload_len u16`
 - CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, 반사 없음, xorout 0). 범위: 헤더 시작~payload 끝
   - 테스트 벡터: ASCII `"123456789"` → `0x29B1`
-- 메시지: `0x01` TELEMETRY(16B), `0x02` DETECTION(17+11×count, count ≤ 32), `0x10` COMMAND(13B), `0x11` ACK(5B), `0x20` HEARTBEAT(0B)
+- 메시지: `0x01` TELEMETRY(16B), `0x02` DETECTION(17+11×count, count ≤ 32), `0x03` ROUTE(1+8×count, count ≤ 32), `0x10` COMMAND(13B), `0x11` ACK(5B), `0x20` HEARTBEAT(0B)
 - GW 수신 검증 순서 (ICD 9장): 길이≥20 → sync → version → 길이==20+N → CRC → 포트별 허용 type → type별 길이 → 필드 범위 → seq 순서(RFC 1982). 실패 시 즉시 폐기 + 원인별 계수
 - 링크 상태: 마지막 유효 패킷 후 0.5s DEGRADED, 1.0s LOST. LOST 후 첫 유효 패킷은 seq 기준값 재설정
 - 명령: ACK 1.0s 대기, 같은 cmd_id로 최대 3회 재전송 후 TIMEOUT. SIM은 중복 cmd_id 재실행 금지
@@ -94,8 +94,8 @@
 | 문서 | 상태 | 비고 |
 |---|---|---|
 | 00_overview.md | 미작성 | 시스템 개요·용어. README와 함께 마지막에 정리 |
-| 01_SRS.md (UGVC-SRS-001) | **v0.12** | 요구사항 34개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계). v0.4: REQ-HMI-006(IF-03 연결 감시·재접속·신선도), REQ-HMI-007(IF-03 수신 검증). v0.5: 기준선 재설정(연결 끊김 아님), stats 없는 연결. v0.6: REQ-COM-006에서 ACK 스트림 제외. v0.7: REQ-COM-005 유실 계산에서도 ACK 제외, REQ-CMD-002에 req_id 재송신 금지. v0.8: REQ-SAFE-002 Failsafe 해제 조건(HEARTBEAT 수신 중 수락한 COMMAND만 해제, STOP은 정지 유지, 두절 중 RTB·WAYPOINT는 REJECTED_STATE). v0.9: 표 3-1에 Failsafe·GW 연결 끊김(WARNING)·GW 데이터 지연·명령 결과 미확인(CAUTION), 표 3-2 경고 수명, REQ-LOG-001 경고 원인 범위, REQ-LOG-003 신설(DB가 중계를 막지 않음). v0.10: 표 3-2 명령 결과 경고는 조건마다·명령마다 1개. v0.11~v0.12: 저장 실패한 기록은 그 행만 버리고 재접속, 재접속 중 대기열 유지·실패 시 db_down·간격 0.5→5s |
-| 02_ICD.md (UGVC-ICD-001) | **v0.15** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열). v0.5: HMI 신선도는 연결별 기준선 대비(시계 차 무관), 접속 5s·무수신 4s 제한. v0.6: 늦은 도착 5s면 기준선 재설정 재접속(실패로 세지 않음), capture_ts 정밀도. v0.7: 재설정 시점(5~6.25s)·궤적 유지, capture_ts u64 범위. v0.8: 재설정 시계는 stats에서만, 느린 재설정 접속은 궤적 분리, link_status null 규칙. v0.9: 궤적은 텔레메트리 seq 간격(위치 없이 10표본)으로 끊음(v0.8의 접속 시간 기준 대체). v0.10: seq 역행, 재설정 창 안의 차량 LOST 한계. v0.11: 명령 중계(7.2 command 검증, 7.3 재전송 규약, cmd_result cmd_id null, SIM ACK 송신처). v0.12: cmd_id 시작값은 시각(GW 재시작 대비), req_id 규칙(대기 중·최근 60초는 다시 보내지 않음), 재전송은 예정 시각 기준, ACK는 규칙 ⑨ 제외. v0.13: 거절한 req_id도 기억, 재시도는 새 req_id, GW 재시작 시 기억 소실 한계·HMI 자동 재송신 금지, 1s 넘게 늦은 판정은 그 시각부터, ACK는 유실 계산 제외. v0.14: 거절 기록은 상한 따로, 늦은 판정은 max(예정 + 1.0s, 실제 송신 + 0.95s). v0.15: FAILSAFE_ACTIVE 설정·해제 시점, SIM의 REJECTED_STATE(두절 중 RTB·WAYPOINT), 6.5 Failsafe 해제 규칙 |
+| 01_SRS.md (UGVC-SRS-001) | **v0.13** | 요구사항 36개. v0.2: REQ-CMD-006 신설, COM·SAFE 판정 규칙 명확화. v0.3: REQ-COM-008(IF-03 WebSocket 중계). v0.4: REQ-HMI-006(IF-03 연결 감시·재접속·신선도), REQ-HMI-007(IF-03 수신 검증). v0.5: 기준선 재설정(연결 끊김 아님), stats 없는 연결. v0.6: REQ-COM-006에서 ACK 스트림 제외. v0.7: REQ-COM-005 유실 계산에서도 ACK 제외, REQ-CMD-002에 req_id 재송신 금지. v0.8: REQ-SAFE-002 Failsafe 해제 조건(HEARTBEAT 수신 중 수락한 COMMAND만 해제, STOP은 정지 유지, 두절 중 RTB·WAYPOINT는 REJECTED_STATE). v0.9: 표 3-1에 Failsafe·GW 연결 끊김(WARNING)·GW 데이터 지연·명령 결과 미확인(CAUTION), 표 3-2 경고 수명, REQ-LOG-001 경고 원인 범위, REQ-LOG-003 신설(DB가 중계를 막지 않음). v0.10: 표 3-2 명령 결과 경고는 조건마다·명령마다 1개. v0.11~v0.12: 저장 실패한 기록은 그 행만 버리고 재접속, 재접속 중 대기열 유지·실패 시 db_down·간격 0.5→5s. v0.13: REQ-HMI-001 경로점은 SIM이 보고한 남은 경로, REQ-CMD-007(경로 보고·상한 32), REQ-SAFE-003(STANDBY 기동) |
+| 02_ICD.md (UGVC-ICD-001) | **v0.16** | v0.2: 스트림 단위 seq, stats.lost_count, 최대 1200B, SIM의 REJECTED_INVALID. v0.3: 7.1 공학 단위는 JSON 텍스트가 아니라 값(가장 가까운 double)으로 정의. v0.4: 7장 IF-03 연결 규약(404, 접속 직후 상태, HMI별 대기열). v0.5: HMI 신선도는 연결별 기준선 대비(시계 차 무관), 접속 5s·무수신 4s 제한. v0.6: 늦은 도착 5s면 기준선 재설정 재접속(실패로 세지 않음), capture_ts 정밀도. v0.7: 재설정 시점(5~6.25s)·궤적 유지, capture_ts u64 범위. v0.8: 재설정 시계는 stats에서만, 느린 재설정 접속은 궤적 분리, link_status null 규칙. v0.9: 궤적은 텔레메트리 seq 간격(위치 없이 10표본)으로 끊음(v0.8의 접속 시간 기준 대체). v0.10: seq 역행, 재설정 창 안의 차량 LOST 한계. v0.11: 명령 중계(7.2 command 검증, 7.3 재전송 규약, cmd_result cmd_id null, SIM ACK 송신처). v0.12: cmd_id 시작값은 시각(GW 재시작 대비), req_id 규칙(대기 중·최근 60초는 다시 보내지 않음), 재전송은 예정 시각 기준, ACK는 규칙 ⑨ 제외. v0.13: 거절한 req_id도 기억, 재시도는 새 req_id, GW 재시작 시 기억 소실 한계·HMI 자동 재송신 금지, 1s 넘게 늦은 판정은 그 시각부터, ACK는 유실 계산 제외. v0.14: 거절 기록은 상한 따로, 늦은 판정은 max(예정 + 1.0s, 실제 송신 + 0.95s). v0.15: FAILSAFE_ACTIVE 설정·해제 시점, SIM의 REJECTED_STATE(두절 중 RTB·WAYPOINT), 6.5 Failsafe 해제 규칙. v0.16: 6.6 ROUTE(0x03, 바뀔 때 + 1Hz, 최대 32개), 7.1 `route`, STANDBY 기동, 경로가 가득 찬 WAYPOINT는 REJECTED_STATE |
 | 03_SDD.md (UGVC-SDD-001) | **v0.7.3 초안** | 모듈 구조, 수신 흐름, 링크 상태도(전이는 반환값), 단일 io 스레드 + 출력 전용 `LineSink` 스레드, WebSocket 세션(io 스레드, 세션별 대기열). v0.3: 6장 명령 재전송 구현(`CommandTracker`, `parse_command`, SIM `CommandResponder`). v0.3.1: req_id 규칙·시각 기반 cmd_id·ACK ⑨ 제외. v0.2: 8장 HMI 구조(`HmiController`, 경계 파서, 순수 `receiveText`·`apply`·`view`·`trackSync.planDraw`, 연결 범위 `session`, 재접속·신선도·기준선 재설정 `resync`(접속 이유 `cause`), 화면 판정 `present()`(상태 패널 행 포함), 궤적 조각 그리기, 궤적 끊김은 마지막 유효 위치와의 seq 간격 `lastFixSeq`). v0.4: 6.2 SIM 한 프로세스(`python -m ugvc_sim`, 단일 스레드, 순수 `Simulator` = 차량 상태 + HEARTBEAT 감시 + 명령 처리, 시각 주입, 명령을 주행 모사에 반영, Failsafe 진입·해제). v0.4.1~v0.4.2: 송신 OSError에도 계속 돎, 늦으면 몰아 보내지 않음, 처리 시각 기준 판정 한계, 기동 상태는 시연용 선택(이슈 #39). v0.5: 8.6 HMI 명령 패널(확인 절차 `draft`, PENDING·UNCONFIRMED·DONE, 끊김·재설정 뒤 결과 미확인, 자동 재송신 금지). v0.5.1~v0.5.4: 이 연결에서 받은 link_status로만 송신 판정, 행별 다시 보내기·결과 기한 제거(다시 시도는 경고가 붙은 새 명령), 재설정은 끊김과 같이 다룸. v0.6~v0.6.1: 8.7 HMI 경고 체계(순수 `alertConditions`·`reconcile`·`acknowledge`, 배너와 경고가 `gwHealth()` 공유, 받은 적 없는 링크 상태는 null, DET 관련 경고는 12월 3주로). v0.7~v0.7.3: 5.1 DB 로그 저장(비동기 `DbSink` 전용 스레드 + 상한 5000 대기열, libpq `PgSession`, 행 단위 확정, 저장 실패는 종류를 가리지 않고 그 행만 `write_error`·대기열 유지·재접속, 원인 `queue_full`·`db_down`·`write_error`, `--db`, 한계 #57) |
 | 04_STP.md (UGVC-STP-001) | **v0.31 초안** | TC-COM-001~008(GW), TC-HMI-001~004·006·007, TC-LOG-001·003, TC-CMD-001~006, TC-SAFE-001·002, TC-QUAL-001. v0.17~v0.18: 시험 이름에 REQ ID는 하나만(PR #34). v0.19~v0.21: TC-SAFE(PR #36), SIM 운동 모사 시험 예외. v0.22~v0.26: TC-CMD-001·004(PR #35). v0.27: TC-HMI-003·004(PR #49), REQ-HMI-004 2.0s 측정 구간(마지막 유효 패킷 `last_rx_ts` → LOST 경고 DOM 반영, smoke 실측 약 1.0~1.05s). v0.28~v0.31: TC-LOG-001·003(PR #50, 실제 PostgreSQL 통합 시험, `DbSink` 스레드 시험은 완료·계수로 판정하는 예외 2.2). 수준 U/I/R + D(시연 점검, `hmi/e2e/smoke.mjs`, 시계 차 ±로도 실행). `tools/check_stp_tests.py`가 STP 이름(C++ gtest 목록·`pytest --collect-only`·`vitest list --json`)과 시험 이름의 REQ ID(형식, SRS 존재 여부)를 검사하고 TC 표 "테스트" 열에서 해석하지 못한 항목이 있으면 실패(자체 시험 `tools/tests/`). HMI 시험은 describe 없이 it 제목 = 시험 이름 |
 | 05_STR.md | 미작성 | 시험 실행 결과 |
@@ -106,7 +106,7 @@
 | CHANGELOG.md | 미작성 | |
 
 ### 문서에 아직 반영할 것
-1. SIM 기동 상태: 지금은 명령 없이 MISSION 주행으로 시작한다(시연용 선택, SDD 6.2). STANDBY로 시작할지는 사용자 결정 대기 (이슈 #39)
+1. SIM 기동 상태: 규격은 STANDBY 기동으로 확정(SRS v0.13 REQ-SAFE-003, 이슈 #39 종료). SDD 6.2와 SIM 코드·smoke는 아직 MISSION 기동이며 경로점 구현에서 맞춘다
 
 ### 미확정 사항
 - TBD-01: 영상-탐지 종단 지연 목표값 (12월 3주 측정 후)
@@ -123,17 +123,16 @@
 | 11/4–11/9 | 범위 확정, SRS·ICD v0.1, ADR, 저장소 구성 | 완료 |
 | 11/10–11/16 | SIM TELEMETRY 송신, C++ UDP 수신·헤더 파싱, CRC 단위 시험, STP(TC-COM) 초안 | 완료 (PR #1, #2) |
 | 11/17–11/23 | 검증 규칙 9단계 완성, 링크 상태 판정, seq 유실률, cmd 시뮬 수신부, cppcheck 적용 | 완료 (PR #3~#9, 독립 리뷰·리팩터링 포함). 이어서 SRS·ICD v0.2, SDD 초안, ADR-003(PR #10), thermos·interrogate 검증과 출력 경로 수정·추적성 정리·구조 개편(PR #11~#13). 11/11 기준 일정보다 앞섬 |
-| **11/24–11/30 (당겨서 진행 중)** | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | 완료: WebSocket 중계 (PR #16), HMI 뼈대 (PR #19, 독립 리뷰 8차. 연결 감시·재접속·신선도 REQ-HMI-006, 수신 검증 REQ-HMI-007 신설). 이 과정에서 병합 기준을 정함(3장) |
-| **12월 1–2주 (당겨서 시작)** | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | 완료: COMMAND/ACK 재전송(PR #24), SIM HEARTBEAT·Failsafe와 한 프로세스 통합(PR #36, 리뷰 2차), HMI 명령 패널(PR #35, 리뷰 4차, 4차는 사용자 예외 허용), STP 이름 검사 REQ ID 하나 규칙(PR #34). 이 단계부터 브랜치별 세션 병렬 개발 + 조율 세션의 리뷰 순환으로 진행. 병렬 라운드 1(11/25~26): SRS v0.9 규격 빈칸 확정(PR #48) 뒤 HMI 경고 체계(PR #49, 리뷰 1차)와 GW PostgreSQL 로그(PR #50, 리뷰 3차) 완료 |
+| 11/24–11/30 | GW → HMI WebSocket 중계(Boost.Beast 전환 포함), HMI 뼈대(지도, 상태 패널) | 완료: WebSocket 중계 (PR #16), HMI 뼈대 (PR #19, 독립 리뷰 8차. 연결 감시·재접속·신선도 REQ-HMI-006, 수신 검증 REQ-HMI-007 신설). 이 과정에서 병합 기준을 정함(3장) |
+| 12월 1–2주 | COMMAND/ACK 재전송, HEARTBEAT·Failsafe, 경고 체계, PostgreSQL 로그 | 완료: COMMAND/ACK 재전송(PR #24), SIM HEARTBEAT·Failsafe와 한 프로세스 통합(PR #36, 리뷰 2차), HMI 명령 패널(PR #35, 리뷰 4차, 4차는 사용자 예외 허용), STP 이름 검사 REQ ID 하나 규칙(PR #34). 이 단계부터 브랜치별 세션 병렬 개발 + 조율 세션의 리뷰 순환으로 진행. 병렬 라운드 1(11/25~26): SRS v0.9 규격 빈칸 확정(PR #48) 뒤 HMI 경고 체계(PR #49, 리뷰 1차)와 GW PostgreSQL 로그(PR #50, 리뷰 3차) 완료 |
 | 12월 3주 | DET 연결, 영상 오버레이, 지연 측정 → MVP 완성 | |
 | 12월 4주 | README, 시연 영상, 포트폴리오 PDF, STR·RTM 정리 | |
 
 ## 6. 바로 다음 할 일
 
-1. 경로점 표시(REQ-HMI-001): SIM 임무 경로를 HMI에 보내는 메시지가 없어 규격 빈칸(TBD-03 관련). 구현 전에 ICD·SRS로 확정
+1. 경로점 표시(REQ-HMI-001·REQ-CMD-007·REQ-SAFE-003): 규격 확정(PR #60, ICD v0.16 6.6 ROUTE). GW·SIM(ROUTE 송신·중계, 상한 32, STANDBY 기동, smoke 수정)과 HMI(`route` 수신 검증, 경로점·현재 목표 표시)로 나눠 구현
 2. 12월 3주 DET 연결: 영상 오버레이(REQ-AI-001·002), 탐지 노드 링크 경고·신규 표적 탐지 경고(SRS 표 3-1 중 이번에 미룬 행), 지연 측정
-3. 사용자 결정: SIM 기동 상태 #39
-4. 후속 이슈
+3. 후속 이슈
    - GW: #25(명령 대기 목록 상한), #26(명령 코드 정리), #28(ACK seq), #29(repeated 로그), #30(io 스레드 지연 시 판정 순서), DB 로그 #54(저장 지연 진단)·#55(LineSink·DbSink 공용 워커)·#56(dblog 정리)·#57(저장 불가 행 뒤 지연, 사용자 결정으로 유지)·#58(재접속 알림·상태 구조)
    - HMI: #23(재설정 창 안 SIM 재시작 궤적), #37(송신 판정 위치·시험 중복), #44(같은 종류 경고 정밀도·결과 미확인 상한), #51(GW 재시작 직후 LOST 경고)
    - SIM: #40(구조 정리), #42(날짜변경선)
