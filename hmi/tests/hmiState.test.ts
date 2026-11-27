@@ -194,3 +194,22 @@ it("REQ_HMI_001 a gap of 10 or more telemetry seq numbers breaks the track, 9 do
   const dup = run([[telemetry(7, 1, 1), 0], [telemetry(7, 1, 1), 0]]);
   expect(dup.track).toEqual([[[1, 1]]]);
 });
+
+const route = (waypoints: Array<[number, number]>, seq = 0): If03Message => ({
+  type: "route", ts: 1000, data: { waypoints: waypoints.map(([lat, lon]) => ({ lat, lon })), seq, rx_ts: 1000 },
+});
+
+it("REQ_HMI_001 the route replaces the remaining waypoints in visit order and survives as the previous value", () => {
+  expect(initialState().route).toBeNull(); // 받은 적 없음
+  const s1 = apply(opened(), route([[36.1, 127.1], [36.2, 127.2], [36.3, 127.3]]), 0);
+  expect(s1.route).toEqual([[36.1, 127.1], [36.2, 127.2], [36.3, 127.3]]); // [0]이 지금 향하는 점
+  // 도착하면 SIM이 맨 앞을 뺀 경로를 보낸다: 받은 것으로 통째 바꾼다
+  const s2 = apply(s1, route([[36.2, 127.2], [36.3, 127.3]], 1), 0);
+  expect(s2.route).toEqual([[36.2, 127.2], [36.3, 127.3]]);
+  expect(s1.route).toHaveLength(3); // 이전 상태는 그대로
+  // 다른 메시지는 경로 배열 참조를 바꾸지 않는다 (지도는 참조가 바뀔 때만 다시 그린다)
+  expect(apply(s2, telemetry(5, 36, 127), 0).route).toBe(s2.route);
+  // IF-03 연결 끊김·차량 LOST 뒤에도 마지막 경로는 남는다 (현재 값 아님 표시는 view가 정한다)
+  expect(connectionLost(apply(s2, vehicleLink("LOST"), 0)).route).toEqual(s2.route);
+  expect(apply(s2, route([], 2), 0).route).toEqual([]); // RTB·STOP 등으로 비면 빈 경로
+});
