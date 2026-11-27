@@ -95,12 +95,19 @@ def _failsafe(t: Telemetry) -> bool:
 
 
 def test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe(rig):
-    """HEARTBEAT가 한 번도 없으면 시작 3.0초 뒤 첫 TELEMETRY부터 STOPPED + FAILSAFE_ACTIVE (그 전은 STANDBY, 플래그 없음)."""
+    """HEARTBEAT가 한 번도 없으면 시작 3.0초 뒤 첫 TELEMETRY부터 STOPPED + FAILSAFE_ACTIVE.
+
+    시작 직후 WAYPOINT로 주행시켜(시작 후 3.0초 전이라 HEARTBEAT 없이도 수락) 정지 전후가 구분되게 한다.
+    그 전은 STANDBY(WAYPOINT 처리 전) 또는 주행 중인 MISSION이고 플래그 없음."""
+    rig.command(Command(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
     assert rig.wait_until(lambda: rig.now() > 3.6 and rig.telemetry, 5.0)
+    assert rig.acks == [Ack(1, AckResult.ACCEPTED)]
     first = next(t for t, tel in rig.telemetry if _failsafe(tel))
     assert 3.0 <= first <= 3.35, first
-    assert all(tel.mode == Mode.STANDBY and not tel.status_flags & Flags.FAILSAFE_ACTIVE
-               for t, tel in rig.telemetry if t < first)
+    before = [tel for t, tel in rig.telemetry if t < first]
+    assert all(tel.mode in (Mode.STANDBY, Mode.MISSION) and not tel.status_flags & Flags.FAILSAFE_ACTIVE for tel in before)
+    assert before[-1].mode == Mode.MISSION and before[-1].speed > 0
+    assert (before[-1].lat, before[-1].lon) != (before[0].lat, before[0].lon)  # 정지 전에는 움직였다
     assert all(_failsafe(tel) for t, tel in rig.telemetry if t >= first)
     frozen = {(tel.lat, tel.lon) for t, tel in rig.telemetry if t >= first}
     assert len(frozen) == 1  # 정지 후 위치가 변하지 않는다
@@ -246,3 +253,17 @@ def test_REQ_SAFE_003_process_starts_standby_and_stays_without_command():
     assert len(tel) == 100
     assert all(t.mode == Mode.STANDBY and t.speed == 0 and not t.status_flags & Flags.FAILSAFE_ACTIVE for t in tel)
     assert len({(t.lat, t.lon) for t in tel}) == 1
+
+
+@pytest.mark.parametrize("rate_hz", [10.0, 0.4])
+def test_REQ_CMD_007_process_sends_no_stale_route_once_failsafe_holds(rate_hz):
+    """마지막 HEARTBEAT(1.0s) 뒤 3.0s인 4.0s가 1Hz ROUTE 예정 시각과 겹쳐도, 그 ROUTE부터 경로는 비어 있다.
+    ROUTE 송신 앞에서도 Failsafe를 먼저 판정한다 (PR #63 1차 리뷰 지적 1의 재현 시험). TELEMETRY가 드문 0.4Hz에서도 같다."""
+    hb0, hb1 = encode_frame(MsgType.HEARTBEAT, 0, 0), encode_frame(MsgType.HEARTBEAT, 1, 0)
+    wp = encode_frame(MsgType.COMMAND, 0, 0, Command(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON).to_payload())
+    sock = _FakeSocket(unreachable=False, inbox=[(0.5, hb0), (0.6, wp), (1.0, hb1)])
+    app.run(sock, ("127.0.0.1", 15001), rate_hz=rate_hz, count=int(5.0 * rate_hz) + 1, clock=sock.clock)  # 0 ~ 5.0s
+    routes = sock.sent(MsgType.ROUTE)
+    assert any(r.waypoints for t, _, r in routes if t < 4.0)  # 두절 전에는 경로가 있었다
+    late = [(t, len(r.waypoints)) for t, _, r in routes if t >= 4.0]
+    assert late and all(n == 0 for _, n in late), late

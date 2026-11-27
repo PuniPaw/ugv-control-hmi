@@ -72,7 +72,7 @@ def step(s: VehicleState, dt: float, home: LatLon = HOME,
         s, arrived = _drive_to(s, home, dist)
         return replace(s, mode=Mode.STANDBY, speed_mps=0.0) if arrived else s
     if s.mode == Mode.MISSION:
-        if not s.route:  # WAYPOINT로만 MISSION에 들어오므로 생기지 않지만, 경로 없이 달리지 않는다 (REQ-SAFE-003)
+        if not s.route:  # WAYPOINT로만 MISSION에 들어오므로 생기지 않는다. 방어 코드: 경로 없이 달리지 않는다
             return replace(s, mode=Mode.STANDBY, speed_mps=0.0)
         s, arrived = _drive_to(s, s.route[0], dist)
         if not arrived:

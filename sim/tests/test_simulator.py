@@ -237,7 +237,7 @@ def test_REQ_SAFE_003_starts_in_standby_and_does_not_move_without_command():
     sim = Simulator(start=0.0)
     start = _pos(sim)
     t = sim.telemetry()
-    assert t.mode == Mode.STANDBY and t.speed == 0 and sim.route().waypoints == ()
+    assert t.mode == Mode.STANDBY and t.speed == 0 and sim.route(0.0).waypoints == ()
     _run(sim, 0.0, 30.0, hb=lambda x: True)
     t = sim.telemetry()
     assert t.mode == Mode.STANDBY and t.speed == 0 and not sim.failsafe and _pos(sim) == start
@@ -248,22 +248,22 @@ def test_REQ_CMD_007_route_reports_remaining_waypoints_as_they_change():
     far = (NEAR_LAT + 10_000, NEAR_LON)
     sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
     sim.on_command(_cmd(2, CmdType.WAYPOINT, *far), 0.0)
-    assert sim.route().waypoints == ((NEAR_LAT, NEAR_LON), far)
+    assert sim.route(0.0).waypoints == ((NEAR_LAT, NEAR_LON), far)
     t = 0.0
-    while sim.route().waypoints[0] != far:  # 첫 경로점(≈ 60 m)에 도착할 때까지
+    while sim.route(t).waypoints[0] != far:  # 첫 경로점(≈ 60 m)에 도착할 때까지
         t = _run(sim, t, t + 0.1, hb=lambda x: True)
         assert t < 30.0
-    assert sim.route().waypoints == (far,) and sim.telemetry().mode == Mode.MISSION
+    assert sim.route(t).waypoints == (far,) and sim.telemetry().mode == Mode.MISSION
     for cmd_type in (CmdType.STOP, CmdType.RTB):
         sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
         sim.on_command(_cmd(2, cmd_type), 0.0)
-        assert sim.route().waypoints == (), cmd_type
+        assert sim.route(0.0).waypoints == (), cmd_type
 
 
 def test_REQ_CMD_007_failsafe_clears_route():
     sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
     sim.advance(3.0, 0.1)
-    assert _failsafe_telemetry(sim) and sim.route().waypoints == ()
+    assert _failsafe_telemetry(sim) and sim.route(3.0).waypoints == ()
 
 
 def test_REQ_CMD_007_waypoint_rejected_state_when_route_full():
@@ -272,18 +272,18 @@ def test_REQ_CMD_007_waypoint_rejected_state_when_route_full():
     points = [(NEAR_LAT + i * 1000, NEAR_LON) for i in range(MAX_WAYPOINTS)]
     for i, p in enumerate(points, start=1):
         assert sim.on_command(_cmd(i, CmdType.WAYPOINT, *p), 0.0).ack == Ack(i, AckResult.ACCEPTED)
-    full = sim.route()
+    full = sim.route(0.0)
     assert len(full.waypoints) == MAX_WAYPOINTS
     out = sim.on_command(_cmd(100, CmdType.WAYPOINT, NEAR_LAT - 1000, NEAR_LON), 0.0)
     assert out.ack == Ack(100, AckResult.REJECTED_STATE) and out.execute is None
-    assert sim.route() == full and sim.telemetry().mode == Mode.MISSION
+    assert sim.route(0.0) == full and sim.telemetry().mode == Mode.MISSION
     t = 0.0
-    while len(sim.route().waypoints) == MAX_WAYPOINTS:  # 첫 경로점 도착
+    while len(sim.route(t).waypoints) == MAX_WAYPOINTS:  # 첫 경로점 도착
         t = _run(sim, t, t + 0.1, hb=lambda x: True)
         assert t < 30.0
     out = sim.on_command(_cmd(101, CmdType.WAYPOINT, NEAR_LAT - 1000, NEAR_LON), t)
     assert out.ack == Ack(101, AckResult.ACCEPTED)
-    assert sim.route().waypoints[-1] == (NEAR_LAT - 1000, NEAR_LON)
+    assert sim.route(t).waypoints[-1] == (NEAR_LAT - 1000, NEAR_LON)
 
 
 def test_REQ_CMD_007_route_reporter_sends_on_change_and_every_second():

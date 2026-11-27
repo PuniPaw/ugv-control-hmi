@@ -12,6 +12,7 @@ from ugvc_proto.command import Ack, AckResult, CmdType, Command
 from ugvc_proto.route import MAX_WAYPOINTS, Route
 from ugvc_proto.telemetry import Flags, Telemetry
 
+from ugvc_sim.schedule import Schedule
 from ugvc_sim.uplink import HeartbeatWatch, InvalidCommand, ReceivedCommand
 from ugvc_sim.vehicle import (HOME, START, LatLon, VehicleState, apply_command, enter_failsafe, step, to_route,
                               to_telemetry)
@@ -78,7 +79,9 @@ class Simulator:
     def telemetry(self) -> Telemetry:
         return to_telemetry(self.state)
 
-    def route(self) -> Route:
+    def route(self, now: float) -> Route:
+        """지금 남은 경로. 송신하는 값이므로 다른 사건처럼 Failsafe 조건부터 평가한다 (두절 3.0초면 비어 있음)."""
+        self._check_failsafe(now)
         return to_route(self.state)
 
     @property
@@ -91,27 +94,24 @@ class RouteReporter:
 
     남은 경로가 마지막으로 보낸 것과 다르면 바로, 같아도 1초 주기 예정 시각이 되면 보낸다.
     호출자는 경로를 바꿀 수 있는 사건(명령, HEARTBEAT, 주기 tick)을 처리할 때마다, 그리고 `due`가 되면 poll한다.
-    주기는 예정 시각 기준이라 늦음이 쌓이지 않고, 한 주기 넘게 늦었으면 몰아 보내지 않고 지금부터 다시 잰다.
+    주기는 `Schedule`이라 늦음이 쌓이지 않고, 한 주기 넘게 늦었으면 몰아 보내지 않고 지금부터 다시 잰다.
     """
 
     def __init__(self, start: float, period_s: float = ROUTE_PERIOD_S):
-        self.period_s = period_s
-        self._due = start            # 시작하자마자 한 번 보낸다 (빈 경로도 보고)
+        self._schedule = Schedule(start, 1.0 / period_s)  # 첫 예정 시각이 start: 시작하자마자 빈 경로도 보고
         self._sent: Route | None = None
 
     @property
     def due(self) -> float:
         """다음 주기 송신 예정 시각. 호출자는 이 시각에도 poll한다."""
-        return self._due
+        return self._schedule.due
 
     def poll(self, now: float, route: Route) -> bool:
         """이번에 route를 보내야 하면 True (보낸 것으로 기록한다)."""
-        periodic = now >= self._due
+        periodic = now >= self._schedule.due
         if not periodic and route == self._sent:
             return False
         self._sent = route
         if periodic:
-            self._due += self.period_s
-            if self._due <= now:
-                self._due = now + self.period_s
+            self._schedule.advance(now)
         return True

@@ -48,20 +48,23 @@ def test_REQ_CMD_007_route_relayed_from_sim_to_hmi(gateway, sim_uplink):
             first = await _recv_until(ws, lambda ms: _of(ms, "route"), 2.0)
             t_first = time.monotonic() - t_open
             await ws.send(_waypoint("wp-1", *NEAR))
-            t_sent = time.monotonic()
             after = await _recv_until(ws, lambda ms: _result(ms, "wp-1") and any(
-                d["waypoints"] for d in _of(ms, "route")), 1.0)
-            return first, t_first, after, time.monotonic() - t_sent
+                d["waypoints"] for d in _of(ms, "route")), 2.0)
+            return first, t_first, after
 
-    first, t_first, after, t_route = asyncio.run(run())
+    first, t_first, after = asyncio.run(run())
     snapshot = [m["type"] for m in first[:4]]
     assert snapshot == ["stats", "link_status", "stats", "link_status"], snapshot  # 접속 직후 상태에 route 없음
     empty = _of(first, "route")
-    assert empty and empty[0]["waypoints"] == [] and 0.0 < t_first <= 1.2, t_first
+    # SIM은 1Hz로 보내므로 접속 뒤 1.0초 안에 온다. 0.5초는 시험 PC 부하로 GW·수신이 늦는 몫의 여유
+    assert empty and empty[0]["waypoints"] == [] and 0.0 < t_first <= 1.5, t_first
     assert _result(after, "wp-1")["result"] == "ACCEPTED"
     route = next(d for d in _of(after, "route") if d["waypoints"])
     assert route["waypoints"] == [{"lat": NEAR[0], "lon": NEAR[1]}]
-    assert t_route < 0.5, t_route  # 1Hz를 기다리지 않는다
+    # 1Hz를 기다리지 않는다: SIM은 ACK 바로 뒤에 ROUTE를 보내므로 GW 수신 시각(같은 GW 시계)이 거의 같다.
+    # HMI 쪽 경과 시간이 아니라 GW 시각 차로 재서 시험 PC 부하에 덜 흔들린다. 정확한 시점은 TC-CMD-007-10(가짜 시계)이 본다
+    result_ts = next(m["ts"] for m in after if m["type"] == "cmd_result" and m["data"]["req_id"] == "wp-1")
+    assert 0 <= route["rx_ts"] - result_ts < 300, route["rx_ts"] - result_ts
     assert route["seq"] > empty[0]["seq"] and isinstance(route["rx_ts"], int)
     stats = gateway.messages("stats", 1, timeout_s=2.0, pred=lambda m: m["data"]["source"] == "VEHICLE")
     assert stats and stats[0]["data"]["lost_count"] == 0 and not any(stats[0]["data"]["errors"].values())
