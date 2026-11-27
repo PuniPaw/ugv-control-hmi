@@ -62,7 +62,8 @@ def test_REQ_CMD_007_route_relayed_from_sim_to_hmi(gateway, sim_uplink):
     route = next(d for d in _of(after, "route") if d["waypoints"])
     assert route["waypoints"] == [{"lat": NEAR[0], "lon": NEAR[1]}]
     # 1Hz를 기다리지 않는다: SIM은 ACK 바로 뒤에 ROUTE를 보내므로 GW 수신 시각(같은 GW 시계)이 거의 같다.
-    # HMI 쪽 경과 시간이 아니라 GW 시각 차로 재서 시험 PC 부하에 덜 흔들린다. 정확한 시점은 TC-CMD-007-10(가짜 시계)이 본다
+    # HMI 쪽 경과 시간이 아니라 GW 시각 차로 재서 시험 PC 부하에 덜 흔들린다. 정확한 시점은 TC-CMD-007-10(가짜 시계)이 본다.
+    # 300ms: 1Hz를 기다렸다면 평균 500ms, 최대 1000ms 차이가 난다. 같은 PC의 UDP 두 개 사이 지연(수 ms)에 부하 여유를 둔 값이다
     result_ts = next(m["ts"] for m in after if m["type"] == "cmd_result" and m["data"]["req_id"] == "wp-1")
     assert 0 <= route["rx_ts"] - result_ts < 300, route["rx_ts"] - result_ts
     assert route["seq"] > empty[0]["seq"] and isinstance(route["rx_ts"], int)

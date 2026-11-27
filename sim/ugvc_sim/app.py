@@ -87,7 +87,7 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
     sender = _Sender(sock, gw_addr)
     t0 = clock()
     sim = Simulator(start=t0)
-    telemetry_due = Schedule(t0, rate_hz)
+    telemetry_due = Schedule(t0, 1.0 / rate_hz)
     route_reporter = RouteReporter(t0)
     tel_seq = ack_seq = route_seq = sent = 0
     last_tick = t0
@@ -111,20 +111,20 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
 
     def receive(now: float) -> float:
         """다음 예정 시각(TELEMETRY·ROUTE 중 이른 쪽)까지 COMMAND·HEARTBEAT 하나를 기다려 처리한다.
-        처리한 시각을 돌려준다 (받은 것이 없으면 now)."""
+        처리한 시각(받은 것이 없으면 기다린 뒤의 시각)을 돌려준다."""
         nonlocal recv_failing, to_drop, ack_seq, last_tick
         sock.settimeout(max(0.001, min(min(telemetry_due.due, route_reporter.due) - now, _MAX_WAIT_S)))
         try:
             data, _ = sock.recvfrom(2048)
         except socket.timeout:
-            return now
+            return clock()  # 기다린 뒤의 시각: report_route가 그 시각으로 Failsafe를 판정한다
         except OSError as e:  # 일시 오류(예: ICMP 오류)는 계속. 소켓 자체가 없으면 다시 던진다
             if e.errno in _FATAL_SOCKET_ERRNOS:
                 raise
             if not recv_failing:
                 recv_failing = True
                 _emit({"type": "recv_error", "errno": e.errno, "error": str(e)})
-            return now
+            return clock()
         recv_failing = False
         now = clock()
         before = (int(sim.state.mode), sim.failsafe)

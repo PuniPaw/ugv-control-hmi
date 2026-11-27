@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-SDD-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.9.1 (초안) |
+| 버전 | v0.9.2 (초안) |
 | 작성일 | 2026-11-11 |
-| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-STP-001 v0.35, ADR-001, ADR-002, ADR-003 |
+| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-STP-001 v0.36, ADR-001, ADR-002, ADR-003 |
 
 ## 개정 이력
 
@@ -46,6 +46,7 @@
 | v0.8.1 | 2026-11-27 | 8.3·8.5 PR #62 1차 리뷰 반영: 연결 범위에 `routeSeen`(이 연결에서 route를 받았는지)을 두고, 받기 전에는 이전 연결의 경로를 흐림(재접속·기준선 재설정 직후 사라진 경로가 현재 값처럼 보이던 결함). 지금 향하는 점 마커는 `zIndexOffset`으로 맨 위에, 흐린 경로로 마운트될 때 pane 클래스를 바로 설정 |
 | v0.9 | 2026-11-27 | 경로 보고(SRS v0.13 REQ-CMD-007·REQ-SAFE-003, ICD v0.16 6.6·7.1 `route`, PR #62가 먼저 병합되어 이 PR의 v0.8을 v0.9로 다시 매김). 6.2 SIM: STANDBY 기동(v0.4의 "시연용 MISSION 시작"과 상태도의 시작 전이를 바꿈, 경로 없는 MISSION 직진 삭제), 경로가 32개면 WAYPOINT는 REJECTED_STATE, `RouteReporter`(바뀌면 그 처리 안에, 1.0s 예정 시각마다, 루프가 ROUTE 예정 시각에도 깨어남), `to_route`. 5장 GW: ROUTE를 IF-03 `route`로 중계하고 접속 직후 상태에는 넣지 않음, 5.1 ROUTE는 DB에 저장하지 않음. 2·3장 모듈 표와 `Message`에 `Route` |
 | v0.9.1 | 2026-11-27 | 6.2 PR #63 1차 리뷰 반영: `Simulator.route(now)`가 Failsafe 조건을 먼저 평가(1Hz ROUTE가 두절 3.0s 시각에 낡은 경로를 한 번 더 보내던 결함), `app.run`은 사건 하나를 처리한 뒤 `report_route`를 한 곳에서만 부름, TELEMETRY·ROUTE 예정 시각은 공용 `Schedule`(v0.9의 "절대 시각 `t0 + k × 0.1s`" 문구를 실제 구현인 예정 시각 누적으로 고침, 1Hz가 먼저 오면 TELEMETRY가 1 ms까지 늦을 수 있음) |
+| v0.9.2 | 2026-11-27 | 6.2 PR #63 2차 리뷰 반영: Failsafe를 먼저 평가하는 메서드에 `route(now)`, 수신 시간 초과·오류 뒤에는 기다린 뒤의 시각으로 판정(빈 ROUTE는 기한 뒤 최대 0.1s), TELEMETRY가 1Hz보다 드물 때 빈 ROUTE가 FAILSAFE TELEMETRY보다 먼저 나가는 한계, `Schedule`은 주기를 받음 |
 
 ---
 
@@ -316,7 +317,7 @@ stateDiagram-v2
 
 - **`parse_uplink`(`uplink.py`)**는 COMMAND를 세 가지로 나눈다: cmd_id 0은 폐기(ACK 없음), 필드가 6.3 범위 밖이면 `InvalidCommand`, 그 밖은 `ReceivedCommand`. 별도 형으로 나눠 "범위 밖인데 실행"이 표현되지 않게 했다.
 - **`Simulator`(`simulator.py`, 순수 로직)**는 차량 상태(`VehicleState`), 출발 지점, `HeartbeatWatch`, 최근 1024개 cmd_id의 첫 결과(`OrderedDict`)를 가진다. 소켓·시계가 없고 모든 메서드가 시각 `now`(단조 시계 초)를 인자로 받는다. 그래서 시험은 3.0s 경계를 가짜 시각으로 바로 확인한다.
-  - `on_heartbeat(now)`, `on_command(msg, now)`, `advance(now, dt)`는 모두 **맨 앞에서 Failsafe 조건을 먼저 평가**한다(`HeartbeatWatch.expired`: 마지막 HEARTBEAT, 없으면 시작 후 3.0s 이상). 그래서 사건이 어떤 순서로 와도 결과가 같다. 예를 들어 3초 넘게 끊겼다가 처음 온 HEARTBEAT도 감시를 되살리기 전에 먼저 정지를 반영한다.
+  - `on_heartbeat(now)`, `on_command(msg, now)`, `advance(now, dt)`, `route(now)`는 모두 **맨 앞에서 Failsafe 조건을 먼저 평가**한다(`HeartbeatWatch.expired`: 마지막 HEARTBEAT, 없으면 시작 후 3.0s 이상). 그래서 사건이 어떤 순서로 와도 결과가 같다. 예를 들어 3초 넘게 끊겼다가 처음 온 HEARTBEAT도 감시를 되살리기 전에 먼저 정지를 반영한다.
   - 명령 처리 순서: 이미 처리한 cmd_id면 첫 결과로 ACK만 다시(REQ-CMD-003, REJECTED_STATE도 같음) → `InvalidCommand`면 REJECTED_INVALID(두절 중이어도 필드 오류가 먼저) → 두절 중이면 STOP은 ACCEPTED(상태 그대로), RTB·WAYPOINT는 REJECTED_STATE → 남은 경로가 32개인데 WAYPOINT면 REJECTED_STATE(REQ-CMD-007, 경로·상태 그대로) → 그 밖은 `apply_command` 후 ACCEPTED. 결과는 `CommandOutcome{ack, execute}`이고 `execute`는 이번에 차량 상태에 적용한 명령이다(중복·거절, 상태를 바꾸지 않는 두절 중 STOP이면 `None`). stdout `executed`도 같은 뜻이라 두절 중 STOP이 Failsafe를 푼 것처럼 보이지 않는다.
   - **한계: 경과 시간은 도착 시각이 아니라 처리 시각으로 잰다.** SIM 프로세스 자체가 2초 넘게 멈췄다 재개하면 HEARTBEAT가 소켓에 제때 도착했어도 Failsafe에 들어간다. 제어기가 멈춘 것이므로 안전한 쪽 판정으로 두고, 도착 시각(`SO_TIMESTAMP`)은 쓰지 않는다.
 - **`vehicle.py`(순수 함수)**: `VehicleState`는 불변이고 남은 경로점 `route`를 가진다.
@@ -327,7 +328,7 @@ stateDiagram-v2
   - `to_route`: 남은 경로점을 ICD 6.6 정수 LSB로 바꾼다. 경로점은 WAYPOINT의 1e-7 deg 정수에서 왔으므로 반올림하면 받은 값 그대로다.
   - STOP·RTB·Failsafe가 경로를 비우는 것은 SIM의 선택이다(ICD에 없음). 정지 뒤 받은 WAYPOINT가 예전 경로 뒤에 붙어 운용자가 모르는 곳으로 가지 않게 한다.
 - **`RouteReporter`(`simulator.py`, 순수 로직)**: ROUTE를 보낼 때를 정한다(ICD 6.6, REQ-CMD-007). 마지막으로 보낸 경로와 다음 주기 예정 시각(`due`, `Schedule`로 시작 시각부터 1.0s 간격)을 가진다. 보낼 경로는 `Simulator.route(now)`에서 받는다. 이 메서드도 다른 사건처럼 Failsafe 조건부터 평가하므로, 두절 3.0s가 지난 시각에는 이미 빈 경로다(PR #63 1차 리뷰: 1Hz 송신이 판정 전에 낡은 경로를 보냈음). `poll(now, route)`는 경로가 마지막으로 보낸 것과 다르거나 `now ≥ due`면 참이다. 바뀐 경로 송신은 주기를 밀지 않고, 한 주기 넘게 늦으면 밀린 몫을 몰아 보내지 않고 지금부터 다시 잰다(TELEMETRY와 같은 규칙). 시각을 인자로 받으므로 시험은 가짜 시각으로 확인한다.
-- **`app.run`**: TELEMETRY, ACK, ROUTE는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 각자 seq 스트림(0부터)을 쓴다. 루프는 한 바퀴에 사건 하나(TELEMETRY 예정 시각이면 `tick`, ROUTE 예정 시각이면 기다리지 않음, 그 밖은 `receive`로 COMMAND·HEARTBEAT 하나)를 처리한 뒤 `report_route`를 **한 곳에서만** 부른다. 그래서 경로가 바뀌면 그 처리 안에서 ROUTE가 나가고(WAYPOINT는 ACK 바로 뒤, 경로점 도착·Failsafe 진입은 그 TELEMETRY 바로 뒤), 판정 순서가 호출 지점마다 갈리지 않는다. 1Hz 송신은 TELEMETRY tick에 묶지 않고 ROUTE 예정 시각에도 깨어나 보낸다. tick에서만 보면 예정 시각을 한 tick 놓쳐 간격이 1.1s가 될 수 있기 때문이다. 시작하자마자 빈 경로를 한 번 보낸다. 첫 TELEMETRY는 시작 상태 그대로이고, 그 뒤 상태는 실제 경과 시간만큼 진행한다. 한 주기 넘게 늦으면 밀린 TELEMETRY를 몰아 보내지 않고 지금부터 다시 잰다. **송신 실패(OSError: 경로 없음 등)는 기록만 하고 계속 돈다.** 두절 상황에서 SIM이 죽으면 Failsafe가 사라지기 때문이다(실패 시작·회복 때만 `send_error`·`send_ok` 한 줄). GW 주소는 시작 때 한 번 해석해 실행 중 이름 해석 실패가 없다. 시작 때 고칠 수 없는 설정(이름 해석 실패, `--host`가 루프백인데 GW가 루프백이 아님, `--rate`가 유한한 0 초과 1000 이하가 아님)은 실행 전에 오류로 끝낸다. 수신 오류도 실패 시작에만 `recv_error` 한 줄을 쓰고 계속 돌며, 소켓 자체가 없어진 경우(EBADF·ENOTSOCK)만 종료한다. 주기 중간에 받은 COMMAND는 받은 시각까지 이전 상태로 진행한 뒤 적용한다(STOP 전 이동이 사라지거나 RTB가 주기 시작부터 적용되지 않게). stdout에는 사건마다 JSON 한 줄(`command`, `heartbeat`, `reject`, `drop`)과 전이(`failsafe`, `mode`)를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
+- **`app.run`**: TELEMETRY, ACK, ROUTE는 GW 차량 포트(`--gw-port`, 기본 15001)로 보내고 각자 seq 스트림(0부터)을 쓴다. 루프는 한 바퀴에 사건 하나(TELEMETRY 예정 시각이면 `tick`, ROUTE 예정 시각이면 기다리지 않음, 그 밖은 `receive`로 COMMAND·HEARTBEAT 하나)를 처리한 뒤 `report_route`를 **한 곳에서만** 부른다. 그래서 경로가 바뀌면 그 처리 안에서 ROUTE가 나가고(WAYPOINT는 ACK 바로 뒤, 경로점 도착·Failsafe 진입은 그 TELEMETRY 바로 뒤), 판정 순서가 호출 지점마다 갈리지 않는다. 1Hz 송신은 TELEMETRY tick에 묶지 않고 ROUTE 예정 시각에도 깨어나 보낸다. tick에서만 보면 예정 시각을 한 tick 놓쳐 간격이 1.1s가 될 수 있기 때문이다. 수신 시간 초과·오류 뒤에는 기다린 뒤의 시각으로 판정하므로, Failsafe에 들어간 뒤 빈 ROUTE는 기한 뒤 소켓 대기 한 번(최대 0.1s) 안에 나간다. **한계:** TELEMETRY가 1Hz보다 드물면(`--rate` < 1) 빈 ROUTE가 FAILSAFE_ACTIVE가 실린 TELEMETRY보다 최대 한 TELEMETRY 주기 먼저 나가, 그동안 HMI에는 이전 mode와 빈 경로가 함께 보일 수 있다. 기본 10Hz에서는 둘 다 기한 뒤 0.1s 안이다. 시작하자마자 빈 경로를 한 번 보낸다. 첫 TELEMETRY는 시작 상태 그대로이고, 그 뒤 상태는 실제 경과 시간만큼 진행한다. 한 주기 넘게 늦으면 밀린 TELEMETRY를 몰아 보내지 않고 지금부터 다시 잰다. **송신 실패(OSError: 경로 없음 등)는 기록만 하고 계속 돈다.** 두절 상황에서 SIM이 죽으면 Failsafe가 사라지기 때문이다(실패 시작·회복 때만 `send_error`·`send_ok` 한 줄). GW 주소는 시작 때 한 번 해석해 실행 중 이름 해석 실패가 없다. 시작 때 고칠 수 없는 설정(이름 해석 실패, `--host`가 루프백인데 GW가 루프백이 아님, `--rate`가 유한한 0 초과 1000 이하가 아님)은 실행 전에 오류로 끝낸다. 수신 오류도 실패 시작에만 `recv_error` 한 줄을 쓰고 계속 돌며, 소켓 자체가 없어진 경우(EBADF·ENOTSOCK)만 종료한다. 주기 중간에 받은 COMMAND는 받은 시각까지 이전 상태로 진행한 뒤 적용한다(STOP 전 이동이 사라지거나 RTB가 주기 시작부터 적용되지 않게). stdout에는 사건마다 JSON 한 줄(`command`, `heartbeat`, `reject`, `drop`)과 전이(`failsafe`, `mode`)를 쓴다. `--drop-first N`은 첫 송신 유실을 재현하는 시험용 옵션이다.
 
 ## 7. 시험 용이성을 위한 설계
 

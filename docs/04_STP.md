@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.35 (초안) |
+| 버전 | v0.36 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-SDD-001 v0.9.1, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-SDD-001 v0.9.2, ADR-002 |
 
 ## 개정 이력
 
@@ -47,6 +47,7 @@
 | v0.33 | 2026-11-27 | PR #62 1차 리뷰 반영: TC-HMI-007-07의 HmiController 시험을 TC-HMI-007-08로 분리(TC와 시험 1:1), TC-HMI-006-22(재접속·기준선 재설정 뒤 이 연결에서 route를 받기 전에는 이전 경로를 흐림) 추가, TC-HMI-001-11 입력 문구를 시험 순서와 맞춤 |
 | v0.34 | 2026-11-27 | 경로 보고·STANDBY 기동(SRS v0.13 REQ-CMD-007·REQ-SAFE-003, ICD v0.16 6.6·7.1 `route`, SDD v0.9, PR #62가 먼저 병합되어 이 PR의 v0.32를 v0.34로 다시 매김): 3.26 TC-CMD-007-01~12(ROUTE 검증 ⑥⑦⑧ 벡터, codec, GW 별도 스트림, IF-03 `route`, SIM 남은 경로·상한 32, `RouteReporter` 가짜 시각, SIM 본체, SIM → GW → WebSocket), 3.27 TC-SAFE-003-01~03 신설. STANDBY 기동에 맞춰 TC-SAFE-001-01·03·06의 기동 상태를 STANDBY로, TC-SAFE-002-06·07의 주행 재개를 RTB에서 WAYPOINT로(시작 위치에서 RTB는 바로 도착), TC-SAFE-001-07의 3.0s 판정에 1 ms 여유(같은 시각의 1Hz ROUTE), TC-HMI-001-03은 먼저 WAYPOINT로 주행시키고 진행 방향 90°. 2.7 SIM 운동 모사 예외의 시험 목록 |
 | v0.35 | 2026-11-27 | PR #63 1차 리뷰 반영(SDD v0.9.1): TC-CMD-007-16(두절 3.0s 시각과 1Hz ROUTE가 겹쳐도 낡은 경로를 보내지 않음, 10Hz·0.4Hz) 추가. TC와 시험 1:1로 TC-CMD-007-03을 -03(C++)·-13(Python 벡터)·-14(Python 길이)로, -09를 -09·-15(멈춘 뒤)로 나눔. TC-CMD-007-10 기대값 숫자(0·1·2·3·4s), TC-CMD-007-11 시간 기준(빈 경로 1.5s, 즉시성은 GW 시각 차 300ms). TC-SAFE-001-06은 시작 직후 WAYPOINT로 주행시켜 정지 전후를 구분(STANDBY 기동 뒤 "위치 고정"이 아무것도 검증하지 않던 것). 4장 시연 점검은 각 단계 끝에 HMI 폐기 0 |
+| v0.36 | 2026-11-27 | PR #63 2차 리뷰 반영(SDD v0.9.2): TC-CMD-007-17(Failsafe 기한이 예정 시각과 겹치지 않아도 빈 ROUTE는 기한 뒤 0.1s 안, 수신 시간 초과 뒤 낡은 시각으로 판정하던 것) 추가 |
 
 ---
 
@@ -548,6 +549,7 @@ U는 vitest(순수 함수 `state/alerts.ts`, `HmiController`), D는 시연 점�
 | TC-CMD-007-14 | U | Python `Route.from_payload`: 빈 payload, count 2인데 경로점 1개, 1바이트 더 붙음 | None. 32개 payload는 257B | `test_REQ_CMD_007_route_length_must_match_count` |
 | TC-CMD-007-15 | U | `RouteReporter`(가짜 시각): 송신 뒤 5s 멈췄다 poll | 멈춘 뒤 한 번만 보내고 밀린 몫을 몰아 보내지 않으며, 지금부터 다시 1.0s | `test_REQ_CMD_007_route_reporter_does_not_burst_after_stall` |
 | TC-CMD-007-16 | U | SIM 본체(`app.run`, 가짜 소켓·가짜 시계, 10Hz와 0.4Hz): HEARTBEAT 0.5s, WAYPOINT 0.6s, 마지막 HEARTBEAT 1.0s. 두절 3.0s가 되는 4.0s가 1Hz ROUTE 예정 시각과 겹침 | 4.0s 전에는 경로가 있는 ROUTE, 4.0s부터의 ROUTE는 모두 빈 경로(ROUTE 송신 앞에서도 Failsafe를 먼저 판정, PR #63 1차 리뷰 지적 1의 재현) | `test_REQ_CMD_007_process_sends_no_stale_route_once_failsafe_holds` |
+| TC-CMD-007-17 | U | SIM 본체(`app.run`, 가짜 소켓·가짜 시계, 10Hz·1Hz·0.4Hz): 마지막 HEARTBEAT 1.1s라 Failsafe 기한 4.1s가 TELEMETRY·ROUTE 예정 시각과 겹치지 않음 | 기한 뒤 첫 빈 ROUTE가 기한 + 0.1s(소켓 대기 한 번) 안 | `test_REQ_CMD_007_process_reports_empty_route_within_one_wait_after_failsafe` |
 
 ### 3.27 REQ-SAFE-003 STANDBY 기동, 명령 없이 주행 안 함 (SIM)
 

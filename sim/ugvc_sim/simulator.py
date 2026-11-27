@@ -98,7 +98,7 @@ class RouteReporter:
     """
 
     def __init__(self, start: float, period_s: float = ROUTE_PERIOD_S):
-        self._schedule = Schedule(start, 1.0 / period_s)  # 첫 예정 시각이 start: 시작하자마자 빈 경로도 보고
+        self._schedule = Schedule(start, period_s)  # 첫 예정 시각이 start: 시작하자마자 빈 경로도 보고
         self._sent: Route | None = None
 
     @property

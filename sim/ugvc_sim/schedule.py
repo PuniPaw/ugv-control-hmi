@@ -3,15 +3,15 @@ from __future__ import annotations
 
 
 class Schedule:
-    """예정 시각을 처리할 때마다 한 주기(1 / rate_hz)씩 더한다.
+    """예정 시각을 처리할 때마다 한 주기씩 더한다.
 
     처리한 시각이 아니라 예정 시각에 더하므로 늦음이 쌓이지 않는다. 한 주기 넘게 늦었으면 밀린 몫을 몰아 보내지 않고
-    지금부터 다시 잰다. 주기를 부동소수로 더해 가므로 10Hz 예정 시각은 정수 초와 정확히 겹치지 않는다(0.1을 30번 더하면
-    3.0보다 조금 크다). 그래서 같은 시작 시각의 1Hz 예정 시각이 10Hz보다 아주 조금 먼저 온다.
+    지금부터 다시 잰다. 주기를 부동소수로 더해 가므로 서로 다른 주기의 예정 시각은 정수 초에서도 정확히 겹치지 않을 수 있다
+    (예: 0.1을 30번 더하면 3.0보다 조금 크다).
     """
 
-    def __init__(self, start: float, rate_hz: float):
-        self.period = 1.0 / rate_hz
+    def __init__(self, start: float, period_s: float):
+        self.period = period_s
         self.due = start
 
     def advance(self, now: float) -> None:

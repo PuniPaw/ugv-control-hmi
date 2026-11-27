@@ -258,7 +258,7 @@ def test_REQ_SAFE_003_process_starts_standby_and_stays_without_command():
 @pytest.mark.parametrize("rate_hz", [10.0, 0.4])
 def test_REQ_CMD_007_process_sends_no_stale_route_once_failsafe_holds(rate_hz):
     """마지막 HEARTBEAT(1.0s) 뒤 3.0s인 4.0s가 1Hz ROUTE 예정 시각과 겹쳐도, 그 ROUTE부터 경로는 비어 있다.
-    ROUTE 송신 앞에서도 Failsafe를 먼저 판정한다 (PR #63 1차 리뷰 지적 1의 재현 시험). TELEMETRY가 드문 0.4Hz에서도 같다."""
+    ROUTE 송신 앞에서도 Failsafe를 먼저 판정한다. TELEMETRY가 드문 0.4Hz에서도 같다."""
     hb0, hb1 = encode_frame(MsgType.HEARTBEAT, 0, 0), encode_frame(MsgType.HEARTBEAT, 1, 0)
     wp = encode_frame(MsgType.COMMAND, 0, 0, Command(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON).to_payload())
     sock = _FakeSocket(unreachable=False, inbox=[(0.5, hb0), (0.6, wp), (1.0, hb1)])
@@ -267,3 +267,16 @@ def test_REQ_CMD_007_process_sends_no_stale_route_once_failsafe_holds(rate_hz):
     assert any(r.waypoints for t, _, r in routes if t < 4.0)  # 두절 전에는 경로가 있었다
     late = [(t, len(r.waypoints)) for t, _, r in routes if t >= 4.0]
     assert late and all(n == 0 for _, n in late), late
+
+
+@pytest.mark.parametrize("rate_hz", [10.0, 1.0, 0.4])
+def test_REQ_CMD_007_process_reports_empty_route_within_one_wait_after_failsafe(rate_hz):
+    """Failsafe 기한(마지막 HEARTBEAT 1.1s + 3.0s = 4.1s)이 TELEMETRY·ROUTE 예정 시각과 겹치지 않아도, 빈 ROUTE는
+    기한 뒤 소켓 대기 한 번(최대 0.1s) 안에 나간다. 수신 시간 초과 뒤에는 기다린 뒤의 시각으로 판정한다."""
+    hb0, hb1 = encode_frame(MsgType.HEARTBEAT, 0, 0), encode_frame(MsgType.HEARTBEAT, 1, 0)
+    wp = encode_frame(MsgType.COMMAND, 0, 0, Command(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON).to_payload())
+    sock = _FakeSocket(unreachable=False, inbox=[(0.5, hb0), (0.6, wp), (1.1, hb1)])
+    app.run(sock, ("127.0.0.1", 15001), rate_hz=rate_hz, count=int(5.0 * rate_hz) + 1, clock=sock.clock)
+    deadline = 1.1 + 3.0
+    first_empty = next(t for t, _, r in sock.sent(MsgType.ROUTE) if t >= deadline and not r.waypoints)
+    assert first_empty - deadline <= 0.1 + 1e-9, first_empty

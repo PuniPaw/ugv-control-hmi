@@ -149,9 +149,11 @@ function checkPageErrors() {
   if (pageErrors.length) throw new Error(`페이지 오류: ${pageErrors.join(" | ")}`);
 }
 
-/** HMI가 형식 오류로 폐기한 IF-03 메시지가 없다 (상태 패널의 폐기 칸은 1개 이상일 때만 나타난다, REQ-HMI-007).
- * GW가 보내는 모든 type(SIM이 1Hz로 보내는 route 포함)을 HMI가 알아듣는지 본다 */
-async function checkNoDiscarded(page) {
+/** 단계 끝 점검: 페이지 오류가 없고, HMI가 형식 오류로 폐기한 IF-03 메시지가 없다
+ * (상태 패널의 폐기 칸은 1개 이상일 때만 나타난다, REQ-HMI-007). 폐기 0은 GW가 보내는 모든 type
+ * (SIM이 1Hz로 보내는 route 포함)을 HMI가 알아듣는지 본다 */
+async function checkPage(page) {
+  checkPageErrors();
   const shown = page.getByTestId("discarded");
   if (await shown.count()) throw new Error(`HMI가 IF-03 메시지를 폐기함: ${await shown.textContent()}`);
 }
@@ -213,8 +215,7 @@ async function scenario(browser) {
   await expectText(page, "link-state-VEHICLE", "LOST");
   await expectAlert(page, "VEHICLE_LOST", "ACTIVE");
   await expectAttr(page, "alert", "data-level", "WARNING");
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 
   step("2. SIM 10Hz 송신(STANDBY 기동) → WAYPOINT로 주행: 차량 링크 CONNECTED, 유실률·모드·배터리 표시, 마커와 궤적 이동, 차량 값 진하게");
   let sim = startSim(ports);
@@ -248,8 +249,7 @@ async function scenario(browser) {
   await page.waitForTimeout(3000);
   const n2 = await drawnPoints();
   if (!(n2 >= n1 + 20)) throw new Error(`궤적이 늘지 않음: ${n1} -> ${n2} (3초, 10Hz)`);
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 
   step("2b. 연결 중 HMI 시계 +3초 계단 변화: 데이터 지연 → 기준선 재설정(재접속 1회, 연결 끊김 표시 없음) → 다시 ok");
   const socketsBefore = await page.evaluate(() => window.__gwSocketsCreated);
@@ -277,8 +277,7 @@ async function scenario(browser) {
   await expectAlert(page, "GW_DELAY", "CLEARED");
   if (await page.locator('[data-testid="alert"][data-kind="GW_DISCONNECTED"]').count()) throw new Error("2b: 기준선 재설정에 GW 연결 끊김 경고");
   await ackAlert(page, "GW_DELAY");
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 
   step("2c. 명령: 버튼은 확인만 연다(취소하면 SIM에 아무것도 안 감), 보내기를 눌러야 송신, 결과 ACCEPTED 표시");
   await expectAttr(page, "cmd-panel", "data-blocked", "false");
@@ -315,8 +314,7 @@ async function scenario(browser) {
     throw new Error(`GW 송신 기록 ${gw.sentReqIds()}과 화면 ${acceptedIds}이 다름`);
   }
   if (screenshot) await page.screenshot({ path: screenshot });
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 
   step("2d. 결과 전에 GW 끊김: '결과 미확인', 새 GW에 자동 재송신 없음, 다시 시도는 경고가 붙은 새 확인 절차로 새 req_id, ACK가 없으면 TIMEOUT");
   // ACK가 없는 SIM: 받은 COMMAND를 버린다(--drop-first). 차량 LOST를 거쳐 다시 띄워야 GW가 seq 기준값을 새로 잡는다
@@ -358,8 +356,7 @@ async function scenario(browser) {
   if (resent.length !== 1 || resent[0] !== newReqId || newReqId === lostReqId) {
     throw new Error(`다시 시도 req_id: 화면 ${newReqId}, 이전 ${lostReqId}, GW 송신 ${resent}`);
   }
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 
   step("3. SIM 중지: 차량 링크 LOST 경고가 마지막 유효 패킷 수신 후 2.0초 안에, 차량 값 '이전 값'으로 흐림, 배너는 그대로 ok, 명령 버튼 비활성과 사유");
   await expectText(page, "link-state-VEHICLE", "CONNECTED");
@@ -381,8 +378,7 @@ async function scenario(browser) {
   }
   await expectAttr(page, "vehicle", "data-stale", "true");
   await expectAttr(page, "connection-banner", "data-level", "ok");
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 
   step("4. GW 중지: 'GW 연결 끊김 · N초 후 재접속', 패널 전체 흐림");
   await stop(gw.proc);
@@ -393,16 +389,14 @@ async function scenario(browser) {
   await expectAlert(page, "GW_DISCONNECTED", "ACTIVE");
   await expectAlert(page, "VEHICLE_LOST", "ACTIVE"); // 차량 조건은 마지막으로 받은 값으로
   if (screenshot) await page.screenshot({ path: screenshot.replace(/(\.png)?$/, "-alerts.png") }); // 경고가 보이는 화면
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 
   step("5. GW 재시작(같은 포트): 자동 재접속, 새 stats로 다시 FRESH");
   gw = await startGateway(ports, gw.wsPort);
   await expectAttr(page, "connection-banner", "data-level", "ok", 8000);
   await expectAttr(page, "status-panel", "data-stale", "false");
   await expectAlert(page, "GW_DISCONNECTED", "CLEARED");
-  checkPageErrors();
-  await checkNoDiscarded(page);
+  await checkPage(page);
 }
 
 let browser = null;
