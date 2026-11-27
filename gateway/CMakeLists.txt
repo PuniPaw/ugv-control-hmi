@@ -22,6 +22,7 @@ add_library(ugvc_codec
   src/codec/telemetry.cpp
   src/codec/detection.cpp
   src/codec/ack.cpp
+  src/codec/route.cpp
   src/codec/command.cpp
 )
 target_include_directories(ugvc_codec PUBLIC include)
@@ -103,6 +104,7 @@ if(UGVC_BUILD_TESTS)
     tests/codec/telemetry_test.cpp
     tests/codec/detection_ack_test.cpp
     tests/codec/command_test.cpp
+    tests/codec/route_test.cpp
     tests/ingress/validator_test.cpp
     tests/ingress/seq_tracker_test.cpp
     tests/link/link_monitor_test.cpp

@@ -10,6 +10,7 @@
 #include "ugvc/codec/ack.hpp"
 #include "ugvc/codec/detection.hpp"
 #include "ugvc/codec/frame.hpp"
+#include "ugvc/codec/route.hpp"
 #include "ugvc/codec/telemetry.hpp"
 #include "ugvc/ingress/reject_reason.hpp"
 #include "ugvc/ingress/source.hpp"
@@ -17,7 +18,7 @@
 namespace ugvc::ingress {
 
 // GW가 받는 메시지. 검증 단계에서 한 번 디코딩한 값을 그대로 넘긴다 (다시 디코딩하지 않는다).
-using Message = std::variant<codec::Telemetry, codec::Detection, codec::Ack>;
+using Message = std::variant<codec::Telemetry, codec::Detection, codec::Ack, codec::Route>;
 
 // 규칙 ①~⑧을 통과한 프레임. 수신 버퍼와 무관한 값이라 버퍼가 재사용돼도 안전하다.
 struct CheckedFrame {

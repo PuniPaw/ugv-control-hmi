@@ -130,12 +130,44 @@ ACK = [
     for r in (0, 1, 2)
 ]
 
+# ---------------------------------------------------------------- route.json (ICD 6.6)
+
+ROUTE_WP_FMT = ">ii"  # lat, lon (1e-7 deg)
+assert struct.calcsize(ROUTE_WP_FMT) == 8
+
+
+def route_payload(waypoints, count=None) -> bytes:
+    n = len(waypoints) if count is None else count
+    return struct.pack(">B", n) + b"".join(struct.pack(ROUTE_WP_FMT, lat, lon) for lat, lon in waypoints)
+
+
+def route_entry(name, note, waypoints) -> dict:
+    return {
+        "name": name,
+        "note": note,
+        "fields": {"waypoints": [{"lat": lat, "lon": lon} for lat, lon in waypoints]},
+        "payload_hex": route_payload(waypoints).hex(),
+        "expect": "accept",
+    }
+
+
+ROUTE_NOMINAL_WPS = [(361240000, 1277660000), (361250000, 1277670000), (361234567, 1277680000)]
+ROUTE_MAX_WPS = [(361200000 + i * 1000, 1277600000 + i * 1000) for i in range(32)]
+
+ROUTE = [
+    route_entry("route_empty", "count 0 = 남은 경로 없음 (21B 프레임)", []),
+    route_entry("route_nominal", "경로점 3개, 첫 원소가 지금 향하는 점", ROUTE_NOMINAL_WPS),
+    route_entry("route_max_count", "count 32, 최대 payload 257B (프레임 277B)", ROUTE_MAX_WPS),
+    route_entry("route_bounds", "좌표 경계 ±90°, ±180° (음수 상위 바이트 처리)",
+                [(900000000, 1800000000), (-900000000, -1800000000)]),
+]
+
 # ---------------------------------------------------------------- validation.json (ICD 9장 규칙 ①~⑧)
 #
 # 각 실패 경우는 겨냥한 규칙 하나만 어기고 나머지는 모두 맞게 만든다
 # (예: sync만 틀린 프레임도 CRC는 다시 계산한다). 그래야 첫 실패 규칙이 의도한 규칙이 된다.
 
-MSG_TELEMETRY, MSG_DETECTION, MSG_COMMAND, MSG_ACK = 0x01, 0x02, 0x10, 0x11
+MSG_TELEMETRY, MSG_DETECTION, MSG_ROUTE, MSG_COMMAND, MSG_ACK = 0x01, 0x02, 0x03, 0x10, 0x11
 
 
 def raw_frame(msg_type, payload, *, sync=SYNC, version=VERSION, seq=1, ts=TS,
@@ -154,6 +186,7 @@ def flip_bit(data: bytes, index: int) -> bytes:
 TEL_OK = telemetry_payload(NOMINAL)
 DET_OK = detection_payload(*DET_NOMINAL)
 ACK_OK = ack_payload(1, 0)
+ROUTE_OK = route_payload(ROUTE_NOMINAL_WPS)
 
 
 def tel(**over) -> bytes:
@@ -179,6 +212,8 @@ VALIDATION = [
       for d in DETECTION],
     case("TC-COM-002-01", "telemetry_bounds_min", V, raw_frame(MSG_TELEMETRY, telemetry_payload(TELEMETRY[1]["fields"])), "accept"),
     case("TC-COM-002-01", "telemetry_bounds_max", V, raw_frame(MSG_TELEMETRY, telemetry_payload(TELEMETRY[2]["fields"])), "accept"),
+    *[case("TC-CMD-007-01", r["name"], V, raw_frame(MSG_ROUTE, bytes.fromhex(r["payload_hex"])), "accept")
+      for r in ROUTE],
     case("TC-COM-001-04", "telemetry_reserved_bits", V, raw_frame(MSG_TELEMETRY, tel(status_flags=0xFFF3)), "accept"),
     # ① 길이 < 20
     case("TC-COM-002-03", "empty_datagram", V, b"", "length"),
@@ -202,12 +237,16 @@ VALIDATION = [
     case("TC-COM-002-08", "detection_on_vehicle_port", V, raw_frame(MSG_DETECTION, DET_OK), "type"),
     case("TC-COM-002-08", "telemetry_on_detector_port", D, GOOD_TEL, "type"),
     case("TC-COM-002-08", "command_inbound", V, raw_frame(MSG_COMMAND, bytes(13)), "type"),
+    case("TC-CMD-007-02", "route_on_detector_port", D, raw_frame(MSG_ROUTE, ROUTE_OK), "type"),
     case("TC-COM-002-08", "undefined_type_0x99", V, raw_frame(0x99, b""), "type"),
     # ⑦ msg_type별 payload 길이
     case("TC-COM-002-09", "telemetry_n15", V, raw_frame(MSG_TELEMETRY, TEL_OK[:15]), "length"),
     case("TC-COM-002-09", "ack_n6", V, raw_frame(MSG_ACK, ACK_OK + b"\x00"), "length"),
     case("TC-COM-002-09", "detection_count2_one_object", D, raw_frame(MSG_DETECTION, det(count=2, objects=DET_NOMINAL_OBJS[:1])), "length"),
     case("TC-COM-002-09", "detection_n16", D, raw_frame(MSG_DETECTION, DET_OK[:16]), "length"),
+    case("TC-CMD-007-02", "route_count2_one_waypoint", V, raw_frame(MSG_ROUTE, route_payload(ROUTE_NOMINAL_WPS[:1], count=2)), "length"),
+    case("TC-CMD-007-02", "route_n0", V, raw_frame(MSG_ROUTE, b""), "length"),
+    case("TC-CMD-007-02", "route_count0_with_waypoint", V, raw_frame(MSG_ROUTE, route_payload(ROUTE_NOMINAL_WPS[:1], count=0)), "length"),
     # ⑧ TELEMETRY 범위
     *[case("TC-COM-002-10", f"telemetry_{k}_{v}", V, raw_frame(MSG_TELEMETRY, tel(**{k: v})), "range")
       for k, v in [("lat", 900000001), ("lat", -900000001), ("lon", 1800000001), ("lon", -1800000001),
@@ -227,6 +266,11 @@ VALIDATION = [
     case("TC-COM-002-11", "class_id_3_undefined", D, raw_frame(MSG_DETECTION, det(objects=[(3, 5000, 0, 0, 1, 1)])), "range"),
     # ⑧ ACK 범위
     case("TC-COM-002-12", "ack_result_3", V, raw_frame(MSG_ACK, ack_payload(1, 3)), "range"),
+    # ⑧ ROUTE 범위
+    case("TC-CMD-007-02", "route_count_33", V, raw_frame(MSG_ROUTE, route_payload(ROUTE_MAX_WPS + [(361234567, 1277654321)])), "range"),
+    *[case("TC-CMD-007-02", f"route_{name}", V, raw_frame(MSG_ROUTE, route_payload([ROUTE_NOMINAL_WPS[0], wp])), "range")
+      for name, wp in [("lat_900000001", (900000001, 0)), ("lat_-900000001", (-900000001, 0)),
+                       ("lon_1800000001", (0, 1800000001)), ("lon_-1800000001", (0, -1800000001))]],
     # 여러 규칙 동시 위반 → 첫 규칙만
     case("TC-COM-002-13", "sync_and_crc_wrong", V, raw_frame(MSG_TELEMETRY, TEL_OK, sync=0x55AA, crc_xor=0x00FF), "sync"),
     case("TC-COM-002-13", "crc_and_range_wrong", V, raw_frame(MSG_TELEMETRY, tel(battery=200), crc_xor=0x00FF), "crc"),
@@ -294,6 +338,12 @@ write("ack.json", {
     "schema": "ugvc-ack-vectors/1",
     "generator": "tools/vectors/gen_vectors.py",
     "vectors": ACK,
+})
+
+write("route.json", {
+    "schema": "ugvc-route-vectors/1",
+    "generator": "tools/vectors/gen_vectors.py",
+    "vectors": ROUTE,
 })
 
 write("validation.json", {

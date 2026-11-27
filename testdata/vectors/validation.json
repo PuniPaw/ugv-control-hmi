@@ -60,6 +60,34 @@
       "expect": "accept"
     },
     {
+      "tc": "TC-CMD-007-01",
+      "name": "route_empty",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de38640000010057c5",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-CMD-007-01",
+      "name": "route_nominal",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400001903158815c04c278b6015883cd04c27b270158800874c27d980f550",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-CMD-007-01",
+      "name": "route_max_count",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400010120158779804c26a10015877d684c26a4e8158781504c26a8d0158785384c26acb8158789204c26b0a015878d084c26b488158790f04c26b870158794d84c26bc58158798c04c26c04015879ca84c26c4281587a0904c26c8101587a4784c26cbf81587a8604c26cfe01587ac484c26d3c81587b0304c26d7b01587b4184c26db981587b8004c26df801587bbe84c26e3681587bfd04c26e7501587c3b84c26eb381587c7a04c26ef201587cb884c26f3081587cf704c26f6f01587d3584c26fad81587d7404c26fec01587db284c2702a81587df104c2706901587e2f84c270a781587e6e04c270e601587eac84c2712481587eeb04c2716301587f2984c271a1875f9",
+      "expect": "accept"
+    },
+    {
+      "tc": "TC-CMD-007-01",
+      "name": "route_bounds",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de38640000110235a4e9006b49d200ca5b170094b62e00f2f4",
+      "expect": "accept"
+    },
+    {
       "tc": "TC-COM-001-04",
       "name": "telemetry_reserved_bits",
       "source": "VEHICLE",
@@ -158,6 +186,13 @@
       "expect": "type"
     },
     {
+      "tc": "TC-CMD-007-02",
+      "name": "route_on_detector_port",
+      "source": "DETECTOR",
+      "hex": "aa55010300000001000001a1de386400001903158815c04c278b6015883cd04c27b270158800874c27d980f550",
+      "expect": "type"
+    },
+    {
       "tc": "TC-COM-002-08",
       "name": "undefined_type_0x99",
       "source": "VEHICLE",
@@ -190,6 +225,27 @@
       "name": "detection_n16",
       "source": "DETECTOR",
       "hex": "aa55010200000001000001a1de38640000100000002a000001a1de3863dd028001e0ab9e",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_count2_one_waypoint",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400000902158815c04c278b6021bd",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_n0",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de3864000000732a",
+      "expect": "length"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_count0_with_waypoint",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400000900158815c04c278b60e7da",
       "expect": "length"
     },
     {
@@ -337,6 +393,41 @@
       "name": "ack_result_3",
       "source": "VEHICLE",
       "hex": "aa55011100000001000001a1de38640000050000000103ecd7",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_count_33",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400010921158779804c26a10015877d684c26a4e8158781504c26a8d0158785384c26acb8158789204c26b0a015878d084c26b488158790f04c26b870158794d84c26bc58158798c04c26c04015879ca84c26c4281587a0904c26c8101587a4784c26cbf81587a8604c26cfe01587ac484c26d3c81587b0304c26d7b01587b4184c26db981587b8004c26df801587bbe84c26e3681587bfd04c26e7501587c3b84c26eb381587c7a04c26ef201587cb884c26f3081587cf704c26f6f01587d3584c26fad81587d7404c26fec01587db284c2702a81587df104c2706901587e2f84c270a781587e6e04c270e601587eac84c2712481587eeb04c2716301587f2984c271a18158800874c2775313174",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_lat_900000001",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400001102158815c04c278b6035a4e901000000004475",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_lat_-900000001",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400001102158815c04c278b60ca5b16ff00000000d10a",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_lon_1800000001",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400001102158815c04c278b60000000006b49d20180c0",
+      "expect": "range"
+    },
+    {
+      "tc": "TC-CMD-007-02",
+      "name": "route_lon_-1800000001",
+      "source": "VEHICLE",
+      "hex": "aa55010300000001000001a1de386400001102158815c04c278b600000000094b62dff092e",
       "expect": "range"
     },
     {

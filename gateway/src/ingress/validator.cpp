@@ -8,6 +8,7 @@
 #include "ugvc/codec/ack.hpp"
 #include "ugvc/codec/crc16.hpp"
 #include "ugvc/codec/detection.hpp"
+#include "ugvc/codec/route.hpp"
 #include "ugvc/codec/telemetry.hpp"
 
 namespace ugvc::ingress {
@@ -37,6 +38,13 @@ bool in_range(const Detection& d) {
 
 bool in_range(const Ack& a) { return name_of(static_cast<AckResult>(a.result)) != nullptr; }
 
+bool in_range(const Route& r) {
+  return r.waypoints.size() <= kMaxWaypoints &&
+         std::all_of(r.waypoints.begin(), r.waypoints.end(), [](const Waypoint& w) {
+           return w.lat >= -kLatLimit && w.lat <= kLatLimit && w.lon >= -kLonLimit && w.lon <= kLonLimit;
+         });
+}
+
 // codec 디코더를 Message로 감싼다. 길이가 맞지 않으면(⑦) nullopt.
 template <typename T, std::optional<T> (*Decode)(const std::uint8_t*, std::size_t)>
 std::optional<Message> decode_as(const std::uint8_t* p, std::size_t n) {
@@ -52,9 +60,10 @@ struct InboundRule {
   std::optional<Message> (*decode)(const std::uint8_t*, std::size_t);
 };
 
-constexpr std::array<InboundRule, 3> kInboundRules{{
+constexpr std::array<InboundRule, 4> kInboundRules{{
     {kMsgTelemetry, Source::Vehicle, decode_as<Telemetry, decode_telemetry>},
     {kMsgAck, Source::Vehicle, decode_as<Ack, decode_ack>},
+    {kMsgRoute, Source::Vehicle, decode_as<Route, decode_route>},
     {kMsgDetection, Source::Detector, decode_as<Detection, decode_detection>},
 }};
 

@@ -32,7 +32,7 @@ std::string verdict(const CheckResult& r) {
 const std::set<std::string> kCoveredTcs = {
     "TC-COM-001-04", "TC-COM-002-01", "TC-COM-002-03", "TC-COM-002-04", "TC-COM-002-05",
     "TC-COM-002-06", "TC-COM-002-07", "TC-COM-002-08", "TC-COM-002-09", "TC-COM-002-10",
-    "TC-COM-002-11", "TC-COM-002-12", "TC-COM-002-13",
+    "TC-COM-002-11", "TC-COM-002-12", "TC-COM-002-13", "TC-CMD-007-01", "TC-CMD-007-02",
 };
 
 // tc에 속한 case 전부가 expect대로 판정되는지. 적어도 1건은 있어야 한다.
@@ -71,6 +71,8 @@ TEST(Validator, REQ_COM_002_rule8_telemetry_range) { expect_cases("TC-COM-002-10
 TEST(Validator, REQ_COM_002_rule8_detection_range) { expect_cases("TC-COM-002-11"); }
 TEST(Validator, REQ_COM_002_rule8_ack_range) { expect_cases("TC-COM-002-12"); }
 TEST(Validator, REQ_COM_002_first_failure_only) { expect_cases("TC-COM-002-13"); }
+TEST(Validator, REQ_CMD_007_accepts_route_on_vehicle_port) { expect_cases("TC-CMD-007-01"); }
+TEST(Validator, REQ_CMD_007_rejects_route_by_rules_6_to_8) { expect_cases("TC-CMD-007-02"); }
 
 // 통과한 프레임은 msg_type에 맞는 메시지로 디코딩되어 나오고, 수신 버퍼가 사라져도 값이 남는다
 TEST(Validator, REQ_COM_002_accepted_frame_carries_decoded_message) {
@@ -89,6 +91,7 @@ TEST(Validator, REQ_COM_002_accepted_frame_carries_decoded_message) {
       case ugvc::codec::kMsgTelemetry: EXPECT_TRUE(std::holds_alternative<ugvc::codec::Telemetry>(f.message)); break;
       case ugvc::codec::kMsgDetection: EXPECT_TRUE(std::holds_alternative<ugvc::codec::Detection>(f.message)); break;
       case ugvc::codec::kMsgAck: EXPECT_TRUE(std::holds_alternative<ugvc::codec::Ack>(f.message)); break;
+      case ugvc::codec::kMsgRoute: EXPECT_TRUE(std::holds_alternative<ugvc::codec::Route>(f.message)); break;
       default: ADD_FAILURE() << "unexpected msg_type " << int{f.header.msg_type};
     }
   }

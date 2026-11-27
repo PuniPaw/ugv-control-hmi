@@ -8,6 +8,7 @@ namespace ugvc::codec {
 
 inline constexpr std::uint8_t kMsgTelemetry = 0x01;  // SIM → GW, IF-01a
 inline constexpr std::uint8_t kMsgDetection = 0x02;  // DET → GW, IF-02
+inline constexpr std::uint8_t kMsgRoute = 0x03;      // SIM → GW, IF-01a
 inline constexpr std::uint8_t kMsgCommand = 0x10;    // GW → SIM, IF-01b
 inline constexpr std::uint8_t kMsgAck = 0x11;        // SIM → GW, IF-01a
 inline constexpr std::uint8_t kMsgHeartbeat = 0x20;  // GW → SIM, IF-01b

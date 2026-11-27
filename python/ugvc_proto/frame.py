@@ -22,6 +22,7 @@ class MsgType(IntEnum):
     """msg_type 값 (ICD 5장). 모든 Python 코드는 여기 정의만 쓴다 (tools/vectors/gen_vectors.py는 독립 기준이라 제외)."""
     TELEMETRY = 0x01   # SIM → GW
     DETECTION = 0x02   # DET → GW
+    ROUTE = 0x03       # SIM → GW
     COMMAND = 0x10     # GW → SIM
     ACK = 0x11         # SIM → GW
     HEARTBEAT = 0x20   # GW → SIM

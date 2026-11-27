@@ -60,8 +60,8 @@ def test_REQ_COM_002_check_frame_matches_gateway_rules_1_to_7():
     cases = json.loads((VECTORS_DIR / "validation.json").read_text(encoding="utf-8"))["cases"]
     checked = 0
     for c in cases:
-        if c["source"] != "VEHICLE" or c["expect"] == "range":
-            continue  # ⑧ 범위는 이 함수 밖. DETECTION은 길이가 count로 정해져 고정 길이 표로 표현하지 않는다
+        if c["source"] != "VEHICLE" or c["expect"] == "range" or c["name"].startswith("route_"):
+            continue  # ⑧ 범위는 이 함수 밖. DETECTION·ROUTE는 길이가 count로 정해져 고정 길이 표로 표현하지 않는다
         r = check_frame(bytes.fromhex(c["hex"]), vehicle_port)
         got = r.value if isinstance(r, Reject) else "accept"
         assert got == c["expect"], c["name"]
