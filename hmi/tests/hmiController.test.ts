@@ -542,3 +542,67 @@ it("REQ_HMI_004 a command TIMEOUT and an unconfirmed command each raise a cautio
     "명령 실패: 복귀 (RTB) · 응답 없음 (TIMEOUT)",
   ]);
 });
+
+// ---- 경로점 (REQ-HMI-001, ICD 7.1 route) ----
+
+const routeText = (waypoints: Array<[number, number]>, seq: number) =>
+  JSON.stringify({ type: "route", ts: 5_000_000, data: { waypoints: waypoints.map(([lat, lon]) => ({ lat, lon })), seq, rx_ts: 5_000_000 } });
+
+it("REQ_HMI_001 the route from the GW reaches the map view in visit order and stays as the dimmed previous value after a disconnect", () => {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  for (let i = 0; i < 4; i++) h.step();
+  h.sendVehicleLink(0);
+  expect(h.view().route).toBeNull(); // GW는 접속 직후 상태로 route를 보내지 않는다 (ICD 7.1)
+  h.live().onmessage?.({ data: routeText([[36.1, 127.1], [36.2, 127.2]], 0) });
+  expect(h.view().route).toEqual({ waypoints: [[36.1, 127.1], [36.2, 127.2]], stale: false }); // [0]이 지금 향하는 점
+  h.live().onmessage?.({ data: routeText([[36.2, 127.2]], 1) }); // 첫 경로점 도착
+  expect(h.view().route?.waypoints).toEqual([[36.2, 127.2]]);
+
+  h.live().onclose?.({ code: 1006 });
+  expect(h.view().route).toEqual({ waypoints: [[36.2, 127.2]], stale: true }); // 마지막 경로를 현재 값 아님으로
+});
+
+it("REQ_HMI_007 a route that breaks the ICD is discarded and counted, and the previous route stays", () => {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  h.step();
+  h.live().onmessage?.({ data: routeText([[36.1, 127.1]], 0) });
+  h.live().onmessage?.({ data: routeText(Array.from({ length: 33 }, (): [number, number] => [36, 127]), 1) });
+  h.live().onmessage?.({ data: routeText([[36.2, 127.2], [91, 127]], 2) });
+  expect(h.view().discarded).toBe(2);
+  expect(h.view().route?.waypoints).toEqual([[36.1, 127.1]]);
+});
+
+it("REQ_HMI_006 after a reconnect or a resync the previous route stays dimmed until this connection receives a route", () => {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  for (let i = 0; i < 4; i++) h.step();
+  h.sendVehicleLink(0);
+  h.live().onmessage?.({ data: routeText([[36.1, 127.1], [36.2, 127.2]], 0) });
+  expect(h.view().route?.stale).toBe(false);
+
+  // 진짜 끊김 → 재접속: stats·차량 CONNECTED가 먼저 와도 이 연결의 route 전에는 이전 연결의 경로다
+  h.live().onclose?.({ code: 1006 });
+  h.timers.filter((t) => !t.done).at(-1)!.fn();
+  h.live().onopen?.({});
+  for (let i = 0; i < 4; i++) h.step();
+  h.sendVehicleLink(0);
+  expect(h.view().fresh).toBe("FRESH");
+  expect(h.view().route).toEqual({ waypoints: [[36.1, 127.1], [36.2, 127.2]], stale: true });
+  h.live().onmessage?.({ data: routeText([], 1) }); // 그사이 SIM이 경로를 비웠다 (STOP 등)
+  expect(h.view().route).toEqual({ waypoints: [], stale: false });
+
+  // 기준선 재설정 접속도 연결 범위를 새로 시작한다 (시계 계단 변화 → 늦음 5s → 재설정)
+  h.live().onmessage?.({ data: routeText([[36.3, 127.3]], 2) });
+  resyncByClockStep(h);
+  for (let i = 0; i < 4; i++) h.step();
+  h.sendVehicleLink(0);
+  expect(h.view().fresh).toBe("FRESH");
+  expect(h.view().route).toEqual({ waypoints: [[36.3, 127.3]], stale: true });
+  h.live().onmessage?.({ data: routeText([[36.3, 127.3]], 3) });
+  expect(h.view().route?.stale).toBe(false);
+});

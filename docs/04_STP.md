@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.32 (초안) |
+| 버전 | v0.35 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-SDD-001 v0.8, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-SDD-001 v0.9.1, ADR-002 |
 
 ## 개정 이력
 
@@ -43,7 +43,10 @@
 | v0.29 | 2026-11-25 | PR #50 1차 리뷰 반영: 2.2에 실제 스레드 시험 예외(`LineSink`·`DbSink`, 시간 상한이 아니라 완료·계수로 판정). TC-LOG-003-04 삭제(순서대로 저장은 REQ-LOG-001의 증거라 TC-LOG-001-09로 옮김). TC-LOG-003-05·08은 시간 상한 대신 완료로 판정, TC-LOG-003-07을 "저장 중 연결 유실: 그 행 write_error, 나머지 db_down, 바로 재접속"으로 바꿈(쓰기 실패를 연결 오류와 데이터 오류로 나눔, SDD v0.7.1). TC-LOG-003-13(접속 실패 사유가 바뀌면 다시 알림), 14(거절 행만 rejected, 연결·다른 행 유지), 15(EUC_KR DB 통합) 추가. TC-LOG-001-07은 폐기 프레임 뒤 유효 프레임이 저장된 다음 행을 다시 셈, TC-LOG-003-11은 재접속 뒤 보낸 기록으로 판정. 버림 원인에 rejected |
 | v0.30 | 2026-11-26 | PR #50 2차 리뷰 반영(SRS v0.11 REQ-LOG-003, SDD v0.7.2: 저장 실패는 종류를 가리지 않고 그 행만 write_error, 대기열 유지, 다시 접속). TC-LOG-003-07을 "저장 실패 한 번: 그 행만, 대기열 유지, 바로 재접속(테이블 재생성)"으로, TC-LOG-003-14를 "연결 직후 실패는 재접속 간격, 대기열 유지"로 바꿈(v0.29의 행 거절 rejected 판정 삭제). TC-LOG-003-08에 저장 중 행 계수와 close 두 번, TC-LOG-003-15 기대값을 write_error로. TC-LOG-003-16(테이블 삭제 뒤 회복, 통합), 17(DB 스레드 예외) 추가. 버림 0 판정은 종료 때 최종 누계 줄로. 2.2 예외를 `DbSink`로 좁힘(`LineSink` 시험은 시간 상한을 씀) |
 | v0.31 | 2026-11-26 | PR #50 3차 리뷰 반영(SRS v0.12 REQ-LOG-003의 재접속 규칙): TC-LOG-003-18(저장 실패 뒤 다시 접속에도 실패하면 대기열 db_down), TC-LOG-003-19(재접속 간격은 그 연결의 첫 저장 성공에서 처음 값으로) 추가 |
-| v0.32 | 2026-11-27 | 경로 보고·STANDBY 기동(SRS v0.13 REQ-CMD-007·REQ-SAFE-003, ICD v0.16 6.6·7.1 `route`, SDD v0.8): 3.26 TC-CMD-007-01~12(ROUTE 검증 ⑥⑦⑧ 벡터, codec, GW 별도 스트림, IF-03 `route`, SIM 남은 경로·상한 32, `RouteReporter` 가짜 시각, SIM 본체, SIM → GW → WebSocket), 3.27 TC-SAFE-003-01~03 신설. STANDBY 기동에 맞춰 TC-SAFE-001-01·03·06의 기동 상태를 STANDBY로, TC-SAFE-002-06·07의 주행 재개를 RTB에서 WAYPOINT로(시작 위치에서 RTB는 바로 도착), TC-SAFE-001-07의 3.0s 판정에 1 ms 여유(같은 시각의 1Hz ROUTE), TC-HMI-001-03은 먼저 WAYPOINT로 주행시키고 진행 방향 90°. 2.7 SIM 운동 모사 예외의 시험 목록 |
+| v0.32 | 2026-11-27 | HMI 경로점 표시(SRS v0.13 REQ-HMI-001, ICD v0.16 7.1 `route`): TC-HMI-001-11(남은 경로를 방문 순서대로 보관, 연결 끊김·차량 LOST 뒤 이전 값), TC-HMI-001-12(GW 텍스트에서 지도 판정까지, 끊김 뒤 흐림), TC-HMI-006-21(경로 흐림 범위), TC-HMI-007-07(route 수신 검증: 32개 상한, 좌표 범위, 폐기 계수) 추가. 3.10 후속 범위를 경로점 시연 점검(GW·SIM ROUTE 구현 병합 뒤)으로 좁힘 |
+| v0.33 | 2026-11-27 | PR #62 1차 리뷰 반영: TC-HMI-007-07의 HmiController 시험을 TC-HMI-007-08로 분리(TC와 시험 1:1), TC-HMI-006-22(재접속·기준선 재설정 뒤 이 연결에서 route를 받기 전에는 이전 경로를 흐림) 추가, TC-HMI-001-11 입력 문구를 시험 순서와 맞춤 |
+| v0.34 | 2026-11-27 | 경로 보고·STANDBY 기동(SRS v0.13 REQ-CMD-007·REQ-SAFE-003, ICD v0.16 6.6·7.1 `route`, SDD v0.9, PR #62가 먼저 병합되어 이 PR의 v0.32를 v0.34로 다시 매김): 3.26 TC-CMD-007-01~12(ROUTE 검증 ⑥⑦⑧ 벡터, codec, GW 별도 스트림, IF-03 `route`, SIM 남은 경로·상한 32, `RouteReporter` 가짜 시각, SIM 본체, SIM → GW → WebSocket), 3.27 TC-SAFE-003-01~03 신설. STANDBY 기동에 맞춰 TC-SAFE-001-01·03·06의 기동 상태를 STANDBY로, TC-SAFE-002-06·07의 주행 재개를 RTB에서 WAYPOINT로(시작 위치에서 RTB는 바로 도착), TC-SAFE-001-07의 3.0s 판정에 1 ms 여유(같은 시각의 1Hz ROUTE), TC-HMI-001-03은 먼저 WAYPOINT로 주행시키고 진행 방향 90°. 2.7 SIM 운동 모사 예외의 시험 목록 |
+| v0.35 | 2026-11-27 | PR #63 1차 리뷰 반영(SDD v0.9.1): TC-CMD-007-16(두절 3.0s 시각과 1Hz ROUTE가 겹쳐도 낡은 경로를 보내지 않음, 10Hz·0.4Hz) 추가. TC와 시험 1:1로 TC-CMD-007-03을 -03(C++)·-13(Python 벡터)·-14(Python 길이)로, -09를 -09·-15(멈춘 뒤)로 나눔. TC-CMD-007-10 기대값 숫자(0·1·2·3·4s), TC-CMD-007-11 시간 기준(빈 경로 1.5s, 즉시성은 GW 시각 차 300ms). TC-SAFE-001-06은 시작 직후 WAYPOINT로 주행시켜 정지 전후를 구분(STANDBY 기동 뒤 "위치 고정"이 아무것도 검증하지 않던 것). 4장 시연 점검은 각 단계 끝에 HMI 폐기 0 |
 
 ---
 
@@ -262,7 +265,7 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 
 ### 3.10 REQ-HMI-001 지도 표시 (위치, 진행 방향, 궤적)
 
-**후속 범위:** REQ-HMI-001의 "경로점" 표시는 아직 TC가 없다. 경로점 명령(12월 명령 작업, TBD-03)과 함께 추가한다. RTM에서 이 부분은 미검증으로 보인다. U는 `hmi/tests/`, D는 `hmi/e2e/smoke.mjs`(4장).
+**후속 범위:** REQ-HMI-001의 "경로점" 표시는 단위 시험(TC-HMI-001-11·12)으로 확인한다. 실제 GW·SIM의 ROUTE로 지도에 그려지는지 보는 시연 점검(D)은 GW·SIM ROUTE 구현이 병합된 뒤 `smoke.mjs`에 추가한다(화면 속성 `data-route-count`·`data-route-stale`, 경로점 `data-order`·`data-current`). U는 `hmi/tests/`, D는 `hmi/e2e/smoke.mjs`(4장).
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
@@ -276,6 +279,8 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 | TC-HMI-001-08 | U | HmiController에서 IF-03 연결이 실제로 끊겼다가(close 1006) 재접속 | 궤적이 두 구간 (기준선 재설정과 달리 진짜 끊김은 궤적을 끊음) | `hmiController.test.ts > REQ_HMI_001 a real IF-03 disconnect starts a new track segment` |
 | TC-HMI-001-09 | U | HmiController에서 기준선 재설정 전후로 텔레메트리 seq가 약 30 건너뜀: (a) 재설정 접속이 3s 동안 열리지 않음 (b) 소켓은 바로 열렸지만 그 뒤 첫 텔레메트리 seq가 약 30 건너뜀(처리 적체를 버린 재설정과 같은 입력. 브라우저 쪽 적체를 버리는 동작 자체는 이 시험의 대상이 아님) | 두 경우 모두 궤적 두 구간 (빠지는 표본이 없으면 TC-HMI-006-16처럼 한 구간) | `hmiController.test.ts > REQ_HMI_001 a resync connection that opens after 3s breaks the track`, `hmiController.test.ts > REQ_HMI_001 a resync connection that opens at once but skips about 30 seq breaks the track` |
 | TC-HMI-001-10 | U | 유효 위치 사이 텔레메트리 seq 간격: 9개 빠짐, 10개 빠짐, 무효 1 + 빠짐 9, u32 순환(2개·25개 빠짐), seq 역행(500 → 3), 같은 seq 재수신 | 9개는 한 구간, 10개 이상은 두 구간 (GPS 무효와 빠진 표본을 같이 셈), 순환을 올바로 셈, 역행은 두 구간, 같은 seq는 점을 다시 붙이지 않음 | `hmiState.test.ts > REQ_HMI_001 a gap of 10 or more telemetry seq numbers breaks the track, 9 does not` |
+| TC-HMI-001-11 | U | route 3개 → 맨 앞을 뺀 route 2개, 그 상태(2개)에 각각 telemetry, 차량 LOST 뒤 IF-03 연결 끊김, 빈 route를 따로 적용 | 받기 전 경로 없음(null), 받은 순서 그대로 보관([0]이 지금 향하는 점), 새 route로 통째 바뀜, 이전 상태는 그대로, 다른 메시지는 경로 배열 참조를 바꾸지 않음(지도는 참조가 바뀔 때만 다시 그림), 끊김·LOST 뒤에도 마지막 경로 유지, 빈 route는 빈 경로 | `hmiState.test.ts > REQ_HMI_001 the route replaces the remaining waypoints in visit order and survives as the previous value` |
+| TC-HMI-001-12 | U | HmiController에 가짜 소켓 텍스트로 route(ICD 7.1 형식) 2개 → 1개, 이어서 IF-03 연결 끊김(close 1006) | 접속 직후 route 전에는 경로 없음, 화면 판정 `present().route`가 방문 순서대로 두 점(흐림 아님), 도착 뒤 한 점, 끊김 뒤 같은 한 점을 흐림으로 | `hmiController.test.ts > REQ_HMI_001 the route from the GW reaches the map view in visit order and stays as the dimmed previous value after a disconnect` |
 
 ### 3.11 REQ-HMI-002 상태 패널
 
@@ -314,6 +319,8 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 | TC-HMI-006-18 | U | 첫 접속, 실패 뒤 재접속, 기준선 재설정 | CONNECTING의 cause가 first, retry(failures 1), resync | `gwConnection.test.ts > REQ_HMI_006 connect attempts say why: first, retry with the failure count, resync` |
 | TC-HMI-006-19 | U | 재접속 대기(1s) 중 벽시계 +3s, −60s, 단조 시계 0.6s·1.0s 진행 | 벽시계 변화와 무관하게 "1초 후 재접속", 단조 시계로만 줄어 "0초 후 재접속" | `hmiController.test.ts > REQ_HMI_006 retry countdown follows the monotonic clock, not wall clock changes` |
 | TC-HMI-006-20 | U | 제때 온 stats 뒤 `ts`가 큰 telemetry 하나로 기준선이 낮아짐, 이어서 stats | telemetry 직후 화면은 STALE이지만 재설정 시계는 시작하지 않음, 다음(늦은) stats 수신 시각부터 5000ms에 재설정 요청(4999ms에는 아님) | `hmiState.test.ts > REQ_HMI_006 the resync clock starts at the first late stats, not at a message that lowered the baseline` |
+| TC-HMI-006-21 | U | route를 받은 상태에서 차량 링크 CONNECTED·DEGRADED·LOST·받은 적 없음, 마지막 stats 뒤 2001ms(STALE), GW 재접속 대기 | 차량 CONNECTED이고 FRESH·연결 중일 때만 흐림 아님, 나머지는 모두 흐림(차량 마커와 같은 범위, ICD 7.1 route). route를 받기 전에는 경로 없음 | `view.test.ts > REQ_HMI_006 the last route is dimmed when the vehicle link is not CONNECTED or GW data is not fresh` |
+| TC-HMI-006-22 | U | HmiController에서 route를 받은 뒤 IF-03 연결 끊김 → 재접속(stats·차량 CONNECTED가 먼저 옴) → 빈 route, 이어서 route를 받은 뒤 시계 계단 변화로 기준선 재설정 → 재접속 → route | 두 경우 모두 이 연결에서 route를 받기 전에는 FRESH·차량 CONNECTED여도 이전 경로를 흐림, 받으면 새 경로를 흐림 없이 | `hmiController.test.ts > REQ_HMI_006 after a reconnect or a resync the previous route stays dimmed until this connection receives a route` |
 
 ### 3.13 REQ-HMI-007 IF-03 수신 검증
 
@@ -325,6 +332,8 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 | TC-HMI-007-04 | U | 텍스트가 아닌 프레임 | 텍스트만 전달 | `gwConnection.test.ts > REQ_HMI_007 passes text frames through and ignores binary` |
 | TC-HMI-007-05 | U | 받은 텍스트: 깨진 JSON, 다른 필드는 다 갖추고 위도만 91인 telemetry, 정상 stats. HmiController에 형식 오류 메시지 2개 | 폐기 수 2, 정상 메시지는 반영되고 폐기 수는 그대로. 화면 판정(`present().discarded`, 상태 패널 `data-testid="discarded"`가 그리는 값)도 2이고 범위 밖 위도는 반영되지 않음 | `hmiState.test.ts > REQ_HMI_007 text that is not IF-03 is discarded and counted`, `hmiController.test.ts > REQ_HMI_007 discarded IF-03 messages are counted for display in the status panel` |
 | TC-HMI-007-06 | U | cmd_result: 정의 밖 필드, 형식 오류 거절(cmd_id null·attempts 0·REJECTED_INVALID), 결과 4종, cmd_id 2^32−1, req_id 63바이트. 틀린 것: req_id 빈 값·66바이트·숫자, 정의 밖 result, cmd_id 0·2^32·1.5·문자열, attempts 0·5, cmd_id null인데 TIMEOUT 또는 attempts 1, TIMEOUT인데 attempts 1·3, result 없음 | ICD 7.1 필드만 남겨 받아들이고 틀린 것은 모두 null | `if03.test.ts > REQ_HMI_007 cmd_result is accepted only in the ICD 7.1 shape` |
+| TC-HMI-007-07 | U | route: 정의 밖 필드(메시지·경로점), 빈 `[]`, 32개, 위경도 ±90·±180 경계, seq 2^32−1. 틀린 것: 33개, 위도 90.0000001(두 번째 점만), 경도 −180.0000001, 좌표 문자열·null·빠짐, 배열 모양 경로점, waypoints null·없음, seq 2^32·−1, rx_ts 없음 | ICD 7.1 필드만 순서대로 남겨 받아들이고 틀린 것은 모두 null(하나라도 틀리면 메시지 전체) | `if03.test.ts > REQ_HMI_007 route is accepted only with at most 32 waypoints inside the ICD ranges` |
+| TC-HMI-007-08 | U | HmiController에 경로점 1개 route를 받은 뒤 33개 route와 범위 밖 좌표(위도 91)가 섞인 route | 폐기 수 2, 앞서 받은 경로 유지 | `hmiController.test.ts > REQ_HMI_007 a route that breaks the ICD is discarded and counted, and the previous route stays` |
 
 ### 3.14 REQ-CMD-002 명령 송신·재전송·결과 (GW)
 
@@ -392,7 +401,7 @@ U 수준은 `Simulator`에 시각을 직접 넣는다(2.2). 판정 경계는 "3.
 | TC-SAFE-001-03 | U | 두절 직전 mode가 STANDBY(시작 상태), MISSION(경로 있음), RTB, STOPPED, STANDBY(경로점 도착) | 모두 STOPPED + FAILSAFE_ACTIVE | `test_REQ_SAFE_001_failsafe_from_any_mode` |
 | TC-SAFE-001-04 | U | Failsafe 중 주기 진행, 두절이 이어짐 | 위치 고정, FAILSAFE 플래그 변화는 3.0s에 한 번뿐 | `test_REQ_SAFE_001_vehicle_does_not_move_in_failsafe`, `test_REQ_SAFE_001_failsafe_is_a_single_transition_per_outage` |
 | TC-SAFE-001-05 | U | 명령으로 재개한 뒤 두 번째 두절 | 다시 Failsafe | `test_REQ_SAFE_001_failsafe_again_after_second_outage` |
-| TC-SAFE-001-06 | U | 실제 SIM 본체(`app.run`)(실제 UDP·시계), HEARTBEAT 없음 | 첫 Failsafe TELEMETRY가 시작 후 3.0~3.35s, 그 전은 STANDBY·플래그 없음, 뒤로는 위치 고정 | `test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe` |
+| TC-SAFE-001-06 | U | 실제 SIM 본체(`app.run`)(실제 UDP·시계), HEARTBEAT 없음. 시작 직후 WAYPOINT로 주행시킴(시작 후 3.0s 전이라 수락) | WAYPOINT ACCEPTED, 첫 Failsafe TELEMETRY가 시작 후 3.0~3.35s, 그 전은 STANDBY 또는 MISSION·플래그 없음이고 정지 직전은 MISSION·speed > 0·시작 위치에서 움직였음, 뒤로는 위치 고정 | `test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe` |
 | TC-SAFE-001-07 | U | SIM 본체(`app.run`)의 송신이 모두 OSError(GW 경로 없음, 가짜 소켓·가짜 시계) | SIM이 죽지 않고 40개 주기(0.0~3.9s)를 모두 돎. TELEMETRY seq 0~29(≤2.9s)는 FAILSAFE_ACTIVE 없음, seq 30(3.0s, 같은 시각의 1Hz ROUTE 뒤라 가짜 소켓 최소 대기 1 ms까지 늦을 수 있음)부터 STOPPED·speed 0·FAILSAFE_ACTIVE, Failsafe 전이 기록 1회. 1.05s에 받은 COMMAND의 ACK 송신도 실패하지만 계속 돎. 송신 오류 기록은 실패 시작에 한 줄 | `test_REQ_SAFE_001_send_failure_does_not_kill_sim_and_failsafe_still_engages` |
 | TC-SAFE-001-08 | U | SIM 본체(`app.run`) 루프가 1s 무렵 3.5s 멈췄다 재개(가짜 시계 건너뜀) | 멈춘 뒤 첫 TELEMETRY가 이미 Failsafe, 그 전은 플래그 없음, 밀린 주기를 같은 시각에 몰아 보내지 않음(간격 ≥ 0.1s) | `test_REQ_SAFE_001_stalled_loop_sends_one_failsafe_telemetry_without_burst` |
 
@@ -525,16 +534,20 @@ U는 vitest(순수 함수 `state/alerts.ts`, `HmiController`), D는 시연 점�
 |---|---|---|---|---|
 | TC-CMD-007-01 | U | 차량 포트의 정상 ROUTE: count 0, 경로점 3개, count 32(277B), 좌표 경계 ±90°·±180° | 수락, `Route`로 디코딩 | `Validator.REQ_CMD_007_accepts_route_on_vehicle_port` |
 | TC-CMD-007-02 | U | ROUTE 규칙 위반: ⑥ 탐지 포트의 ROUTE, ⑦ count 2인데 경로점 1개·payload 0B·count 0인데 경로점 1개, ⑧ count 33(길이는 count에 맞춤)·lat ±900000001·lon ±1800000001 | type / length / range | `Validator.REQ_CMD_007_rejects_route_by_rules_6_to_8` |
-| TC-CMD-007-03 | U | ROUTE 인코딩·디코딩이 벡터와 일치 (C++, Python 각각). Python은 count와 길이가 맞지 않으면 None | 바이트 단위 일치 | `Codec.REQ_CMD_007_route_matches_vectors`, `test_REQ_CMD_007_route_matches_vector`, `test_REQ_CMD_007_route_length_must_match_count` |
+| TC-CMD-007-03 | U | ROUTE 인코딩·디코딩이 벡터와 일치 (C++) | 바이트 단위 일치 | `Codec.REQ_CMD_007_route_matches_vectors` |
 | TC-CMD-007-04 | U | GW: TELEMETRY와 다른 seq의 ROUTE, TELEMETRY 뒤 0.8s에 ROUTE, ROUTE seq 건너뜀·중복·역순 | 별도 스트림으로 수락, ROUTE가 링크 타이머를 갱신(CONNECTED 유지), 유실 2·order 2, TELEMETRY 스트림 영향 없음 | `GatewayFixture.REQ_CMD_007_route_is_own_vehicle_stream` |
 | TC-CMD-007-05 | U | IF-03 `route` 생성: 경로점 3개(경계값 포함), 빈 경로 | type `route`, ts = rx_ts, seq, waypoints[{lat, lon}] 순서 그대로이고 값은 "LSB ÷ 10^7"에 가장 가까운 double, 빈 경로는 `[]` | `If03.REQ_CMD_007_route_fields` |
 | TC-CMD-007-06 | U | `Simulator`의 남은 경로: WAYPOINT 2개, 첫 점 도착, STOP·RTB | 끝에 추가(받은 LSB 그대로), 도착하면 맨 앞 제거, STOP·RTB는 비움 | `test_REQ_CMD_007_route_reports_remaining_waypoints_as_they_change` |
 | TC-CMD-007-07 | U | 경로가 있을 때 HEARTBEAT 3.0s 두절 | Failsafe 진입과 함께 경로 비움 | `test_REQ_CMD_007_failsafe_clears_route` |
 | TC-CMD-007-08 | U | WAYPOINT 32개 뒤 33번째, 첫 점 도착 뒤 다시 WAYPOINT | 33번째는 REJECTED_STATE·실행 안 함·경로 그대로, 31개가 되면 ACCEPTED로 끝에 추가 | `test_REQ_CMD_007_waypoint_rejected_state_when_route_full` |
-| TC-CMD-007-09 | U | `RouteReporter`(가짜 시각): 시작, 바뀜, 같은 경로, 예정 시각, 늦은 poll, 5s 멈춤 | 시작에 송신, 바뀌면 바로, 같으면 시작 기준 1.0s 예정 시각마다(바뀐 송신·늦은 poll이 주기를 밀지 않음), 멈춘 뒤 한 번만 보내고 지금부터 다시 1.0s | `test_REQ_CMD_007_route_reporter_sends_on_change_and_every_second`, `test_REQ_CMD_007_route_reporter_does_not_burst_after_stall` |
-| TC-CMD-007-10 | U | SIM 본체(`app.run`, 가짜 소켓·가짜 시계): HEARTBEAT 0.5s, WAYPOINT 1.05s, 그 뒤 두절 | ROUTE seq 0부터 연속, 0.0s에 빈 경로, 1.05s WAYPOINT의 ACK 바로 뒤 그 경로, Failsafe tick에 빈 경로, 그 밖은 0·2·3·4s 등 정수 초 예정 시각(가짜 소켓 최소 대기 1 ms 이내) | `test_REQ_CMD_007_process_sends_route_on_change_and_every_second` |
-| TC-CMD-007-11 | I | 실제 SIM → GW → WebSocket: SIM 기동 1.2s 뒤 HMI 접속, WAYPOINT 명령 | 접속 직후 상태(stats·link_status 4개)에 route 없음, 1.2s 안에 빈 경로 route, cmd_result ACCEPTED와 함께 0.5s 안에 새 경로(보낸 좌표), seq 증가, 차량 유실 0·오류 0 | `test_REQ_CMD_007_route_relayed_from_sim_to_hmi` |
+| TC-CMD-007-09 | U | `RouteReporter`(가짜 시각): 시작, 바뀜, 같은 경로, 예정 시각, 늦은 poll | 시작에 송신, 바뀌면 바로, 같으면 시작 기준 1.0s 예정 시각마다(바뀐 송신·늦은 poll이 주기를 밀지 않음) | `test_REQ_CMD_007_route_reporter_sends_on_change_and_every_second` |
+| TC-CMD-007-10 | U | SIM 본체(`app.run`, 가짜 소켓·가짜 시계): HEARTBEAT 0.5s, WAYPOINT 1.05s, 그 뒤 두절 | ROUTE seq 0부터 연속, 0.0s에 빈 경로, 1.05s WAYPOINT의 ACK 바로 뒤 그 경로, Failsafe tick에 빈 경로, 그 밖은 0·1·2·3·4s 정수 초 예정 시각(가짜 소켓 최소 대기 1 ms 이내) | `test_REQ_CMD_007_process_sends_route_on_change_and_every_second` |
+| TC-CMD-007-11 | I | 실제 SIM → GW → WebSocket: SIM 기동 1.2s 뒤 HMI 접속, WAYPOINT 명령 | 접속 직후 상태(stats·link_status 4개)에 route 없음, 1.5s 안에 빈 경로 route(1Hz + 시험 PC 부하 여유 0.5s), cmd_result ACCEPTED와 새 경로(보낸 좌표). 새 경로의 GW 수신 시각(`rx_ts`)이 cmd_result `ts`보다 300ms 안쪽 뒤(1Hz를 기다리지 않음, GW 시각 차라 HMI 부하와 무관), seq 증가, 차량 유실 0·오류 0 | `test_REQ_CMD_007_route_relayed_from_sim_to_hmi` |
 | TC-CMD-007-12 | I | 실제 SIM·GW·WebSocket: WAYPOINT 32개 뒤 33번째 | 32개 ACCEPTED, 33번째 cmd_result REJECTED_STATE, route는 32개·보낸 순서 그대로 | `test_REQ_CMD_007_full_route_rejects_waypoint_with_rejected_state` |
+| TC-CMD-007-13 | U | ROUTE 인코딩·디코딩이 벡터와 일치 (Python) | 바이트 단위 일치 | `test_REQ_CMD_007_route_matches_vector` |
+| TC-CMD-007-14 | U | Python `Route.from_payload`: 빈 payload, count 2인데 경로점 1개, 1바이트 더 붙음 | None. 32개 payload는 257B | `test_REQ_CMD_007_route_length_must_match_count` |
+| TC-CMD-007-15 | U | `RouteReporter`(가짜 시각): 송신 뒤 5s 멈췄다 poll | 멈춘 뒤 한 번만 보내고 밀린 몫을 몰아 보내지 않으며, 지금부터 다시 1.0s | `test_REQ_CMD_007_route_reporter_does_not_burst_after_stall` |
+| TC-CMD-007-16 | U | SIM 본체(`app.run`, 가짜 소켓·가짜 시계, 10Hz와 0.4Hz): HEARTBEAT 0.5s, WAYPOINT 0.6s, 마지막 HEARTBEAT 1.0s. 두절 3.0s가 되는 4.0s가 1Hz ROUTE 예정 시각과 겹침 | 4.0s 전에는 경로가 있는 ROUTE, 4.0s부터의 ROUTE는 모두 빈 경로(ROUTE 송신 앞에서도 Failsafe를 먼저 판정, PR #63 1차 리뷰 지적 1의 재현) | `test_REQ_CMD_007_process_sends_no_stale_route_once_failsafe_holds` |
 
 ### 3.27 REQ-SAFE-003 STANDBY 기동, 명령 없이 주행 안 함 (SIM)
 
@@ -586,7 +599,7 @@ NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew 3000
 NODE_PATH=$(npm root -g) node hmi/e2e/smoke.mjs --clock-skew -5000
 ```
 
-3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 8단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → 명령 확인·송신 → 결과 전 GW 재시작과 경고가 붙은 새 명령 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`, 경고의 `data-kind`·`data-state`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수, GW 진단 기록의 `cmd sent` 줄로 확인한다. 3단계는 차량 LOST 경고 지연(3.23 측정 방법)을 출력한다. 페이지 오류가 하나라도 나면 실패한다.
+3. 스크립트가 GW(빈 포트), vite, chromium을 띄우고 8단계(GW 접속 → SIM 송신 → 시계 +3초 계단 변화 → 명령 확인·송신 → 결과 전 GW 재시작과 경고가 붙은 새 명령 → SIM 중지 → GW 중지 → GW 재시작)를 화면 속성(`data-level`, `data-stale`, `data-heading`, 경고의 `data-kind`·`data-state`), 지도 레이어 점 수(`__ugvcTrackPoints`), 정확한 문구, 배너 변화 기록, GW WebSocket 생성 횟수, GW 진단 기록의 `cmd sent` 줄로 확인한다. 3단계는 차량 LOST 경고 지연(3.23 측정 방법)을 출력한다. 페이지 오류가 하나라도 나거나, 단계 끝에 HMI가 형식 오류로 폐기한 IF-03 메시지(상태 패널 `discarded`)가 하나라도 있으면 실패한다(SIM이 1Hz로 보내는 `route`를 HMI가 알아듣는지도 여기서 드러난다).
 4. 합격: 세 번 모두 마지막 줄이 `PASS`이고, 실행 뒤 `ugvc_gateway`·`vite`·`ugvc_sim`(`python3 -m ugvc_sim`) 프로세스가 남지 않는다. 화면 캡처는 STR(05)에 붙인다.
 
 ---
