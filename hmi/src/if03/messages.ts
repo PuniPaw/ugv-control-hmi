@@ -15,7 +15,8 @@ export const ERROR_KEYS = ["sync", "version", "length", "crc", "type", "range", 
 export const CLASSES = ["PERSON", "VEHICLE", "ARMORED_VEHICLE", "UNKNOWN"] as const; // ICD 표 6-3 (TBD-02)
 export const CMD_RESULTS = ["ACCEPTED", "REJECTED_INVALID", "REJECTED_STATE", "TIMEOUT"] as const; // ICD 7.1, 표 6-5
 export const MAX_OBJECTS = 32; // ICD 6.2 count
-export const LAT_LIMIT = 90; // deg, ICD 6.1(telemetry)·7.2(command 좌표). telemetry 검사와 HMI 경로점 입력이 같이 쓴다
+export const MAX_WAYPOINTS = 32; // ICD 6.6 count
+export const LAT_LIMIT = 90; // deg, ICD 6.1(telemetry)·7.2(command 좌표). telemetry·route 검사와 HMI 경로점 입력이 같이 쓴다
 export const LON_LIMIT = 180;
 const MAX_ATTEMPTS = 4; // ICD 7.3: 송신 최대 4회
 const REQ_ID_MAX_BYTES = 64; // ICD 7.2
@@ -84,6 +85,19 @@ export type CmdResultData =
   | { req_id: string; cmd_id: null; result: "REJECTED_INVALID"; attempts: 0 }
   | { req_id: string; cmd_id: number; result: CmdResult; attempts: number };
 
+/** 경로점 하나 (ICD 6.6). 단위는 telemetry의 lat·lon과 같다 */
+export interface Waypoint {
+  lat: number; // deg
+  lon: number; // deg
+}
+
+/** SIM이 보고한 남은 경로 (ICD 7.1 `route`). 방문할 순서대로이며 첫 원소가 지금 향하는 경로점(ICD 6.6) */
+export interface RouteData {
+  waypoints: Waypoint[]; // 0~32개
+  seq: number;
+  rx_ts: number; // GW 수신 시각, GW 시계 epoch ms
+}
+
 interface Envelope<T extends string, D> {
   type: T;
   ts: number; // GW 시계 epoch ms
@@ -95,6 +109,7 @@ export type If03Message =
   | Envelope<"detection", DetectionData>
   | Envelope<"stats", StatsData>
   | Envelope<"link_status", LinkStatusData>
+  | Envelope<"route", RouteData>
   | Envelope<"cmd_result", CmdResultData>;
 
 // ---- 검증 ----
@@ -197,6 +212,20 @@ function linkStatus(d: Obj): LinkStatusData | null {
   return isCount(last_rx_ts) ? { source, state, last_rx_ts } : null;
 }
 
+/** 남은 경로 (ICD 7.1, 6.6). 32개 초과나 범위 밖 좌표가 하나라도 있으면 메시지 전체를 버린다 */
+function route(d: Obj): RouteData | null {
+  const { waypoints, seq, rx_ts } = d;
+  if (!(Array.isArray(waypoints) && waypoints.length <= MAX_WAYPOINTS && isInt(seq, 0, U32_MAX) && isCount(rx_ts))) return null;
+  const parsed: Waypoint[] = [];
+  for (const w of waypoints) {
+    if (!isObj(w)) return null;
+    const { lat, lon } = w;
+    if (!(inRange(lat, -LAT_LIMIT, LAT_LIMIT) && inRange(lon, -LON_LIMIT, LON_LIMIT))) return null;
+    parsed.push({ lat, lon });
+  }
+  return { waypoints: parsed, seq, rx_ts };
+}
+
 function cmdResult(d: Obj): CmdResultData | null {
   const { req_id, cmd_id, result, attempts } = d;
   if (!isReqId(req_id) || !isCmdResult(result)) return null;
@@ -234,6 +263,10 @@ export function parseIf03(text: string): If03Message | null {
     case "link_status": {
       const d = linkStatus(data);
       return d && { type: "link_status", ts, data: d };
+    }
+    case "route": {
+      const d = route(data);
+      return d && { type: "route", ts, data: d };
     }
     case "cmd_result": {
       const d = cmdResult(data);

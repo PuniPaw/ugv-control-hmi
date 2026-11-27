@@ -113,3 +113,38 @@ it("REQ_HMI_007 cmd_result is accepted only in the ICD 7.1 shape", () => {
     expect(parseIf03(cmdResult(bad)), JSON.stringify(bad)).toBeNull();
   }
 });
+
+const wp = (lat: unknown, lon: unknown) => ({ lat, lon });
+const route = (patch: Record<string, unknown>) =>
+  JSON.stringify({ type: "route", ts: 1, data: { waypoints: [wp(36.5, 127.25)], seq: 3, rx_ts: 1, ...patch } });
+
+it("REQ_HMI_007 route is accepted only with at most 32 waypoints inside the ICD ranges", () => {
+  // 정의 밖 필드는 버리고 순서는 그대로 (ICD 6.6: 첫 원소가 지금 향하는 경로점)
+  expect(parseIf03(route({ extra: 1, waypoints: [{ ...wp(36.5, 127.25), alt: 3 }, wp(-90, 180)] }))).toEqual({
+    type: "route", ts: 1, data: { waypoints: [wp(36.5, 127.25), wp(-90, 180)], seq: 3, rx_ts: 1 },
+  });
+  for (const ok of [
+    route({ waypoints: [] }), // 남은 경로 없음 (RTB 수락 등)
+    route({ waypoints: Array.from({ length: 32 }, (_, i) => wp(36 + i * 1e-4, 127)) }),
+    route({ waypoints: [wp(90, -180), wp(-90, 180)] }),
+    route({ seq: 2 ** 32 - 1 }),
+  ]) {
+    expect(parseIf03(ok), ok).not.toBeNull();
+  }
+  for (const bad of [
+    route({ waypoints: Array.from({ length: 33 }, () => wp(36, 127)) }), // 상한 32 (ICD 7.1)
+    route({ waypoints: [wp(36, 127), wp(90.0000001, 127)] }), // 하나라도 범위 밖이면 메시지 전체를 버린다
+    route({ waypoints: [wp(36, -180.0000001)] }),
+    route({ waypoints: [wp("36", 127)] }),
+    route({ waypoints: [wp(36, null)] }),
+    route({ waypoints: [{ lat: 36 }] }),
+    route({ waypoints: [[36, 127]] }),
+    route({ waypoints: null }),
+    route({ waypoints: undefined }),
+    route({ seq: 2 ** 32 }),
+    route({ seq: -1 }),
+    route({ rx_ts: undefined }),
+  ]) {
+    expect(parseIf03(bad), bad).toBeNull();
+  }
+});

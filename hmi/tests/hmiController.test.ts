@@ -542,3 +542,36 @@ it("REQ_HMI_004 a command TIMEOUT and an unconfirmed command each raise a cautio
     "명령 실패: 복귀 (RTB) · 응답 없음 (TIMEOUT)",
   ]);
 });
+
+// ---- 경로점 (REQ-HMI-001, ICD 7.1 route) ----
+
+const routeText = (waypoints: Array<[number, number]>, seq: number) =>
+  JSON.stringify({ type: "route", ts: 5_000_000, data: { waypoints: waypoints.map(([lat, lon]) => ({ lat, lon })), seq, rx_ts: 5_000_000 } });
+
+it("REQ_HMI_001 the route from the GW reaches the map view in visit order and stays as the dimmed previous value after a disconnect", () => {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  for (let i = 0; i < 4; i++) h.step();
+  h.sendVehicleLink(0);
+  expect(h.view().route).toBeNull(); // GW는 접속 직후 상태로 route를 보내지 않는다 (ICD 7.1)
+  h.live().onmessage?.({ data: routeText([[36.1, 127.1], [36.2, 127.2]], 0) });
+  expect(h.view().route).toEqual({ waypoints: [[36.1, 127.1], [36.2, 127.2]], stale: false }); // [0]이 지금 향하는 점
+  h.live().onmessage?.({ data: routeText([[36.2, 127.2]], 1) }); // 첫 경로점 도착
+  expect(h.view().route?.waypoints).toEqual([[36.2, 127.2]]);
+
+  h.live().onclose?.({ code: 1006 });
+  expect(h.view().route).toEqual({ waypoints: [[36.2, 127.2]], stale: true }); // 마지막 경로를 현재 값 아님으로
+});
+
+it("REQ_HMI_007 a route that breaks the ICD is discarded and counted, and the previous route stays", () => {
+  const h = harness();
+  h.c.start();
+  h.live().onopen?.({});
+  h.step();
+  h.live().onmessage?.({ data: routeText([[36.1, 127.1]], 0) });
+  h.live().onmessage?.({ data: routeText(Array.from({ length: 33 }, (): [number, number] => [36, 127]), 1) });
+  h.live().onmessage?.({ data: routeText([[36.2, 127.2], [91, 127]], 2) });
+  expect(h.view().discarded).toBe(2);
+  expect(h.view().route?.waypoints).toEqual([[36.1, 127.1]]);
+});

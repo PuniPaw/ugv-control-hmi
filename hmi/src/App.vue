@@ -49,7 +49,7 @@ onBeforeUnmount(() => {
   <div class="layout">
     <ConnectionBanner class="banner" :level="view.banner.level" :text="view.banner.text" :gw-url="gwUrl" />
     <AlertList class="alerts" data-testid="alerts-urgent" :rows="urgent" @ack="ack" />
-    <MapView class="map" :fix="state.fix" :fix-valid="view.fixValid" :track="state.track" :stale="view.stale.vehicle" />
+    <MapView class="map" :fix="state.fix" :fix-valid="view.fixValid" :track="state.track" :stale="view.stale.vehicle" :route="view.route" />
     <div class="side">
       <AlertList data-testid="alerts-advisory" :rows="advisory" @ack="ack" />
       <StatusPanel class="status" :view="view" />

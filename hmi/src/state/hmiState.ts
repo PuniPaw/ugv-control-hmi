@@ -57,6 +57,10 @@ export interface HmiState {
   // 마지막 유효 위치의 텔레메트리 seq. 다음 유효 위치와의 seq 차이로 그 사이 위치 없이 지난 표본(GPS 무효 +
   // 받지 못한 것)을 센다. null이면 다음 유효 위치는 새 구간 (처음, IF-03 연결 끊김, 차량 LOST)
   lastFixSeq: number | null;
+  // SIM이 보고한 남은 경로점(ICD 7.1 `route`), 방문 순서대로이며 [0]이 지금 향하는 점(ICD 6.6). 받은 적이 없으면 null.
+  // 위치·궤적처럼 연결을 넘어 "이전 값"으로 남긴다(session이 아님). 새 route를 받을 때만 배열을 새로 만든다:
+  // 지도는 참조가 바뀔 때만 다시 그린다 (components/MapView.vue)
+  route: LatLon[] | null;
   session: Session | null; // IF-03 연결이 열려 있을 때만
   discarded: number; // 형식·범위가 ICD와 달라 폐기한 IF-03 메시지 수 (누계, GLOSSARY "폐기")
   commands: CommandLog; // 명령 확인 절차와 보낸 명령의 결과 (state/commands.ts). 연결을 넘어 유지한다
@@ -70,6 +74,7 @@ export function initialState(): HmiState {
     fix: null,
     track: [],
     lastFixSeq: null,
+    route: null,
     session: null,
     discarded: 0,
     commands: emptyCommandLog(),
@@ -167,6 +172,9 @@ export function apply(s0: HmiState, m: If03Message, receivedAt: number): HmiStat
     }
     case "stats":
       return { ...s, stats: { ...s.stats, [m.data.source]: m.data } };
+    case "route":
+      // GW가 송신원 스트림 seq 순서를 검증해 넘기므로(ICD 9장 규칙 ⑨) 받은 순서대로 마지막 것이 현재 경로다
+      return { ...s, route: m.data.waypoints.map((w): LatLon => [w.lat, w.lon]) };
     case "detection":
       return s; // 영상 오버레이(12월 3주)에서 쓴다
     case "cmd_result":
