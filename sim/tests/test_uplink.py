@@ -9,7 +9,7 @@ import pytest
 from ugvc_proto.command import Ack, AckResult, Command, CmdType
 from ugvc_proto.frame import MsgType, encode_frame
 
-from conftest import parse_downlink
+from downlink import parse_downlink
 from ugvc_sim import app
 from ugvc_sim.simulator import Simulator
 from ugvc_sim.uplink import Heartbeat, HeartbeatWatch, InvalidCommand, ReceivedCommand, parse_uplink

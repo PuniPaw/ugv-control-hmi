@@ -34,7 +34,7 @@ def test_sim_telemetry_decoded_identically_by_gateway(gateway):
         assert round(d["heading_deg"] * 100) == t.heading
         assert round(d["speed_mps"] * 100) == t.speed
         assert d["battery_pct"] == t.battery
-        assert d["mode"] == "MISSION"
+        assert d["mode"] == "STANDBY"  # SIM 시작 상태 (REQ-SAFE-003)
         assert d["flags"] == ["GPS_VALID", "CAMERA_OK"]
 
 

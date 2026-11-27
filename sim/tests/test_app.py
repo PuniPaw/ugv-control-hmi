@@ -11,7 +11,7 @@ from ugvc_proto.frame import MsgType, encode_frame
 from ugvc_proto.route import Route
 from ugvc_proto.telemetry import Flags, Mode, Telemetry
 
-from conftest import parse_downlink
+from downlink import parse_downlink
 from ugvc_sim import app
 
 NEAR_LAT, NEAR_LON = 361240000, 1277660000  # 시작 위치 근처 경로점 (≈ 60 m)

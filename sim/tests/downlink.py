@@ -1,4 +1,4 @@
-"""SIM 시험 공용 도우미."""
+"""SIM 시험 공용 도우미: SIM이 GW로 보낸 프레임 해석. (conftest라는 이름은 python/tests와 겹쳐 한꺼번에 수집할 때 충돌한다)"""
 from ugvc_proto.command import ACK_SIZE, Ack
 from ugvc_proto.frame import Header, MsgType, check_frame, decode_header
 from ugvc_proto.route import Route

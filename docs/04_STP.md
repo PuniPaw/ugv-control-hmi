@@ -4,9 +4,9 @@
 |---|---|
 | 문서번호 | UGVC-STP-001 |
 | 시스템 | AI 표적 탐지 기반 UGV 원격 관제 시스템 (가칭 UGVC) |
-| 버전 | v0.31 (초안) |
+| 버전 | v0.32 (초안) |
 | 작성일 | 2026-11-10 |
-| 관련 문서 | UGVC-SRS-001 v0.12, UGVC-ICD-001 v0.15, UGVC-SDD-001 v0.7.3, ADR-002 |
+| 관련 문서 | UGVC-SRS-001 v0.13, UGVC-ICD-001 v0.16, UGVC-SDD-001 v0.8, ADR-002 |
 
 ## 개정 이력
 
@@ -43,6 +43,7 @@
 | v0.29 | 2026-11-25 | PR #50 1차 리뷰 반영: 2.2에 실제 스레드 시험 예외(`LineSink`·`DbSink`, 시간 상한이 아니라 완료·계수로 판정). TC-LOG-003-04 삭제(순서대로 저장은 REQ-LOG-001의 증거라 TC-LOG-001-09로 옮김). TC-LOG-003-05·08은 시간 상한 대신 완료로 판정, TC-LOG-003-07을 "저장 중 연결 유실: 그 행 write_error, 나머지 db_down, 바로 재접속"으로 바꿈(쓰기 실패를 연결 오류와 데이터 오류로 나눔, SDD v0.7.1). TC-LOG-003-13(접속 실패 사유가 바뀌면 다시 알림), 14(거절 행만 rejected, 연결·다른 행 유지), 15(EUC_KR DB 통합) 추가. TC-LOG-001-07은 폐기 프레임 뒤 유효 프레임이 저장된 다음 행을 다시 셈, TC-LOG-003-11은 재접속 뒤 보낸 기록으로 판정. 버림 원인에 rejected |
 | v0.30 | 2026-11-26 | PR #50 2차 리뷰 반영(SRS v0.11 REQ-LOG-003, SDD v0.7.2: 저장 실패는 종류를 가리지 않고 그 행만 write_error, 대기열 유지, 다시 접속). TC-LOG-003-07을 "저장 실패 한 번: 그 행만, 대기열 유지, 바로 재접속(테이블 재생성)"으로, TC-LOG-003-14를 "연결 직후 실패는 재접속 간격, 대기열 유지"로 바꿈(v0.29의 행 거절 rejected 판정 삭제). TC-LOG-003-08에 저장 중 행 계수와 close 두 번, TC-LOG-003-15 기대값을 write_error로. TC-LOG-003-16(테이블 삭제 뒤 회복, 통합), 17(DB 스레드 예외) 추가. 버림 0 판정은 종료 때 최종 누계 줄로. 2.2 예외를 `DbSink`로 좁힘(`LineSink` 시험은 시간 상한을 씀) |
 | v0.31 | 2026-11-26 | PR #50 3차 리뷰 반영(SRS v0.12 REQ-LOG-003의 재접속 규칙): TC-LOG-003-18(저장 실패 뒤 다시 접속에도 실패하면 대기열 db_down), TC-LOG-003-19(재접속 간격은 그 연결의 첫 저장 성공에서 처음 값으로) 추가 |
+| v0.32 | 2026-11-27 | 경로 보고·STANDBY 기동(SRS v0.13 REQ-CMD-007·REQ-SAFE-003, ICD v0.16 6.6·7.1 `route`, SDD v0.8): 3.26 TC-CMD-007-01~12(ROUTE 검증 ⑥⑦⑧ 벡터, codec, GW 별도 스트림, IF-03 `route`, SIM 남은 경로·상한 32, `RouteReporter` 가짜 시각, SIM 본체, SIM → GW → WebSocket), 3.27 TC-SAFE-003-01~03 신설. STANDBY 기동에 맞춰 TC-SAFE-001-01·03·06의 기동 상태를 STANDBY로, TC-SAFE-002-06·07의 주행 재개를 RTB에서 WAYPOINT로(시작 위치에서 RTB는 바로 도착), TC-SAFE-001-07의 3.0s 판정에 1 ms 여유(같은 시각의 1Hz ROUTE), TC-HMI-001-03은 먼저 WAYPOINT로 주행시키고 진행 방향 90°. 2.7 SIM 운동 모사 예외의 시험 목록 |
 
 ---
 
@@ -110,7 +111,7 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 - 3장 TC 표의 "테스트" 열(머리 행의 열 이름으로 찾는다)에 적은 백틱 항목은 모두 시험 이름(gtest·pytest·vitest) 또는 시연 점검 참조여야 한다. 해석하지 못한 항목이 있으면 `check_stp_tests.py`가 실패한다
 - vitest 시험은 3장 표에 "파일 이름 > 시험 이름"으로 적는다 (예: `hmiState.test.ts > REQ_HMI_002 starts with no link state until the GW reports one`). HMI 시험 파일은 `describe`를 쓰지 않아 it 제목이 곧 시험 이름이다. `check_stp_tests.py`는 `vitest list --json`의 실제 목록과 비교한다
 - 시험 이름에는 모두 REQ ID를 단다 (RTM grep에서 빠지지 않도록). 예외: 검사 도구 자체 시험(`tools/tests/`)은 제품 요구사항의 증거가 아니므로 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 도구만 바꾸는 커밋도 같은 이유로 REQ ID 없이 `test(tools):`·`fix(tools):`로 쓴다
-- 예외: SIM 차량 운동 모사 자체의 정확도 시험(`sim/tests/test_vehicle.py`: 직진, 경로점·복귀 주행, 도착 뒤 STANDBY, 배터리)은 시험 장비(차량 모사기)의 동작이라 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 명령·Failsafe가 차량 상태에 미치는 영향 중 요구사항에 해당하는 것(정지 유지, 재개 금지·해제)은 `Simulator` 시험(TC-SAFE)으로 추적한다
+- 예외: SIM 차량 운동 모사 자체의 정확도 시험(`sim/tests/test_vehicle.py`: 경로점 방향 이동, 경로점·복귀 주행, 도착 뒤 STANDBY, 남은 경로의 LSB 변환, 배터리)은 시험 장비(차량 모사기)의 동작이라 REQ ID를 달지 않고 STP·RTM 대상이 아니다. 명령·Failsafe가 차량 상태에 미치는 영향 중 요구사항에 해당하는 것(정지 유지, 재개 금지·해제)은 `Simulator` 시험(TC-SAFE)으로 추적한다
 - 시험 하나는 요구사항 하나의 증거다. 시험 이름에는 REQ ID를 하나만 단다(같은 ID를 되풀이한 것은 하나로 본다). 서로 다른 ID가 둘 이상이면 RTM grep이 한 시험을 두 요구사항에 이어 아래의 TC와 시험 1:1 규칙이 깨지므로, `check_stp_tests.py`가 실패한다. 이름의 ID는 모두 SRS와 대조한다. 다른 요구사항도 증명해야 하면 그 요구사항의 TC와 시험을 따로 둔다. 앞으로 만들 RTM 생성 스크립트도 시험마다 이름의 ID 하나로 요구사항을 이어야 한다
 - 시험 이름에서 `req`·`REQ` 뒤에 영역 이름과 숫자가 바로 오는 약어(예: `req_cmd_3`)는 REQ ID와 구분할 수 없어 형식 오류로 걸린다. 이런 약어는 쓰지 않는다(`request_cmd_3`처럼 풀어 쓴다)
 - TC와 테스트는 1:1로 대응하며, 대응 관계는 3장 표의 "테스트" 열이 정본이다.
@@ -267,7 +268,7 @@ GW의 이벤트는 콜백이 아니라 반환값이다. 링크 전이는 `Gatewa
 |---|---|---|---|---|
 | TC-HMI-001-01 | U | 위치 유효 telemetry 2개 반영 | 현재 위치·방향은 마지막 값, 궤적은 한 구간에 두 점, 이전 상태들은 바뀌지 않음(지도 그리기가 참조 비교에 의존) | `hmiState.test.ts > REQ_HMI_001 telemetry updates position and appends to the track` |
 | TC-HMI-001-02 | U | telemetry 3001개 반영 | 3000점까지 유지, 넘으면 가장 오래된 점부터 한 묶음(300점) 삭제, 최신 점은 남음 | `hmiState.test.ts > REQ_HMI_001 track never exceeds TRACK_MAX_POINTS and drops the oldest points in blocks` |
-| TC-HMI-001-03 | D | SIM 10Hz 송신 중 화면 확인 | 차량 표시 1개, 화살표가 heading(87.25°)만큼 회전(`data-heading`, `rotate(87.25deg)`), Leaflet 궤적 레이어에 실제로 들어 있는 점 수(개발 서버 훅 `__ugvcTrackPoints`)가 3s 동안 20개 이상 늘어남, 화면 캡처 | `hmi/e2e/smoke.mjs` 2단계 |
+| TC-HMI-001-03 | D | SIM 10Hz 송신 중 화면 확인. SIM은 STANDBY로 기동하므로(REQ-SAFE-003) 먼저 명령 패널로 시작 위치와 같은 위도의 정동쪽 경로점(36.1234567, 127.8)을 WAYPOINT로 보내 주행시킨다 | 모드 STANDBY → MISSION, 차량 표시 1개, 화살표가 heading(90°)만큼 회전(`data-heading`, `rotate(90deg)`), Leaflet 궤적 레이어에 실제로 들어 있는 점 수(개발 서버 훅 `__ugvcTrackPoints`)가 3s 동안 20개 이상 늘어남, 화면 캡처 | `hmi/e2e/smoke.mjs` 2단계 |
 | TC-HMI-001-04 | U | 위치 유효 → GPS_VALID 없는 telemetry(lat=lon=0) | 위치·궤적은 마지막 유효 위치 그대로, 모드 등 다른 값은 최신 | `hmiState.test.ts > REQ_HMI_001 position without GPS_VALID does not move the vehicle or the track` |
 | TC-HMI-001-05 | U | GPS 무효 10표본(약 1초), 차량 LOST, IF-03 연결 끊김 뒤의 유효 위치 | 각각 새 구간 시작 (끊긴 곳을 직선으로 잇지 않음) | `hmiState.test.ts > REQ_HMI_001 track starts a new segment after GPS loss, vehicle LOST or GW disconnect` |
 | TC-HMI-001-06 | U | 연속된 apply() 결과로 그리기 연산, 무작위 8000메시지(GPS 무효 20%, 연결 끊김 1%)에서 연산을 실행한 결과, 6000점 동안 전체 다시 그리기 횟수, 조각 나누기 | extend·newLine·clear를 구분, 실행 결과를 끝점 공유로 이으면 상태 궤적과 같음, 조각 ≤200점, clear는 앞쪽 삭제 때만(301점마다) | `trackSync.test.ts > REQ_HMI_001 plans extend, new line and rebuild from successive apply() results`, `trackSync.test.ts > REQ_HMI_001 executing the planned ops always draws exactly the state track`, `trackSync.test.ts > REQ_HMI_001 rebuilds only when the oldest points are trimmed`, `trackSync.test.ts > REQ_HMI_001 chunks share end points so the drawn line has no gaps` |
@@ -386,13 +387,13 @@ U 수준은 `Simulator`에 시각을 직접 넣는다(2.2). 판정 경계는 "3.
 
 | TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
 |---|---|---|---|---|
-| TC-SAFE-001-01 | U | 시작 후 HEARTBEAT 없음, 2.999s와 3.000s | 2.999s는 MISSION·플래그 없음, 3.000s에 STOPPED, speed 0, FAILSAFE_ACTIVE (시작 시각부터 잼) | `test_REQ_SAFE_001_no_heartbeat_since_start_failsafe_at_3s` |
+| TC-SAFE-001-01 | U | 시작 후 HEARTBEAT 없음, 2.999s와 3.000s | 2.999s는 STANDBY(시작 상태)·플래그 없음, 3.000s에 STOPPED, speed 0, FAILSAFE_ACTIVE (시작 시각부터 잼) | `test_REQ_SAFE_001_no_heartbeat_since_start_failsafe_at_3s` |
 | TC-SAFE-001-02 | U | 마지막 HEARTBEAT 뒤 +2.999s, +3.000s | +3.000s에 Failsafe (마지막 HEARTBEAT부터 잼) | `test_REQ_SAFE_001_failsafe_3s_after_last_heartbeat` |
-| TC-SAFE-001-03 | U | 두절 직전 mode가 MISSION(경로 있음·없음), RTB, STOPPED, STANDBY | 모두 STOPPED + FAILSAFE_ACTIVE | `test_REQ_SAFE_001_failsafe_from_any_mode` |
+| TC-SAFE-001-03 | U | 두절 직전 mode가 STANDBY(시작 상태), MISSION(경로 있음), RTB, STOPPED, STANDBY(경로점 도착) | 모두 STOPPED + FAILSAFE_ACTIVE | `test_REQ_SAFE_001_failsafe_from_any_mode` |
 | TC-SAFE-001-04 | U | Failsafe 중 주기 진행, 두절이 이어짐 | 위치 고정, FAILSAFE 플래그 변화는 3.0s에 한 번뿐 | `test_REQ_SAFE_001_vehicle_does_not_move_in_failsafe`, `test_REQ_SAFE_001_failsafe_is_a_single_transition_per_outage` |
 | TC-SAFE-001-05 | U | 명령으로 재개한 뒤 두 번째 두절 | 다시 Failsafe | `test_REQ_SAFE_001_failsafe_again_after_second_outage` |
-| TC-SAFE-001-06 | U | 실제 SIM 본체(`app.run`)(실제 UDP·시계), HEARTBEAT 없음 | 첫 Failsafe TELEMETRY가 시작 후 3.0~3.35s, 그 전은 MISSION·플래그 없음, 뒤로는 위치 고정 | `test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe` |
-| TC-SAFE-001-07 | U | SIM 본체(`app.run`)의 송신이 모두 OSError(GW 경로 없음, 가짜 소켓·가짜 시계) | SIM이 죽지 않고 40개 주기(0.0~3.9s)를 모두 돎. TELEMETRY seq 0~29(≤2.9s)는 FAILSAFE_ACTIVE 없음, seq 30(3.0s)부터 STOPPED·speed 0·FAILSAFE_ACTIVE, Failsafe 전이 기록 1회. 1.05s에 받은 COMMAND의 ACK 송신도 실패하지만 계속 돎. 송신 오류 기록은 실패 시작에 한 줄 | `test_REQ_SAFE_001_send_failure_does_not_kill_sim_and_failsafe_still_engages` |
+| TC-SAFE-001-06 | U | 실제 SIM 본체(`app.run`)(실제 UDP·시계), HEARTBEAT 없음 | 첫 Failsafe TELEMETRY가 시작 후 3.0~3.35s, 그 전은 STANDBY·플래그 없음, 뒤로는 위치 고정 | `test_REQ_SAFE_001_process_without_heartbeat_reports_failsafe` |
+| TC-SAFE-001-07 | U | SIM 본체(`app.run`)의 송신이 모두 OSError(GW 경로 없음, 가짜 소켓·가짜 시계) | SIM이 죽지 않고 40개 주기(0.0~3.9s)를 모두 돎. TELEMETRY seq 0~29(≤2.9s)는 FAILSAFE_ACTIVE 없음, seq 30(3.0s, 같은 시각의 1Hz ROUTE 뒤라 가짜 소켓 최소 대기 1 ms까지 늦을 수 있음)부터 STOPPED·speed 0·FAILSAFE_ACTIVE, Failsafe 전이 기록 1회. 1.05s에 받은 COMMAND의 ACK 송신도 실패하지만 계속 돎. 송신 오류 기록은 실패 시작에 한 줄 | `test_REQ_SAFE_001_send_failure_does_not_kill_sim_and_failsafe_still_engages` |
 | TC-SAFE-001-08 | U | SIM 본체(`app.run`) 루프가 1s 무렵 3.5s 멈췄다 재개(가짜 시계 건너뜀) | 멈춘 뒤 첫 TELEMETRY가 이미 Failsafe, 그 전은 플래그 없음, 밀린 주기를 같은 시각에 몰아 보내지 않음(간격 ≥ 0.1s) | `test_REQ_SAFE_001_stalled_loop_sends_one_failsafe_telemetry_without_burst` |
 
 ### 3.19 REQ-SAFE-002 링크 복구 뒤 운용자 명령 없이 재개 금지 (SIM)
@@ -406,8 +407,8 @@ U 수준은 `Simulator`에 시각을 직접 넣는다(2.2). 판정 경계는 "3.
 | TC-SAFE-002-03 | U | 복구 뒤 STOP | ACCEPTED, 플래그 해제, STOPPED 유지 | `test_REQ_SAFE_002_stop_after_recovery_clears_flag_stays_stopped` |
 | TC-SAFE-002-04 | U | 두절 중 RTB, WAYPOINT, STOP, 범위 밖 명령 | RTB·WAYPOINT는 REJECTED_STATE·실행 안 함·위치 고정, STOP은 ACCEPTED·플래그 유지, 범위 밖은 REJECTED_INVALID | `test_REQ_SAFE_002_motion_command_during_outage_rejected_state`, `test_REQ_SAFE_002_invalid_command_during_outage_is_rejected_invalid` |
 | TC-SAFE-002-05 | U | 두절 중 REJECTED_STATE를 받은 cmd_id를 복구 뒤 다시, 이어서 새 cmd_id | 같은 cmd_id는 REJECTED_STATE 그대로·정지 유지, 새 cmd_id는 ACCEPTED·mode RTB·플래그 해제 | `test_REQ_SAFE_002_rejected_state_cmd_id_retransmitted_after_recovery_keeps_result` |
-| TC-SAFE-002-06 | U | 실제 SIM 본체(`app.run`): Failsafe 뒤 HEARTBEAT 1.5s, 이어서 COMMAND RTB | HEARTBEAT 구간의 TELEMETRY 전부 정지·플래그·위치 고정, RTB에 ACK ACCEPTED, TELEMETRY가 RTB·플래그 없음 | `test_REQ_SAFE_002_process_resumes_only_on_command` |
-| TC-SAFE-002-07 | I | 실제 GW·SIM·HMI(WebSocket): GW를 3.8s 내렸다가 같은 포트로 재시작, 이어서 HMI RTB 명령 | 재시작 뒤 1.6s 동안 IF-03 telemetry가 모두 STOPPED·speed 0·FAILSAFE_ACTIVE, RTB에 cmd_result ACCEPTED, telemetry가 RTB·플래그 없음 | `test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command` |
+| TC-SAFE-002-06 | U | 실제 SIM 본체(`app.run`): Failsafe 뒤 HEARTBEAT 1.5s, 이어서 COMMAND WAYPOINT(시작 위치에서 정지해 있어 RTB는 바로 도착하므로 주행 재개는 WAYPOINT로 본다) | HEARTBEAT 구간의 TELEMETRY 전부 정지·플래그·위치 고정, WAYPOINT에 ACK ACCEPTED, TELEMETRY가 MISSION·speed > 0·플래그 없음 | `test_REQ_SAFE_002_process_resumes_only_on_command` |
+| TC-SAFE-002-07 | I | 실제 GW·SIM·HMI(WebSocket): GW를 3.8s 내렸다가 같은 포트로 재시작, 이어서 HMI WAYPOINT 명령 | 내리기 전 telemetry는 STANDBY(시작 상태), 재시작 뒤 1.6s 동안 IF-03 telemetry가 모두 STOPPED·speed 0·FAILSAFE_ACTIVE, WAYPOINT에 cmd_result ACCEPTED, telemetry가 MISSION·speed > 0·플래그 없음 | `test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command` |
 | TC-SAFE-002-08 | U | Failsafe 뒤 복구 HEARTBEAT 한 번, 그 뒤 +2.999s와 +3.000s에 RTB | +2.999s는 ACCEPTED·플래그 해제·RTB, +3.000s는 REJECTED_STATE·정지 유지 | `test_REQ_SAFE_002_release_boundary_is_3s_after_recovery_heartbeat` |
 | TC-SAFE-002-09 | U | 출발 지점을 기본값이 아닌 점으로 준 `Simulator`, Failsafe·복구 뒤 RTB | ACCEPTED, 그 점에 도착해 STANDBY | `test_REQ_SAFE_002_rtb_after_recovery_drives_to_simulator_home` |
 
@@ -515,6 +516,33 @@ U는 vitest(순수 함수 `state/alerts.ts`, `HmiController`), D는 시연 점�
 
 - 막히지 않음의 판정: TC-LOG-003-12에서 `DbSink::publish`를 저장 완료까지 기다리게 바꾸면(동기 저장 변이) 중계가 2개에서 멈춰 실패함을 확인했다.
 - TC-LOG-003-15는 접속 기본값에서 `client_encoding=UTF8`을 빼면 한글 req_id 이벤트가 저장되지 않아 실패한다. TC-LOG-003-16은 저장 실패 뒤 다시 접속하지 않게 바꾸면(2차 리뷰에서 찾은 결함) 실패한다(변이로 확인).
+
+### 3.26 REQ-CMD-007 남은 경로 보고·중계, 상한 32 (SIM·GW)
+
+입력 벡터는 `testdata/vectors/route.json`(codec)과 `validation.json`의 `tc`가 TC-CMD-007-01·02인 case다. U 수준의 SIM 시각은 가짜 시각(2.2)이다.
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-CMD-007-01 | U | 차량 포트의 정상 ROUTE: count 0, 경로점 3개, count 32(277B), 좌표 경계 ±90°·±180° | 수락, `Route`로 디코딩 | `Validator.REQ_CMD_007_accepts_route_on_vehicle_port` |
+| TC-CMD-007-02 | U | ROUTE 규칙 위반: ⑥ 탐지 포트의 ROUTE, ⑦ count 2인데 경로점 1개·payload 0B·count 0인데 경로점 1개, ⑧ count 33(길이는 count에 맞춤)·lat ±900000001·lon ±1800000001 | type / length / range | `Validator.REQ_CMD_007_rejects_route_by_rules_6_to_8` |
+| TC-CMD-007-03 | U | ROUTE 인코딩·디코딩이 벡터와 일치 (C++, Python 각각). Python은 count와 길이가 맞지 않으면 None | 바이트 단위 일치 | `Codec.REQ_CMD_007_route_matches_vectors`, `test_REQ_CMD_007_route_matches_vector`, `test_REQ_CMD_007_route_length_must_match_count` |
+| TC-CMD-007-04 | U | GW: TELEMETRY와 다른 seq의 ROUTE, TELEMETRY 뒤 0.8s에 ROUTE, ROUTE seq 건너뜀·중복·역순 | 별도 스트림으로 수락, ROUTE가 링크 타이머를 갱신(CONNECTED 유지), 유실 2·order 2, TELEMETRY 스트림 영향 없음 | `GatewayFixture.REQ_CMD_007_route_is_own_vehicle_stream` |
+| TC-CMD-007-05 | U | IF-03 `route` 생성: 경로점 3개(경계값 포함), 빈 경로 | type `route`, ts = rx_ts, seq, waypoints[{lat, lon}] 순서 그대로이고 값은 "LSB ÷ 10^7"에 가장 가까운 double, 빈 경로는 `[]` | `If03.REQ_CMD_007_route_fields` |
+| TC-CMD-007-06 | U | `Simulator`의 남은 경로: WAYPOINT 2개, 첫 점 도착, STOP·RTB | 끝에 추가(받은 LSB 그대로), 도착하면 맨 앞 제거, STOP·RTB는 비움 | `test_REQ_CMD_007_route_reports_remaining_waypoints_as_they_change` |
+| TC-CMD-007-07 | U | 경로가 있을 때 HEARTBEAT 3.0s 두절 | Failsafe 진입과 함께 경로 비움 | `test_REQ_CMD_007_failsafe_clears_route` |
+| TC-CMD-007-08 | U | WAYPOINT 32개 뒤 33번째, 첫 점 도착 뒤 다시 WAYPOINT | 33번째는 REJECTED_STATE·실행 안 함·경로 그대로, 31개가 되면 ACCEPTED로 끝에 추가 | `test_REQ_CMD_007_waypoint_rejected_state_when_route_full` |
+| TC-CMD-007-09 | U | `RouteReporter`(가짜 시각): 시작, 바뀜, 같은 경로, 예정 시각, 늦은 poll, 5s 멈춤 | 시작에 송신, 바뀌면 바로, 같으면 시작 기준 1.0s 예정 시각마다(바뀐 송신·늦은 poll이 주기를 밀지 않음), 멈춘 뒤 한 번만 보내고 지금부터 다시 1.0s | `test_REQ_CMD_007_route_reporter_sends_on_change_and_every_second`, `test_REQ_CMD_007_route_reporter_does_not_burst_after_stall` |
+| TC-CMD-007-10 | U | SIM 본체(`app.run`, 가짜 소켓·가짜 시계): HEARTBEAT 0.5s, WAYPOINT 1.05s, 그 뒤 두절 | ROUTE seq 0부터 연속, 0.0s에 빈 경로, 1.05s WAYPOINT의 ACK 바로 뒤 그 경로, Failsafe tick에 빈 경로, 그 밖은 0·2·3·4s 등 정수 초 예정 시각(가짜 소켓 최소 대기 1 ms 이내) | `test_REQ_CMD_007_process_sends_route_on_change_and_every_second` |
+| TC-CMD-007-11 | I | 실제 SIM → GW → WebSocket: SIM 기동 1.2s 뒤 HMI 접속, WAYPOINT 명령 | 접속 직후 상태(stats·link_status 4개)에 route 없음, 1.2s 안에 빈 경로 route, cmd_result ACCEPTED와 함께 0.5s 안에 새 경로(보낸 좌표), seq 증가, 차량 유실 0·오류 0 | `test_REQ_CMD_007_route_relayed_from_sim_to_hmi` |
+| TC-CMD-007-12 | I | 실제 SIM·GW·WebSocket: WAYPOINT 32개 뒤 33번째 | 32개 ACCEPTED, 33번째 cmd_result REJECTED_STATE, route는 32개·보낸 순서 그대로 | `test_REQ_CMD_007_full_route_rejects_waypoint_with_rejected_state` |
+
+### 3.27 REQ-SAFE-003 STANDBY 기동, 명령 없이 주행 안 함 (SIM)
+
+| TC ID | 수준 | 내용 | 기대 결과 | 테스트 |
+|---|---|---|---|---|
+| TC-SAFE-003-01 | U | `Simulator` 기동 직후, 30s 동안 HEARTBEAT만 받음 | 기동 직후 STANDBY·speed 0·경로 없음, 30s 뒤에도 STANDBY·speed 0·Failsafe 아님·위치 그대로 | `test_REQ_SAFE_003_starts_in_standby_and_does_not_move_without_command` |
+| TC-SAFE-003-02 | U | SIM 본체(`app.run`, 가짜 소켓·가짜 시계): 0.5s마다 HEARTBEAT, 명령 없음, TELEMETRY 100개(10s) | 전부 STANDBY·speed 0·FAILSAFE_ACTIVE 없음, 위치 하나 | `test_REQ_SAFE_003_process_starts_standby_and_stays_without_command` |
+| TC-SAFE-003-03 | I | 실제 SIM·GW·WebSocket: GW HEARTBEAT가 이어지는 3.5s 동안 명령 없음 | IF-03 telemetry 30개 이상이 모두 STANDBY·speed 0·플래그 없음, 위치 하나 | `test_REQ_SAFE_003_sim_starts_standby_and_does_not_move_without_command` |
 
 ---
 

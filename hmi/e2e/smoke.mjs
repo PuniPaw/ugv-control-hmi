@@ -208,12 +208,21 @@ async function scenario(browser) {
   await expectAttr(page, "alert", "data-level", "WARNING");
   checkPageErrors();
 
-  step("2. SIM 10Hz 송신: 차량 링크 CONNECTED, 유실률·모드·배터리 표시, 마커와 궤적 이동, 차량 값 진하게");
+  step("2. SIM 10Hz 송신(STANDBY 기동) → WAYPOINT로 주행: 차량 링크 CONNECTED, 유실률·모드·배터리 표시, 마커와 궤적 이동, 차량 값 진하게");
   let sim = startSim(ports);
   await expectText(page, "link-state-VEHICLE", "CONNECTED");
   await expectText(page, "loss-VEHICLE", "0.0%", 3000); // GW stats가 반영됨
   await expectText(page, "age-VEHICLE", /^0\.\ds 전$/); // 시계 차와 무관하게 0.x초 (음수·수 초가 아님)
-  await expectText(page, "mode", "MISSION");
+  await expectText(page, "mode", "STANDBY"); // SIM은 STANDBY로 기동하고 명령 없이 움직이지 않는다 (REQ-SAFE-003)
+  // 주행 시작: 시작 위치(36.1234567, 127.7654321)와 같은 위도의 동쪽 약 3km 경로점 → 진행 방향 정확히 90°
+  await expectAttr(page, "cmd-panel", "data-blocked", "false");
+  await page.getByTestId("wp-lat").fill("36.1234567");
+  await page.getByTestId("wp-lon").fill("127.8");
+  await page.getByTestId("cmd-WAYPOINT").click();
+  await page.getByTestId("cmd-send").click();
+  await expectText(page, "mode", "MISSION", 3000);
+  const driveReqIds = [...gw.sentReqIds()]; // 아래 2c의 "확인 없이 송신 없음"은 이 명령 뒤부터 센다
+  if (driveReqIds.length !== 1) throw new Error(`주행 WAYPOINT 송신 기록 ${driveReqIds}`);
   await expectText(page, "battery", /^\d+%$/);
   await expectAttr(page, "vehicle", "data-stale", "false");
   // 확인 전에 풀린 경고는 "해제됨"으로 남고, 확인하면 사라진다 (표 3-2)
@@ -221,10 +230,10 @@ async function scenario(browser) {
   await ackAlert(page, "VEHICLE_LOST");
   await page.locator('[data-testid="alert"][data-kind="VEHICLE_LOST"]').waitFor({ state: "detached", timeout: 2000 });
   if ((await page.locator(".vehicle-icon").count()) !== 1) throw new Error("차량 마커가 없음");
-  // 진행 방향: 화살표가 heading_deg만큼 회전 (SIM은 87.25°로 직진)
+  // 진행 방향: 화살표가 heading_deg만큼 회전 (SIM은 정동쪽 경로점으로 90°)
   const heading = await page.getByTestId("map").getAttribute("data-heading");
   const rotate = await page.locator(".vehicle-icon .arrow").getAttribute("style");
-  if (heading !== "87.25" || !rotate?.includes("rotate(87.25deg)")) throw new Error(`진행 방향 표시 이상: heading=${heading}, style=${rotate}`);
+  if (heading !== "90" || !rotate?.includes("rotate(90deg)")) throw new Error(`진행 방향 표시 이상: heading=${heading}, style=${rotate}`);
   // 궤적: Leaflet 궤적 레이어에 실제로 들어 있는 점 수가 늘어나는지 본다 (렌더러와 무관, 개발 서버 전용 훅)
   const drawnPoints = async () => page.evaluate(() => window.__ugvcTrackPoints());
   const n1 = await drawnPoints();
@@ -279,8 +288,8 @@ async function scenario(browser) {
   await expectText(page, "cmd-confirm-text", "정지 (STOP)");
   await page.getByTestId("cmd-cancel").click();
   await page.waitForTimeout(1500);
-  if (gw.sentReqIds().length !== 0) throw new Error(`확인 없이 COMMAND가 나감: ${gw.sentReqIds()}`);
-  if ((await page.getByTestId("cmd-row").count()) !== 0) throw new Error("취소한 명령이 기록됨");
+  if (gw.sentReqIds().length !== driveReqIds.length) throw new Error(`확인 없이 COMMAND가 나감: ${gw.sentReqIds()}`);
+  if ((await page.getByTestId("cmd-row").count()) !== driveReqIds.length) throw new Error("취소한 명령이 기록됨");
   await page.getByTestId("cmd-STOP").click();
   await page.getByTestId("cmd-send").click();
   await expectRow("ACCEPTED");

@@ -4,6 +4,7 @@ import queue
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -119,3 +120,32 @@ def gateway():
     gw = start_gateway([free_udp_port() for _ in range(3)])
     yield gw
     stop_gateway(gw)
+
+
+def ws_url(gateway) -> str:
+    return f"ws://127.0.0.1:{gateway.ws_port}/ws"
+
+
+def _sim_env() -> dict:
+    return {"PYTHONPATH": f"{REPO / 'python'}:{REPO / 'sim'}", "PATH": "/usr/bin:/bin"}
+
+
+@pytest.fixture
+def sim_uplink(gateway):
+    """실제 SIM(`python -m ugvc_sim`)을 띄우는 함수. drop_first: 처음 받은 COMMAND N개를 무시한다 (첫 송신 유실 재현)."""
+    procs = []
+
+    def start(drop_first: int = 0, gw_port: int | None = None):
+        p = subprocess.Popen(
+            [sys.executable, "-m", "ugvc_sim", "--port", str(gateway.sim_port),
+             "--gw-port", str(gateway.vehicle_port if gw_port is None else gw_port), "--drop-first", str(drop_first)],
+            cwd=REPO / "sim", env=_sim_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        procs.append(p)
+        time.sleep(0.3)  # 소켓 바인드
+        assert p.poll() is None, p.stderr.read()
+        return p
+
+    yield start
+    for p in procs:
+        p.terminate()
+        p.wait(timeout=5)
