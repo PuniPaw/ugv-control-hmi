@@ -8,6 +8,7 @@
 #include "support/fake_clock.hpp"
 #include "ugvc/codec/ack.hpp"
 #include "ugvc/codec/detection.hpp"
+#include "ugvc/codec/route.hpp"
 #include "ugvc/codec/telemetry.hpp"
 #include "ugvc/ingress/validator.hpp"
 
@@ -38,6 +39,11 @@ codec::Bytes detection_frame(std::uint32_t seq) {
 codec::Bytes ack_frame(std::uint32_t seq) {
   const auto payload = codec::encode_ack({1, 0});
   return codec::encode_frame(codec::kMsgAck, seq, 0, payload.data(), payload.size());
+}
+
+codec::Bytes route_frame(std::uint32_t seq) {
+  const auto payload = codec::encode_route({{{361240000, 1277660000}}});
+  return codec::encode_frame(codec::kMsgRoute, seq, 0, payload.data(), payload.size());
 }
 
 struct GatewayFixture : ::testing::Test {
@@ -177,4 +183,24 @@ TEST_F(GatewayFixture, REQ_COM_001_accepted_rx_time_matches_link) {
   ASSERT_TRUE(accepted.has_value());
   EXPECT_EQ(accepted->rx_epoch_ms, clock.epoch_ms());
   EXPECT_EQ(gw.link(Source::Vehicle).last_rx_epoch_ms(), accepted->rx_epoch_ms);
+}
+
+// TC-CMD-007-04: ROUTE는 VEHICLE의 별도 스트림이다 (ICD 6.6). 링크 타이머를 갱신하고, 자기 seq로 규칙 ⑨와 유실 계산을 받는다
+TEST_F(GatewayFixture, REQ_CMD_007_route_is_own_vehicle_stream) {
+  ASSERT_TRUE(send(telemetry_frame(100)));
+  ASSERT_TRUE(send(route_frame(0)));      // 텔레메트리와 seq가 달라도 별도 스트림이라 받는다
+  clock.advance(800ms);
+  ASSERT_TRUE(send(route_frame(1)));      // TELEMETRY 후 0.8s지만 ROUTE가 타이머를 갱신
+  clock.advance(400ms);
+  gw.poll();
+  EXPECT_EQ(gw.link(Source::Vehicle).state(), LinkState::Connected);
+  ASSERT_TRUE(send(route_frame(4)));      // ROUTE 유실 2 (ACK처럼 빼지 않는다)
+  EXPECT_FALSE(send(route_frame(4)));     // 중복: 규칙 ⑨ order
+  EXPECT_FALSE(send(route_frame(2)));     // 역순: order
+  const auto s = gw.stats(Source::Vehicle);
+  EXPECT_EQ(s.rx_count, 4U);
+  EXPECT_EQ(s.lost_count, 2U);
+  EXPECT_EQ(s.errors[RejectReason::Order], 2U);
+  EXPECT_TRUE(send(telemetry_frame(101)));  // 텔레메트리 스트림은 영향 없음
+  EXPECT_EQ(gw.stats(Source::Vehicle).lost_count, 2U);
 }

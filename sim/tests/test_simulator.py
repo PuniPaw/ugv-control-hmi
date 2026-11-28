@@ -4,7 +4,9 @@ from dataclasses import replace
 from ugvc_proto.command import Ack, AckResult, CmdType, Command
 from ugvc_proto.telemetry import Flags, Mode
 
-from ugvc_sim.simulator import Simulator
+from ugvc_proto.route import MAX_WAYPOINTS, Route
+
+from ugvc_sim.simulator import RouteReporter, Simulator
 from ugvc_sim.uplink import InvalidCommand, ReceivedCommand
 from ugvc_sim.vehicle import START
 
@@ -51,8 +53,7 @@ def _alive_sim(command=None, now=0.0):
 def test_REQ_SAFE_001_no_heartbeat_since_start_failsafe_at_3s():
     sim = Simulator(start=0.0)
     sim.advance(2.999, 0.1)
-    t = sim.telemetry()
-    assert t.mode == Mode.MISSION and t.speed > 0 and not t.status_flags & Flags.FAILSAFE_ACTIVE
+    assert not sim.failsafe and sim.telemetry().mode == Mode.STANDBY
     sim.advance(3.000, 0.1)
     assert _failsafe_telemetry(sim)
 
@@ -61,7 +62,7 @@ def test_REQ_SAFE_001_failsafe_3s_after_last_heartbeat():
     sim = Simulator(start=10.0)
     sim.on_heartbeat(10.0)
     sim.advance(12.999, 0.1)
-    assert not sim.failsafe and sim.telemetry().mode == Mode.MISSION
+    assert not sim.failsafe and sim.telemetry().mode == Mode.STANDBY
     sim.advance(13.000, 0.1)
     assert _failsafe_telemetry(sim)
 
@@ -69,7 +70,7 @@ def test_REQ_SAFE_001_failsafe_3s_after_last_heartbeat():
 def test_REQ_SAFE_001_failsafe_from_any_mode():
     wp = _cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON)
     for name, command, mode_before in [
-        ("MISSION", None, Mode.MISSION),
+        ("STANDBY_start", None, Mode.STANDBY),
         ("MISSION_route", wp, Mode.MISSION),
         ("STOPPED", _cmd(1, CmdType.STOP), Mode.STOPPED),
     ]:
@@ -229,3 +230,84 @@ def test_REQ_SAFE_002_rtb_after_recovery_drives_to_simulator_home():
     assert sim.on_command(_cmd(1, CmdType.RTB), t).ack == Ack(1, AckResult.ACCEPTED)
     _run(sim, t, t + 60.0, hb=_every_second)
     assert _pos(sim) == home and sim.telemetry().mode == Mode.STANDBY
+
+
+def test_REQ_SAFE_003_starts_in_standby_and_does_not_move_without_command():
+    """기동 직후 STANDBY·speed 0·경로 없음. HEARTBEAT가 계속 와도 명령 없이는 움직이지 않는다 (REQ-SAFE-003)."""
+    sim = Simulator(start=0.0)
+    start = _pos(sim)
+    t = sim.telemetry()
+    assert t.mode == Mode.STANDBY and t.speed == 0 and sim.route(0.0).waypoints == ()
+    _run(sim, 0.0, 30.0, hb=lambda x: True)
+    t = sim.telemetry()
+    assert t.mode == Mode.STANDBY and t.speed == 0 and not sim.failsafe and _pos(sim) == start
+
+
+def test_REQ_CMD_007_route_reports_remaining_waypoints_as_they_change():
+    """남은 경로: WAYPOINT는 끝에 추가, 도착하면 맨 앞 제거, STOP·RTB는 비움. 좌표는 받은 LSB 그대로 (ICD 6.6)."""
+    far = (NEAR_LAT + 10_000, NEAR_LON)
+    sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
+    sim.on_command(_cmd(2, CmdType.WAYPOINT, *far), 0.0)
+    assert sim.route(0.0).waypoints == ((NEAR_LAT, NEAR_LON), far)
+    t = 0.0
+    while sim.route(t).waypoints[0] != far:  # 첫 경로점(≈ 60 m)에 도착할 때까지
+        t = _run(sim, t, t + 0.1, hb=lambda x: True)
+        assert t < 30.0
+    assert sim.route(t).waypoints == (far,) and sim.telemetry().mode == Mode.MISSION
+    for cmd_type in (CmdType.STOP, CmdType.RTB):
+        sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
+        sim.on_command(_cmd(2, cmd_type), 0.0)
+        assert sim.route(0.0).waypoints == (), cmd_type
+
+
+def test_REQ_CMD_007_failsafe_clears_route():
+    sim = _alive_sim(_cmd(1, CmdType.WAYPOINT, NEAR_LAT, NEAR_LON))
+    sim.advance(3.0, 0.1)
+    assert _failsafe_telemetry(sim) and sim.route(3.0).waypoints == ()
+
+
+def test_REQ_CMD_007_waypoint_rejected_state_when_route_full():
+    """남은 경로가 32개면 WAYPOINT는 실행하지 않고 REJECTED_STATE. 하나가 줄면 다시 받는다."""
+    sim = _alive_sim()
+    points = [(NEAR_LAT + i * 1000, NEAR_LON) for i in range(MAX_WAYPOINTS)]
+    for i, p in enumerate(points, start=1):
+        assert sim.on_command(_cmd(i, CmdType.WAYPOINT, *p), 0.0).ack == Ack(i, AckResult.ACCEPTED)
+    full = sim.route(0.0)
+    assert len(full.waypoints) == MAX_WAYPOINTS
+    out = sim.on_command(_cmd(100, CmdType.WAYPOINT, NEAR_LAT - 1000, NEAR_LON), 0.0)
+    assert out.ack == Ack(100, AckResult.REJECTED_STATE) and out.execute is None
+    assert sim.route(0.0) == full and sim.telemetry().mode == Mode.MISSION
+    t = 0.0
+    while len(sim.route(t).waypoints) == MAX_WAYPOINTS:  # 첫 경로점 도착
+        t = _run(sim, t, t + 0.1, hb=lambda x: True)
+        assert t < 30.0
+    out = sim.on_command(_cmd(101, CmdType.WAYPOINT, NEAR_LAT - 1000, NEAR_LON), t)
+    assert out.ack == Ack(101, AckResult.ACCEPTED)
+    assert sim.route(t).waypoints[-1] == (NEAR_LAT - 1000, NEAR_LON)
+
+
+def test_REQ_CMD_007_route_reporter_sends_on_change_and_every_second():
+    """시작에 한 번, 바뀌면 바로, 같으면 1.0초 주기 예정 시각마다 (가짜 시각)."""
+    empty, one, two = Route(), Route(((1, 2),)), Route(((1, 2), (3, 4)))
+    r = RouteReporter(start=10.0)
+    assert r.poll(10.0, empty)            # 시작: 빈 경로도 보고
+    assert not r.poll(10.1, empty)
+    assert r.poll(10.35, one)             # 바뀜: 바로
+    assert not r.poll(10.4, one)
+    assert r.poll(10.5, two)
+    assert not r.poll(10.999, two)
+    assert r.poll(11.0, two)              # 예정 시각 10 + 1.0 (바뀐 송신이 주기를 밀지 않음)
+    assert not r.poll(11.5, two)
+    assert r.poll(12.05, two)             # 늦게 poll해도 다음 예정은 13.0 그대로
+    assert not r.poll(12.95, two)
+    assert r.poll(13.0, two)
+
+
+def test_REQ_CMD_007_route_reporter_does_not_burst_after_stall():
+    r = RouteReporter(start=0.0)
+    route = Route(((1, 2),))
+    assert r.poll(0.0, route)
+    assert r.poll(5.3, route)             # 5초 멈춘 뒤: 한 번만
+    assert not r.poll(5.4, route)         # 밀린 1·2·3·4·5초 몫을 몰아 보내지 않는다
+    assert not r.poll(6.29, route)
+    assert r.poll(6.3, route)             # 지금부터 다시 1.0초

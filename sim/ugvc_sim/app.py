@@ -1,7 +1,9 @@
-"""SIM 실행 본체: UDP 소켓 하나에서 COMMAND·HEARTBEAT를 받고 10Hz로 TELEMETRY를 보낸다 (단일 스레드).
+"""SIM 실행 본체: UDP 소켓 하나에서 COMMAND·HEARTBEAT를 받고 10Hz로 TELEMETRY, 경로가 바뀔 때와 1Hz로 ROUTE를 보낸다 (단일 스레드).
+
+SIM은 STANDBY로 기동하며 WAYPOINT·RTB 명령이 와야 움직인다 (REQ-SAFE-003).
 
 사용:
-    python3 -m ugvc_sim                    # UDP 15010 수신, TELEMETRY·ACK는 GW 127.0.0.1:15001로, 10Hz 무한
+    python3 -m ugvc_sim                    # UDP 15010 수신, TELEMETRY·ACK·ROUTE는 GW 127.0.0.1:15001로, 10Hz 무한
     python3 -m ugvc_sim --count 600 -v     # TELEMETRY 600개 뒤 종료, 보낸 프레임 hex 출력
 
 표준출력은 JSON 한 줄씩: command / heartbeat / reject / drop, 모드·Failsafe 전이(mode / failsafe),
@@ -25,10 +27,11 @@ from ugvc_proto.command import AckResult
 from ugvc_proto.frame import MsgType, Reject, encode_frame
 from ugvc_proto.telemetry import Mode
 
-from ugvc_sim.simulator import Simulator
+from ugvc_sim.schedule import Schedule
+from ugvc_sim.simulator import RouteReporter, Simulator
 from ugvc_sim.uplink import Heartbeat, parse_uplink
 
-GW_VEHICLE_PORT = 15001  # IF-01a. GW는 TELEMETRY·ACK를 이 포트로 받는다
+GW_VEHICLE_PORT = 15001  # IF-01a. GW는 TELEMETRY·ACK·ROUTE를 이 포트로 받는다
 _MAX_WAIT_S = 0.1        # 소켓을 기다리는 최대 시간 (stop 확인 주기)
 _MAX_RATE_HZ = 1000.0
 _FATAL_SOCKET_ERRNOS = {errno.EBADF, errno.ENOTSOCK}  # 소켓 자체가 없다: 계속 돌아도 회복할 수 없음
@@ -81,67 +84,90 @@ def run(sock: socket.socket, gw_addr: tuple[str, int], rate_hz: float = 10.0, co
     `stop`이 켜지거나 `count`개를 보내거나 Ctrl-C면 끝난다. gw_addr는 해석된 (IP, 포트)다.
     drop_first: 처음 받은 유효 COMMAND N개를 무시한다 (ACK·실행 없음). GW 재전송 시험용이며 기본 0.
     """
-    period = 1.0 / rate_hz
     sender = _Sender(sock, gw_addr)
     t0 = clock()
     sim = Simulator(start=t0)
-    tel_seq = ack_seq = sent = 0
-    due = last_tick = t0
+    telemetry_due = Schedule(t0, 1.0 / rate_hz)
+    route_reporter = RouteReporter(t0)
+    tel_seq = ack_seq = route_seq = sent = 0
+    last_tick = t0
     to_drop = drop_first
     recv_failing = False
+
+    def tick(now: float) -> None:
+        """TELEMETRY 한 주기: 경과 시간만큼 상태를 진행하고 보낸다 (첫 TELEMETRY는 시작 상태 그대로)."""
+        nonlocal last_tick, tel_seq, sent
+        before = (int(sim.state.mode), sim.failsafe)
+        sim.advance(now, now - last_tick)
+        last_tick = now
+        _report_transitions(sim, before)
+        frame = encode_frame(MsgType.TELEMETRY, tel_seq, _epoch_ms(), sim.telemetry().to_payload())
+        sender.send(frame)
+        if verbose:
+            print(f"seq={tel_seq} {frame.hex()}", flush=True)
+        tel_seq = (tel_seq + 1) & 0xFFFFFFFF
+        sent += 1
+        telemetry_due.advance(now)
+
+    def receive(now: float) -> float:
+        """다음 예정 시각(TELEMETRY·ROUTE 중 이른 쪽)까지 COMMAND·HEARTBEAT 하나를 기다려 처리한다.
+        처리한 시각(받은 것이 없으면 기다린 뒤의 시각)을 돌려준다."""
+        nonlocal recv_failing, to_drop, ack_seq, last_tick
+        sock.settimeout(max(0.001, min(min(telemetry_due.due, route_reporter.due) - now, _MAX_WAIT_S)))
+        try:
+            data, _ = sock.recvfrom(2048)
+        except socket.timeout:
+            return clock()  # 기다린 뒤의 시각: report_route가 그 시각으로 Failsafe를 판정한다
+        except OSError as e:  # 일시 오류(예: ICMP 오류)는 계속. 소켓 자체가 없으면 다시 던진다
+            if e.errno in _FATAL_SOCKET_ERRNOS:
+                raise
+            if not recv_failing:
+                recv_failing = True
+                _emit({"type": "recv_error", "errno": e.errno, "error": str(e)})
+            return clock()
+        recv_failing = False
+        now = clock()
+        before = (int(sim.state.mode), sim.failsafe)
+        msg = parse_uplink(data)
+        if isinstance(msg, Reject):
+            _emit({"type": "reject", "reason": msg.value, "len": len(data)})
+        elif isinstance(msg, Heartbeat):
+            sim.on_heartbeat(now)
+            _emit({"type": "heartbeat", **asdict(msg)})
+        elif to_drop > 0:
+            to_drop -= 1
+            _emit({"type": "drop", "cmd_id": msg.command.cmd_id})
+        else:
+            # 받기 전 구간은 이전 명령대로 진행해 두고 새 명령을 적용한다 (주기 중간 명령이 주기 시작부터 적용되지 않게)
+            sim.advance(now, now - last_tick)
+            last_tick = now
+            outcome = sim.on_command(msg, now)
+            sender.send(encode_frame(MsgType.ACK, ack_seq, _epoch_ms(), outcome.ack.to_payload()))
+            ack_seq = (ack_seq + 1) & 0xFFFFFFFF
+            _emit({"type": "command", "cmd_id": msg.command.cmd_id, "cmd_type": msg.command.cmd_type,
+                   "result": AckResult(outcome.ack.result).name, "executed": outcome.execute is not None})
+        _report_transitions(sim, before)
+        return now
+
+    def report_route(now: float) -> None:
+        """사건 하나를 처리한 뒤 한 곳에서만 부른다: 경로가 바뀌었으면 이 처리 안에, 아니면 1Hz로 ROUTE (ICD 6.6).
+        `sim.route(now)`가 Failsafe를 먼저 판정하므로 두절 3.0초가 지난 시각에 낡은 경로를 보내지 않는다."""
+        nonlocal route_seq
+        before = (int(sim.state.mode), sim.failsafe)
+        route = sim.route(now)
+        _report_transitions(sim, before)
+        if route_reporter.poll(now, route):
+            sender.send(encode_frame(MsgType.ROUTE, route_seq, _epoch_ms(), route.to_payload()))
+            route_seq = (route_seq + 1) & 0xFFFFFFFF
+
     try:
         while (stop is None or not stop.is_set()) and (count is None or sent < count):
             now = clock()
-            if now >= due:
-                before = (int(sim.state.mode), sim.failsafe)
-                sim.advance(now, now - last_tick)  # 실제 경과 시간만큼 (첫 TELEMETRY는 시작 상태 그대로)
-                last_tick = now
-                _report_transitions(sim, before)
-                frame = encode_frame(MsgType.TELEMETRY, tel_seq, _epoch_ms(), sim.telemetry().to_payload())
-                sender.send(frame)
-                if verbose:
-                    print(f"seq={tel_seq} {frame.hex()}", flush=True)
-                tel_seq = (tel_seq + 1) & 0xFFFFFFFF
-                sent += 1
-                # 예정 시각 기준이라 늦음이 쌓이지 않는다. 한 주기 넘게 늦었으면 몰아 보내지 않고 지금부터 다시 잰다
-                due += period
-                if due <= now:
-                    due = now + period
-                continue
-            sock.settimeout(max(0.001, min(due - now, _MAX_WAIT_S)))
-            try:
-                data, _ = sock.recvfrom(2048)
-            except socket.timeout:
-                continue
-            except OSError as e:  # 일시 오류(예: ICMP 오류)는 계속. 소켓 자체가 없으면 다시 던진다
-                if e.errno in _FATAL_SOCKET_ERRNOS:
-                    raise
-                if not recv_failing:
-                    recv_failing = True
-                    _emit({"type": "recv_error", "errno": e.errno, "error": str(e)})
-                continue
-            recv_failing = False
-            now = clock()
-            before = (int(sim.state.mode), sim.failsafe)
-            msg = parse_uplink(data)
-            if isinstance(msg, Reject):
-                _emit({"type": "reject", "reason": msg.value, "len": len(data)})
-            elif isinstance(msg, Heartbeat):
-                sim.on_heartbeat(now)
-                _emit({"type": "heartbeat", **asdict(msg)})
-            elif to_drop > 0:
-                to_drop -= 1
-                _emit({"type": "drop", "cmd_id": msg.command.cmd_id})
-            else:
-                # 받기 전 구간은 이전 명령대로 진행해 두고 새 명령을 적용한다 (주기 중간 명령이 주기 시작부터 적용되지 않게)
-                sim.advance(now, now - last_tick)
-                last_tick = now
-                outcome = sim.on_command(msg, now)
-                sender.send(encode_frame(MsgType.ACK, ack_seq, _epoch_ms(), outcome.ack.to_payload()))
-                ack_seq = (ack_seq + 1) & 0xFFFFFFFF
-                _emit({"type": "command", "cmd_id": msg.command.cmd_id, "cmd_type": msg.command.cmd_type,
-                       "result": AckResult(outcome.ack.result).name, "executed": outcome.execute is not None})
-            _report_transitions(sim, before)
+            if now >= telemetry_due.due:
+                tick(now)
+            elif now < route_reporter.due:  # 1Hz ROUTE 예정 시각이면 기다리지 않고 바로 보고
+                now = receive(now)
+            report_route(now)
     except KeyboardInterrupt:
         pass
     return sent
@@ -170,7 +196,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="python3 -m ugvc_sim", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     p.add_argument("--host", default="127.0.0.1", help="COMMAND·HEARTBEAT를 받을 주소")
     p.add_argument("--port", type=int, default=15010, help="수신 포트 (IF-01b)")
-    p.add_argument("--gw-host", default="127.0.0.1", help="TELEMETRY·ACK를 보낼 GW 주소")
+    p.add_argument("--gw-host", default="127.0.0.1", help="TELEMETRY·ACK·ROUTE를 보낼 GW 주소")
     p.add_argument("--gw-port", type=int, default=GW_VEHICLE_PORT, help="GW 차량 수신 포트 (IF-01a)")
     p.add_argument("--rate", type=_rate, default=10.0, help="TELEMETRY Hz (기본 10)")
     p.add_argument("--count", type=int, default=None, help="보낼 TELEMETRY 개수 (기본: 무한)")

@@ -5,15 +5,17 @@ import time
 from ugvc_proto.frame import MsgType, encode_frame
 from ugvc_proto.telemetry import Telemetry
 
-from ugvc_sim.vehicle import START
-from ugvc_sim.vehicle import step, to_telemetry
+from ugvc_proto.command import CmdType, Command
+
+from ugvc_sim.vehicle import START, apply_command, step, to_telemetry
 
 N = 30
 
 
 def test_sim_telemetry_decoded_identically_by_gateway(gateway):
     sent: list[Telemetry] = []
-    state = START
+    # 주행 중인 상태(MISSION, 경로점으로 이동)에서 시작해 위치·방위·속도가 프레임마다 바뀌게 한다
+    state = apply_command(START, Command(1, CmdType.WAYPOINT, 361240000, 1277660000))
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         for seq in range(N):
             t = to_telemetry(state)
@@ -25,6 +27,7 @@ def test_sim_telemetry_decoded_identically_by_gateway(gateway):
 
     msgs = gateway.messages("telemetry", N, timeout_s=5.0)
     assert len(msgs) == N
+    assert len({(t.lat, t.lon) for t in sent}) == N and all(t.speed > 0 for t in sent)
     for seq, (msg, t) in enumerate(zip(msgs, sent)):
         d = msg["data"]
         assert d["seq"] == seq

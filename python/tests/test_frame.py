@@ -56,12 +56,13 @@ def test_REQ_COM_002_check_frame_matches_gateway_rules_1_to_7():
     from conftest import VECTORS_DIR
     from ugvc_proto.frame import MsgType, Reject, check_frame
 
-    vehicle_port = {MsgType.TELEMETRY: 16, MsgType.ACK: 5}  # GW 15001이 받는 type과 길이
+    # GW 15001이 받는 고정 길이 type. ROUTE도 받지만 길이가 count로 정해져 고정 길이 표로 표현할 수 없어 뺀다
+    vehicle_port = {MsgType.TELEMETRY: 16, MsgType.ACK: 5}
     cases = json.loads((VECTORS_DIR / "validation.json").read_text(encoding="utf-8"))["cases"]
     checked = 0
     for c in cases:
-        if c["source"] != "VEHICLE" or c["expect"] == "range":
-            continue  # ⑧ 범위는 이 함수 밖. DETECTION은 길이가 count로 정해져 고정 길이 표로 표현하지 않는다
+        if c["source"] != "VEHICLE" or c["expect"] == "range" or bytes.fromhex(c["hex"])[3:4] == bytes([MsgType.ROUTE]):
+            continue  # ⑧ 범위는 이 함수 밖. DETECTION(탐지 포트)·ROUTE(헤더 msg_type)는 위 이유로 뺀다
         r = check_frame(bytes.fromhex(c["hex"]), vehicle_port)
         got = r.value if isinstance(r, Reject) else "accept"
         assert got == c["expect"], c["name"]

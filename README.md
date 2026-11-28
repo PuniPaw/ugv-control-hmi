@@ -15,7 +15,7 @@
 | 디렉터리 | 구성요소 | 상태 |
 |---|---|---|
 | `gateway/` | GW: 패킷 검증, 링크 상태 판정, HMI 중계, 명령 재전송 (C++17, CMake, GoogleTest) | 검증 규칙 ①~⑨, 링크 상태, 유실률, stats·HEARTBEAT 1Hz, IF-03 WebSocket 중계 |
-| `sim/` | SIM: 경로점 주행 모사, 10Hz 텔레메트리, Failsafe (Python) | TELEMETRY 10Hz, COMMAND 수행·ACK, HEARTBEAT 감시·Failsafe. [sim/README](sim/README.md) |
+| `sim/` | SIM: 경로점 주행 모사, 10Hz 텔레메트리, Failsafe (Python) | TELEMETRY 10Hz, 남은 경로 ROUTE, COMMAND 수행·ACK, HEARTBEAT 감시·Failsafe. [sim/README](sim/README.md) |
 | `detector/` | DET: 영상 재생, 객체 탐지, 결과·영상 송신 (Python) | 예정 |
 | `hmi/` | HMI: 지도, 영상+박스, 상태 패널, 경고, 명령 (Vue 3 + TS) | IF-03 수신·재접속, 지도(위치·궤적), 상태 패널, 명령 패널. [hmi/README](hmi/README.md) |
 | `python/` | `ugvc_proto`: SIM·DET 공용 Python codec (ICD 메시지 직렬화) | 헤더·CRC·TELEMETRY |
@@ -104,7 +104,7 @@ cd sim && PYTHONPATH=../python:. python3 -m ugvc_sim  # 터미널 2: SIM
 cd hmi && npm run dev                               # 터미널 3: HMI
 ```
 
-브라우저에서 http://127.0.0.1:5173 을 엽니다. HMI는 GW가 늦게 떠도 스스로 다시 접속하므로 HMI 순서는 엄격하지 않지만, GW → SIM 순서는 지켜야 합니다. SIM은 방위 87.25°로 직진하는 MISSION 모드로 시작합니다.
+브라우저에서 http://127.0.0.1:5173 을 엽니다. HMI는 GW가 늦게 떠도 스스로 다시 접속하므로 HMI 순서는 엄격하지 않지만, GW → SIM 순서는 지켜야 합니다. SIM은 시작 위치에 STANDBY로 서 있다가, 명령 패널에서 경로점 이동(WAYPOINT)을 보내면 주행합니다.
 
 #### DB 로그 저장 (선택)
 

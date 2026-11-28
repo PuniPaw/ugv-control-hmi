@@ -137,3 +137,23 @@ TEST(If03, REQ_COM_005_snapshot_reports_each_source) {
   EXPECT_EQ(msgs[1]["data"]["state"], "LOST");
   EXPECT_TRUE(msgs[0]["data"]["loss_rate_10s"].is_null());
 }
+
+// TC-CMD-007-05: route는 남은 경로를 순서대로 공학 단위로, seq와 수신 시각을 함께 (ICD 7.1). 비면 []
+TEST(If03, REQ_CMD_007_route_fields) {
+  codec::Header h;
+  h.seq = 42;
+  const codec::Route r{{{361240000, 1277660000}, {-900000000, -1800000000}, {960388503, 1}}};
+  const json m = if03::route(h, r, 1794729600118ULL);
+  EXPECT_EQ(m["type"], "route");
+  EXPECT_EQ(m["ts"], 1794729600118ULL);
+  const auto& d = m["data"];
+  EXPECT_EQ(d["seq"], 42);
+  EXPECT_EQ(d["rx_ts"], 1794729600118ULL);
+  ASSERT_EQ(d["waypoints"].size(), 3U);
+  for (std::size_t i = 0; i < r.waypoints.size(); ++i) {
+    EXPECT_EQ(reparse(d["waypoints"][i]["lat"]), nearest(r.waypoints[i].lat, 7)) << i;
+    EXPECT_EQ(reparse(d["waypoints"][i]["lon"]), nearest(r.waypoints[i].lon, 7)) << i;
+    EXPECT_EQ(d["waypoints"][i].size(), 2U) << i;
+  }
+  EXPECT_EQ(if03::route(h, codec::Route{}, 0)["data"]["waypoints"], json::array());
+}

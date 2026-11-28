@@ -11,6 +11,7 @@
 
 #include "ugvc/codec/detection.hpp"
 #include "ugvc/codec/frame.hpp"
+#include "ugvc/codec/route.hpp"
 #include "ugvc/codec/telemetry.hpp"
 #include "ugvc/gateway/command_tracker.hpp"
 #include "ugvc/gateway/gateway.hpp"
@@ -21,6 +22,8 @@ namespace ugvc::if03 {
 
 nlohmann::json telemetry(const codec::Header& h, const codec::Telemetry& t, std::uint64_t rx_ts);
 nlohmann::json detection(const codec::Detection& d, std::uint64_t rx_ts);
+// 남은 경로 (ICD 7.1 route). 접속 직후 상태(snapshot)에는 넣지 않는다: SIM이 1Hz로 보낸다
+nlohmann::json route(const codec::Header& h, const codec::Route& r, std::uint64_t rx_ts);
 nlohmann::json stats(ingress::Source source, const gateway::SourceStats& s, std::uint64_t ts);
 nlohmann::json link_status(ingress::Source source, link::LinkState state,
                            std::optional<std::uint64_t> last_rx_ts, std::uint64_t ts);

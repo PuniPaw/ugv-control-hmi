@@ -55,6 +55,13 @@ json detection(const Detection& d, std::uint64_t rx_ts) {
                    {"objects", std::move(objects)}});
 }
 
+json route(const Header& h, const Route& r, std::uint64_t rx_ts) {
+  json waypoints = json::array();
+  std::transform(r.waypoints.begin(), r.waypoints.end(), std::back_inserter(waypoints),
+                 [](const Waypoint& w) { return json{{"lat", w.lat / 1e7}, {"lon", w.lon / 1e7}}; });
+  return envelope("route", rx_ts, {{"waypoints", std::move(waypoints)}, {"seq", h.seq}, {"rx_ts", rx_ts}});
+}
+
 json cmd_result(const gateway::CommandResult& r, std::uint64_t ts) {
   return envelope("cmd_result", ts,
                   {{"req_id", r.req_id},

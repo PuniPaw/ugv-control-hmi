@@ -6,47 +6,13 @@ SIM은 GW의 HEARTBEAT·COMMAND 포트(`--sim-port`)에서 받고, ACK는 GW 차
 import asyncio
 import json
 import socket
-import subprocess
-import sys
 import threading
 import time
-from pathlib import Path
 
 import pytest
 import websockets
 
-from conftest import start_gateway, stop_gateway
-
-REPO = Path(__file__).resolve().parents[2]
-
-
-def _sim_env() -> dict:
-    return {"PYTHONPATH": f"{REPO / 'python'}:{REPO / 'sim'}", "PATH": "/usr/bin:/bin"}
-
-
-def _ws_url(gateway):
-    return f"ws://127.0.0.1:{gateway.ws_port}/ws"
-
-
-@pytest.fixture
-def sim_uplink(gateway):
-    """SIM을 띄우는 함수. drop_first: 처음 받은 COMMAND N개를 무시한다 (첫 송신 유실 재현)."""
-    procs = []
-
-    def start(drop_first: int = 0, gw_port: int | None = None):
-        p = subprocess.Popen(
-            [sys.executable, "-m", "ugvc_sim", "--port", str(gateway.sim_port),
-             "--gw-port", str(gateway.vehicle_port if gw_port is None else gw_port), "--drop-first", str(drop_first)],
-            cwd=REPO / "sim", env=_sim_env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        procs.append(p)
-        time.sleep(0.3)  # 소켓 바인드
-        assert p.poll() is None, p.stderr.read()
-        return p
-
-    yield start
-    for p in procs:
-        p.terminate()
-        p.wait(timeout=5)
+from conftest import start_gateway, stop_gateway, ws_url as _ws_url
 
 
 @pytest.fixture
@@ -358,7 +324,8 @@ def _is_failsafe(d: dict) -> bool:
 
 def test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command(gateway, sim_uplink):
     """GW가 3초 넘게 없으면 SIM이 정지한다. GW가 돌아와 HEARTBEAT가 이어져도 정지·FAILSAFE_ACTIVE가 유지되고,
-    HMI의 RTB 명령으로만 ACCEPTED와 함께 주행(RTB)을 재개한다 (REQ-SAFE-001, REQ-SAFE-002)."""
+    HMI의 WAYPOINT 명령으로만 ACCEPTED와 함께 주행(MISSION)을 재개한다 (REQ-SAFE-001, REQ-SAFE-002).
+    SIM은 시작 위치에서 STANDBY로 기동하므로(REQ-SAFE-003) RTB는 바로 도착해 주행 재개를 보여 주지 못한다."""
     sim_uplink()
     ports = [gateway.vehicle_port, gateway.detector_port, gateway.sim_port]
 
@@ -367,7 +334,7 @@ def test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command(gateway, s
             return await _telemetry_for(ws, 1.0)
 
     before = asyncio.run(first_telemetry())
-    assert before and all(d["mode"] == "MISSION" and "FAILSAFE_ACTIVE" not in d["flags"] for d in before)
+    assert before and all(d["mode"] == "STANDBY" and "FAILSAFE_ACTIVE" not in d["flags"] for d in before)
 
     stop_gateway(gateway)
     time.sleep(3.8)  # SIM은 HEARTBEAT를 3.0초 넘게 못 받는다
@@ -376,7 +343,8 @@ def test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command(gateway, s
         async def after_restart():
             async with websockets.connect(_ws_url(gw2)) as ws:
                 stopped = await _telemetry_for(ws, 1.6)  # GW와 HEARTBEAT가 돌아온 뒤에도
-                await ws.send(json.dumps({"type": "command", "data": {"req_id": "resume", "cmd_type": "RTB"}}))
+                resume = {"req_id": "resume", "cmd_type": "WAYPOINT", "lat": 36.124, "lon": 127.766}
+                await ws.send(json.dumps({"type": "command", "data": resume}))
                 deadline = time.monotonic() + 3.0
                 result, resumed = None, []
                 while time.monotonic() < deadline and not (result and resumed):
@@ -386,7 +354,7 @@ def test_REQ_SAFE_002_failsafe_after_gw_outage_resumes_on_hmi_command(gateway, s
                         break
                     if m["type"] == "cmd_result" and m["data"]["req_id"] == "resume":
                         result = m["data"]
-                    elif m["type"] == "telemetry" and result and m["data"]["mode"] == "RTB":
+                    elif m["type"] == "telemetry" and result and m["data"]["mode"] == "MISSION":
                         resumed.append(m["data"])
                 return stopped, result, resumed
 

@@ -220,6 +220,7 @@ class GatewayApp {
                      commands_.on_ack(a);
                      drain_command_events();
                    },
+                   [&](const codec::Route& r) { publish(if03::route(frame.header, r, rx_ts)); },  // DB 저장 안 함 (ICD 6.6)
                },
                frame.message);
   }
